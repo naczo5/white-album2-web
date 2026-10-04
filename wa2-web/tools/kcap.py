@@ -51,6 +51,14 @@ class KcapEntry:
         return self.flag == FLAG_LZSS
 
 
+def decode_name(raw: bytes) -> str:
+    """KCAP filenames are Shift-JIS (Leaf convention); ASCII is a subset."""
+    try:
+        return raw.split(b"\x00")[0].decode("cp932")
+    except UnicodeDecodeError:
+        return raw.split(b"\x00")[0].decode("ascii", errors="replace")
+
+
 def read_index(data: bytes) -> list[KcapEntry]:
     """Parse the KCAP header + entry table. Raises ValueError on bad magic."""
     if data[:4] != MAGIC:
@@ -61,7 +69,7 @@ def read_index(data: bytes) -> list[KcapEntry]:
     for _ in range(count):
         (flag,) = struct.unpack_from("<I", data, pos)
         raw_name = data[pos + 4 : pos + 28]
-        name = raw_name.split(b"\x00")[0].decode("ascii", errors="replace")
+        name = decode_name(raw_name)
         (_u1, _u2, offset, length) = struct.unpack_from("<IIII", data, pos + 28)
         entries.append(KcapEntry(name=name, flag=flag, offset=offset, length=length))
         pos += ENTRY_SIZE

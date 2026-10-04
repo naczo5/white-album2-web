@@ -36,9 +36,13 @@ def split_datahdr(payload: bytes) -> tuple[int, bytes]:
 
 
 def decompress(data: bytes, expected_len: int | None = None) -> bytes:
+    # Bulk-oriented: literals accumulate in a chunk; matches copy via
+    # slices (length <= 18, ref < 0x1000, so at most one wraparound and
+    # usually none). Overlapping matches still copy progressively.
     d = bytearray([DICT_FILL]) * DICT_SIZE
     w = WRITE_START
     out = bytearray()
+    lit = bytearray()
     pos = 0
     n = len(data)
     while pos < n:
@@ -48,11 +52,8 @@ def decompress(data: bytes, expected_len: int | None = None) -> bytes:
             if flags & 1:
                 if pos >= n:
                     raise ValueError("truncated literal")
-                b = data[pos]
+                lit.append(data[pos])
                 pos += 1
-                out.append(b)
-                d[w] = b
-                w = (w + 1) % DICT_SIZE
             else:
                 if pos + 1 >= n:
                     raise ValueError("truncated match")
@@ -61,15 +62,48 @@ def decompress(data: bytes, expected_len: int | None = None) -> bytes:
                 pos += 2
                 ref = b1 | ((b2 & 0xF0) << 4)
                 length = (b2 & 0x0F) + 3
-                for _ in range(length):
-                    b = d[(ref) % DICT_SIZE]
-                    out.append(b)
-                    d[w] = b
-                    w = (w + 1) % DICT_SIZE
-                    ref = (ref + 1) % DICT_SIZE
+                if lit:
+                    out.extend(lit)
+                    m = len(lit)
+                    first = m if w + m <= DICT_SIZE else DICT_SIZE - w
+                    d[w:w + first] = lit[:first]
+                    if first < m:
+                        d[0:m - first] = lit[first:]
+                    w = (w + m) % DICT_SIZE
+                    del lit[:]
+                # Bulk copy is safe iff source and destination ranges do
+                # not overlap: match distance >= length. (Overlapping
+                # matches must read bytes they just wrote, progressively.)
+                dist = (w - ref) % DICT_SIZE
+                if dist >= length:
+                    if ref + length <= DICT_SIZE:
+                        seq = bytes(d[ref:ref + length])
+                    else:
+                        seq = bytes(d[ref:] + d[:ref + length - DICT_SIZE])
+                    out.extend(seq)
+                    if w + length <= DICT_SIZE:
+                        d[w:w + length] = seq
+                    else:
+                        first = DICT_SIZE - w
+                        d[w:] = seq[:first]
+                        d[:length - first] = seq[first:]
+                    w = (w + length) % DICT_SIZE
+                else:
+                    for _ in range(length):
+                        b = d[ref]
+                        out.append(b)
+                        d[w] = b
+                        w += 1
+                        if w == DICT_SIZE:
+                            w = 0
+                        ref += 1
+                        if ref == DICT_SIZE:
+                            ref = 0
             flags >>= 1
             if pos >= n:
                 break
+    if lit:
+        out.extend(lit)
     if expected_len is not None and len(out) != expected_len:
         raise ValueError(f"decompressed {len(out)} != expected {expected_len}")
     return bytes(out)

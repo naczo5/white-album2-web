@@ -143,6 +143,68 @@ def handle_movie(pak_path: str, dst_mp4: str, name: str, missing: list) -> bool:
     return True
 
 
+def sniff_audio_ext(payload: bytes) -> str:
+    """Identify nameless voice payloads: RIFF WAV, Ogg, or Leaf .w."""
+    if payload[:4] == b"RIFF":
+        return "wav"
+    if payload[:4] == b"OggS":
+        return "ogg"
+    if len(payload) >= 0x12:
+        try:
+            (ch, _ba, rate, bits, _br, pcm_size,
+             _loop) = struct.unpack_from("<BBHHIII", payload, 0)
+            if (ch in (1, 2) and bits in (8, 16, 24, 32)
+                    and 8000 <= rate <= 96000
+                    and pcm_size == len(payload) - 0x12):
+                return "w"
+        except struct.error:
+            pass
+    return ""
+
+
+def extract_lac_nested(lac_path: str, out_dir: str) -> list[tuple[str, int]]:
+    """Extract a nested audio LAC (BGM/SE/VOICE): 40-byte entries.
+
+    Layout differs from installer LACs: name[24] (often obfuscated bytes,
+    not decodable) + u32 + u32 + u32 size + u32 offset (absolute). Files
+    are contiguous (offset[i+1] == offset[i] + size[i]). Nameless entries
+    get synthesized voice-%05d ids; extensions are sniffed from payload
+    magic by the caller.
+    """
+    from extract_lac import decode_name
+    with open(lac_path, "rb") as f:
+        data = f.read()
+    if data[:4] != b"LAC\x00":
+        raise ValueError("not a LAC file")
+    (count,) = struct.unpack_from("<I", data, 4)
+    if 8 + count * 40 > len(data):
+        raise ValueError(f"40B layout impossible for count {count}")
+    entries = []
+    pos = 8
+    for i in range(count):
+        raw = data[pos:pos + 24]
+        (_a, _b, size, off) = struct.unpack_from("<IIII", data, pos + 24)
+        try:
+            name = raw.split(b"\x00")[0].decode("cp932")
+            if not name or any(ord(c) < 32 for c in name):
+                raise ValueError
+        except Exception:
+            name = ""
+        entries.append((name or f"voice-{i:05d}", size, off))
+        pos += 40
+    # sanity: entries must tile inside the file
+    for name, size, off in entries:
+        if off + size > len(data) or size <= 0:
+            raise ValueError(f"entry {name} out of range")
+    os.makedirs(out_dir, exist_ok=True)
+    done = []
+    for name, size, off in entries:
+        with open(os.path.join(out_dir, name), "wb") as f:
+            f.write(data[off:off + size])
+        done.append((name, size))
+    return done
+
+
 def extract_pak(pak_path: str, work: str) -> list[tuple[str, bytes]]:
     with open(pak_path, "rb") as f:
         data = f.read()
@@ -162,12 +224,118 @@ def extract_pak(pak_path: str, work: str) -> list[tuple[str, bytes]]:
     return out
 
 
+def scan_pak(pak_path: str) -> list[tuple[str, int, bytes]]:
+    """Fast scan: (name, flag, stored bytes) without decompressing."""
+    with open(pak_path, "rb") as f:
+        data = f.read()
+    if data[:4] != b"KCAP":
+        return []
+    out = []
+    for e in kcap.read_index(data):
+        if e.is_folder:
+            continue
+        start, end = kcap.data_range(e)
+        out.append((e.name, e.flag, data[start:end]))
+    return out
+
+
+def decode_entry(name: str, flag: int, stored: bytes) -> tuple[str, bytes]:
+    if flag == 1:
+        orig, lz = lzss.split_datahdr(stored)
+        return (name, lzss.decompress(lz, orig))
+    return (name, stored)
+
+
+def convert_job(args: tuple) -> tuple[str, str, bytes | None, str | None]:
+    """Top-level pool worker: (kind, name, payload) -> (name, kind, web_bytes, missing).
+
+    Returns converted bytes (PNG/WAV) for the main process to place;
+    movies and exotic codecs stay in-process (ffmpeg/arc_unpacker).
+    """
+    kind, name, flag, stored = args
+    if flag == 1:
+        try:
+            _o, _lz = lzss.split_datahdr(stored)
+            payload = lzss.decompress(_lz, _o)
+        except Exception as e:
+            return (name, kind, None, f"{name}: decompress failed ({e})")
+    else:
+        payload = stored
+    if kind == "image":
+        try:
+            from PIL import Image  # type: ignore
+            import io
+            img = Image.open(io.BytesIO(payload))
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            return (name, kind, buf.getvalue(), None)
+        except Exception as e:
+            return (name, kind, None, f"{name}: image convert failed ({e})")
+    if kind == "audio-w":
+        import wave
+        import io as _io
+        if payload[:4] == b"RIFF":
+            return (name, kind, payload, None)
+        if len(payload) < 0x12:
+            return (name, kind, None, f"{name}: too short for .w header")
+        (ch, _ba, rate, bits, _br, pcm_size,
+         _loop) = struct.unpack_from("<BBHHIII", payload, 0)
+        pcm = payload[0x12:0x12 + pcm_size]
+        if len(pcm) != pcm_size:
+            return (name, kind, None, f"{name}: .w pcm size mismatch")
+        buf = _io.BytesIO()
+        with wave.open(buf, "wb") as wv:
+            wv.setnchannels(ch)
+            wv.setsampwidth(bits // 8)
+            wv.setframerate(rate)
+            wv.writeframes(pcm)
+        return (name, kind, buf.getvalue(), None)
+    return (name, kind, None, f"{name}: unsupported in worker")
+
+
+def run_pool(jobs: list[tuple], manifest: dict, missing: list,
+             args, emit) -> None:
+    """Run (kind, name, flag, stored, sub, stem, table) jobs in a process
+    pool, place outputs, fill the manifest. Prints progress."""
+    from concurrent.futures import ProcessPoolExecutor
+    total = len(jobs)
+    if total == 0:
+        return
+    log(f"converting {total} files ({args.jobs} workers)...")
+    payloads = [(j[0], j[1], j[2], j[3]) for j in jobs]
+    done = 0
+    with ProcessPoolExecutor(max_workers=max(1, args.jobs)) as ex:
+        for (kind, name, flag, stored, sub, stem,
+             table), (rname, _k, web, miss) in zip(
+                 jobs, ex.map(convert_job, payloads)):
+            assert rname == name
+            done += 1
+            if done % 25 == 0 or done == total:
+                log(f"  {done}/{total}")
+            if miss or web is None:
+                missing.append(miss or f"{name}: convert failed")
+                continue
+            if kind == "image":
+                dst = emit(sub, stem, ".png")
+                with open(dst, "wb") as f:
+                    f.write(web)
+                manifest["images"][name] = f"{sub}/{stem}.png"
+                manifest["images"][name.lower()] = f"{sub}/{stem}.png"
+            elif kind == "audio-w":
+                dst = emit(sub, stem, ".wav")
+                with open(dst, "wb") as f:
+                    f.write(web)
+                manifest[sub][name] = f"{sub}/{stem}.wav"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("game", nargs="?", help="installed game dir")
     ap.add_argument("out", nargs="?", help="output web assets dir")
     ap.add_argument("--en-pak", action="append", default=[],
                     help="translation en.pak (repeatable)")
+    ap.add_argument("--jobs", type=int, default=8,
+                    help="parallel convert workers (default 8)")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
@@ -176,6 +344,15 @@ def main() -> None:
         return
     if not args.game or not args.out:
         ap.error("game and out required (or --selftest)")
+
+    # ffmpeg/python temp can exceed constrained /tmp quotas; keep temp on
+    # the same (big) disk as the output unless the user overrode TMPDIR.
+    if os.environ.get("TMPDIR", "/tmp") in ("/tmp", "/var/tmp"):
+        tmpdir = os.path.join(os.path.abspath(args.out), ".tmp")
+        os.makedirs(tmpdir, exist_ok=True)
+        os.environ["TMPDIR"] = tmpdir
+        import tempfile
+        tempfile.tempdir = tmpdir
 
     os.makedirs(args.out, exist_ok=True)
     manifest: dict = {"version": MANIFEST_VERSION, "images": {}, "bgm": {},
@@ -194,6 +371,7 @@ def main() -> None:
             if fn.lower().endswith(".pak"):
                 paks.append(os.path.join(root, fn))
     log(f"found {len(paks)} .pak archives")
+    lac_jobs: list[tuple] = []  # jobs from nested LACs, pooled at the end
     for pak in sorted(paks):
         base = os.path.basename(pak)
         try:
@@ -202,8 +380,62 @@ def main() -> None:
         except OSError as e:
             missing.append(f"{base}: unreadable ({e})")
             continue
-        if magic != b"KCAP":
-            missing.append(f"{base}: not KCAP (try arc_unpacker; docs/BYOA.md)")
+        if magic == b"LAC\x00":
+            # nested installer-style archive (BGM/SE/VOICE): unpack to a
+            # temp dir and queue the inner files (raw payloads). Voice
+            # archives use a 40-byte entry variant with obfuscated names.
+            import tempfile
+            from extract_lac import extract as extract_lac
+            tmp = tempfile.mkdtemp(prefix="wa2lac-")
+            try:
+                try:
+                    inner = extract_lac_nested(pak, tmp)
+                except ValueError:
+                    inner = extract_lac(pak, tmp)
+            except Exception as e:
+                missing.append(f"{base}: nested LAC failed ({e})")
+                continue
+            log(f"  {base}: nested LAC, {len(inner)} files")
+            for name, _size in inner:
+                ipath = os.path.join(tmp, *name.split("\\"))
+                if not os.path.isfile(ipath):
+                    continue
+                with open(ipath, "rb") as f:
+                    stored = f.read()
+                ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                if not ext or "/" in ext or len(ext) > 5:
+                    # synthesized voice ids: sniff payload magic
+                    ext = sniff_audio_ext(stored)
+                    if not ext:
+                        missing.append(f"{base}:{name}: unknown payload")
+                        continue
+                    name = f"{name}.{ext}"
+                iname = os.path.basename(name)
+                if ext in ("w", "wav"):
+                    sub = voice_or_se(base)
+                    lac_jobs.append(("audio-w", iname, 0, stored, sub,
+                                     iname.rsplit(".", 1)[0], sub))
+                elif ext == "g":
+                    stem = iname.rsplit(".", 1)[0]
+                    dst = emit("bgm", stem, ".ogg")
+                    if stored[:4] == b"OggS":
+                        with open(dst, "wb") as f:
+                            f.write(stored)
+                        manifest["bgm"][iname] = f"bgm/{stem}.ogg"
+                    else:
+                        missing.append(f"{base}:{iname}: .g needs arc_unpacker")
+                elif ext in ("tga", "bmp"):
+                    stem = iname.rsplit(".", 1)[0]
+                    lac_jobs.append(("image", iname, 0, stored,
+                                     image_sub(iname), stem, "images"))
+                elif ext == "px":
+                    missing.append(f"{base}:{iname}: .px needs arc_unpacker")
+                elif ext == "ogg":
+                    dst = emit("bgm", iname.rsplit(".", 1)[0], ".ogg")
+                    with open(dst, "wb") as f:
+                        f.write(stored)
+                    manifest["bgm"][iname] = os.path.relpath(dst, args.out)
+                # ignore the rest (txt/bnr/cues handled elsewhere)
             continue
         lname = base.lower()
         is_movie = lname.startswith("mv") and "en.pak" not in lname
@@ -213,24 +445,26 @@ def main() -> None:
             if handle_movie(pak, dst, base, missing):
                 manifest["movies"][mvid] = f"movie/{mvid}.mp4"
             continue
-        for name, payload in extract_pak(pak, ""):
+        if magic != b"KCAP":
+            missing.append(f"{base}: not KCAP (try arc_unpacker; docs/BYOA.md)")
+            continue
+        jobs = []  # (kind, name, flag, stored, sub, stem, table)
+        for name, flag, stored in scan_pak(pak):
             ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
             stem = name.rsplit(".", 1)[0]
             if ext in ("tga", "bmp"):
-                sub = "ui" if "en" in pak.lower() else image_sub(name)
-                dst = emit(sub, stem, ".png")
-                if convert_image(payload, dst, f"{base}:{name}", missing):
-                    manifest["images"][name] = f"{sub}/{stem}.png"
-                    manifest["images"][name.lower()] = f"{sub}/{stem}.png"
+                is_en = os.path.basename(pak).lower().startswith("en") or \
+                    "en.pak" in os.path.basename(pak).lower()
+                sub = "ui" if is_en else image_sub(name)
+                jobs.append(("image", name, flag, stored, sub, stem,
+                             "images"))
             elif ext == "w":
                 sub = voice_or_se(base)
-                dst = emit(sub, stem, ".wav")
-                if convert_w(payload, dst, f"{base}:{name}", missing):
-                    key = f"{sub}/{stem}.wav"
-                    manifest[sub][name] = key
+                jobs.append(("audio-w", name, flag, stored, sub, stem, sub))
             elif ext == "g":
                 dst = emit("bgm", stem, ".ogg")
                 # plain-Ogg passthrough when possible; else delegate
+                _k, payload = decode_entry(name, flag, stored)
                 if payload[:4] == b"OggS":
                     with open(dst, "wb") as f:
                         f.write(payload)
@@ -245,16 +479,22 @@ def main() -> None:
                 pass
             else:
                 missing.append(f"{base}:{name}: unhandled .{ext}")
+        run_pool(jobs, manifest, missing, args, emit)
 
-    # 2. translation image assets
+    # 2. translation image assets (same pool path)
     for pak in args.en_pak:
-        for name, payload in extract_pak(pak, ""):
+        jobs = []
+        for name, flag, stored in scan_pak(pak):
             if not name.lower().endswith((".tga", ".bmp")):
                 continue
             stem = name.rsplit(".", 1)[0]
-            dst = emit("ui", stem, ".png")
-            if convert_image(payload, dst, f"en.pak:{name}", missing):
-                manifest["images"][name] = f"ui/{stem}.png"
+            jobs.append(("image", name, flag, stored, "ui", stem, "images"))
+        run_pool(jobs, manifest, missing, args, emit)
+
+    # 3. nested-LAC jobs pooled last (voice/BGM bulk)
+    if lac_jobs:
+        log(f"nested archives queued {len(lac_jobs)} converts")
+    run_pool(lac_jobs, manifest, missing, args, emit)
 
     # 3. voice-cue timings ride along for the player
     subs = os.path.join(args.game, "todokanai", "subtitles")
