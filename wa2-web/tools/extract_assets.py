@@ -331,17 +331,19 @@ def run_pool(jobs: list[tuple], manifest: dict, missing: list,
                 with open(dst, "wb") as f:
                     f.write(web)
                 rel = os.path.relpath(dst, args.out)
-                manifest["images"][name] = rel
-                manifest["images"][name.lower()] = rel
+                table = manifest["images"]
+                table[name] = rel
+                table[name.lower()] = rel
                 if "/" in sub:  # chapter-namespaced (ic/...): extra key
                     ns = sub.split("/")[0]
-                    manifest["images"][f"{ns}/{name}"] = rel
-                    manifest["images"][f"{ns}/{name.lower()}"] = rel
+                    table[f"{ns}/{name}"] = rel
+                    table[f"{ns}/{name.lower()}"] = rel
             elif kind == "audio-w":
                 dst = emit(sub, stem, ".wav")
                 with open(dst, "wb") as f:
                     f.write(web)
-                manifest[sub][name] = f"{sub}/{stem}.wav"
+                table = manifest.setdefault(sub.split("/")[-1], {})
+                table[name] = os.path.relpath(dst, args.out)
 
 
 def main() -> None:
@@ -464,7 +466,8 @@ def main() -> None:
                     dst = emit(sub, key.rsplit(".", 1)[0], ".ogg")
                     with open(dst, "wb") as f:
                         f.write(stored)
-                    manifest[sub][key] = os.path.relpath(dst, args.out)
+                    table = manifest.setdefault(sub.split("/")[-1], {})
+                    table[key] = os.path.relpath(dst, args.out)
                 # ignore the rest (txt/bnr/cues handled elsewhere)
             continue
         lname = base.lower()
