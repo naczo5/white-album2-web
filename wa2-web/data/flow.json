@@ -1,0 +1,1074 @@
+{
+ "version": 1,
+ "counts": {
+  "expert": 30,
+  "playtest": 2,
+  "review": 0
+ },
+ "nodes": [
+  {
+   "id": "2003-241",
+   "engine": {
+    "script": "2003",
+    "event": 241
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "I can't handle her.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "I feel strangely at ease with her.",
+     "goto": null
+    }
+   ],
+   "date": "12/1",
+   "effects": {
+    "1": {
+     "flag": "chiaki_true_path"
+    },
+    "2": {
+     "aff": {
+      "chiaki": 1
+     }
+    }
+   },
+   "gated": {
+    "1": "LOCKED until cc-chiaki-normal cleared once"
+   },
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c01",
+   "note": "12/1 first decision. JP: 苦手だ / なんとなく心地良い."
+  },
+  {
+   "id": "2003-985",
+   "engine": {
+    "script": "2003",
+    "event": 985
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Call her.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Send an email.",
+     "goto": null
+    }
+   ],
+   "date": "12/2",
+   "effects": {
+    "1": {
+     "aff": {
+      "setsuna": 1
+     }
+    },
+    "2": {}
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c02",
+   "note": "Contacting Setsuna: call vs text."
+  },
+  {
+   "id": "2004-66",
+   "engine": {
+    "script": "2004",
+    "event": 66
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Decline.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Accept.",
+     "goto": null
+    }
+   ],
+   "date": "12/3",
+   "effects": {
+    "1": {},
+    "2": {
+     "aff": {
+      "mari": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c03",
+   "note": "Freelance assignment. Recovered from a mega-token; both picks converge (he declines, then takes it back). Opt2 is Mari-critical (1 of 4)."
+  },
+  {
+   "id": "2005-391",
+   "engine": {
+    "script": "2005",
+    "event": 391
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Walk her to the station",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Let her leave",
+     "goto": null
+    }
+   ],
+   "date": "12/5",
+   "effects": {
+    "1": {
+     "aff": {
+      "koharu": 1
+     }
+    },
+    "2": {}
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c04",
+   "note": "Koharu after work: accompany vs send off."
+  },
+  {
+   "id": "2007-231",
+   "engine": {
+    "script": "2007",
+    "event": 231
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Put her to bed",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Shake her awake",
+     "goto": null
+    }
+   ],
+   "date": "12/8",
+   "effects": {
+    "1": {
+     "aff": {
+      "chiaki": 1
+     }
+    },
+    "2": {}
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c05",
+   "note": "Chiaki asleep in Haruki's room. Present in v2.1.0; absent from v1.3.6 engine data."
+  },
+  {
+   "id": "2009-1623",
+   "engine": {
+    "script": "2009",
+    "event": 1623
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Walk her to the station",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "See her off",
+     "goto": null
+    }
+   ],
+   "date": "12/11~12 (drifts by edition)",
+   "effects": {
+    "1": {
+     "aff": {
+      "koharu": 1
+     }
+    },
+    "2": {
+     "aff": {
+      "setsuna": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c06",
+   "note": "Walking-home decision (2nd)."
+  },
+  {
+   "id": "2011-182",
+   "engine": {
+    "script": "2011",
+    "event": 182
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "It isn't that simple.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "It's over.",
+     "goto": null
+    }
+   ],
+   "date": "12/14",
+   "effects": {
+    "1": {
+     "aff": {
+      "setsuna": 1
+     }
+    },
+    "2": {
+     "aff": {
+      "mari": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c07",
+   "note": "Answering Mari about the past. Opt2 is Mari-critical."
+  },
+  {
+   "id": "2013-198",
+   "engine": {
+    "script": "2013",
+    "event": 198
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "All right. Let's do it today",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Sorry~ but make it tomorrow",
+     "goto": null
+    }
+   ],
+   "date": "12/17 (1st)",
+   "effects": {
+    "1": {
+     "flag_off": "mari"
+    },
+    "2": {}
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c08",
+   "note": "Mari's invitation timing. Recovered from a mega-token. Opt1 kills the Mari route; opt2 keeps it (needs mari aff>=2)."
+  },
+  {
+   "id": "2014-271",
+   "engine": {
+    "script": "2014",
+    "event": 271
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Talk a little longer",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Let's call it a night",
+     "goto": null
+    }
+   ],
+   "date": "12/17 (2nd)",
+   "effects": {
+    "1": {
+     "aff": {
+      "chiaki": 1
+     }
+    },
+    "2": {
+     "aff": {
+      "setsuna": 1
+     },
+     "clear": "chiaki"
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c09",
+   "note": "Evening talk. Recovered from a mega-token. Opt2 kills the Chiaki route."
+  },
+  {
+   "id": "2015-353",
+   "engine": {
+    "script": "2015",
+    "event": 353
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Do whatever you want.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Of course I won't.",
+     "goto": null
+    }
+   ],
+   "date": "12/18~19? (drifts)",
+   "effects": {
+    "1": {
+     "aff": {
+      "setsuna": 1,
+      "koharu": 1
+     }
+    },
+    "2": {}
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c10",
+   "note": "Koharu/shop-staff scene. Date mapping approximate."
+  },
+  {
+   "id": "2016-468",
+   "engine": {
+    "script": "2016",
+    "event": 468
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Just come here.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "I'll come to you now.",
+     "goto": null
+    }
+   ],
+   "date": "12/20",
+   "effects": {
+    "1": {
+     "aff": {
+      "setsuna": 1
+     },
+     "clear": "chiaki"
+    },
+    "2": {
+     "aff": {
+      "chiaki": 1
+     }
+    }
+   },
+   "gated": {
+    "2": "unselectable if chiaki flag OFF"
+   },
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c11"
+  },
+  {
+   "id": "2017-242",
+   "engine": {
+    "script": "2017",
+    "event": 242
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Then I'll take one more",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "No~ I don't need any more",
+     "goto": null
+    }
+   ],
+   "date": "12/21",
+   "effects": {
+    "1": {
+     "aff": {
+      "setsuna": 1
+     }
+    },
+    "2": {
+     "aff_if_mari": {
+      "mari": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c12",
+   "note": "Kazusa manuscript for Setsuna. Opt2 Mari-critical (4th)."
+  },
+  {
+   "id": "2018-548",
+   "engine": {
+    "script": "2018",
+    "event": 548
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Oh~ who cares?",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Could she have…?",
+     "goto": null
+    }
+   ],
+   "date": "12/22",
+   "effects": {
+    "1": {},
+    "2": {
+     "aff": {
+      "koharu": 1
+     }
+    }
+   },
+   "gated": {
+    "2": "unselectable if koharu flag already OFF"
+   },
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c13"
+  },
+  {
+   "id": "2019-1488",
+   "engine": {
+    "script": "2019",
+    "event": 1488
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Call Chiaki",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Stop by the editorial office",
+     "goto": "2401"
+    },
+    {
+     "n": 3,
+     "text": "I had no right to think any of this",
+     "goto": "2501"
+    }
+   ],
+   "date": "12/24 ROUTER",
+   "effects": {},
+   "gated": {
+    "1": "needs chiaki aff>=3/flag ON",
+    "2": "needs mari aff>=3/flag ON"
+   },
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c14",
+   "note": "THE branch. Engine gotos: opt2->2401 (Mari line), opt3->2501 (common line), opt1 falls through toward the work/stay follow-up (Chiaki line via 2301 on opt2 there; Setsuna line via 2020 on opt1)."
+  },
+  {
+   "id": "2019-1516",
+   "engine": {
+    "script": "2019",
+    "event": 1516
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Go to work",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Stay alone",
+     "goto": null,
+     "play": "2301"
+    }
+   ],
+   "date": "12/24 cont.?",
+   "effects": {},
+   "gated": {},
+   "walkthrough": null,
+   "status": "NEEDS_PLAYTEST",
+   "walk": "cc-c15?",
+   "note": "'Go to work / Stay alone' sits in 2019 AFTER the router, so it executes on the opt1 fall-through path. The ONLY choice in the game directly followed by a CATCH jump: CATCH2 2301 resolves opt2 'Stay alone' -> 2301 (Chiaki line; 2301 and 2020 open with parallel Dec-25-morning scenes). Opt1 falls through toward 2020 (Setsuna line). Confirm the flag/affection framing in game."
+  },
+  {
+   "id": "2024-84",
+   "engine": {
+    "script": "2024",
+    "event": 84
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Go to the concert",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Go on the midnight shrine visit",
+     "goto": null
+    }
+   ],
+   "date": "12/31",
+   "effects": {},
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c16",
+   "note": "Setsuna-line New Year's Eve (inside 2020->2033): concert is the unselectable dummy, shrine visit confirms Setsuna. The Mari-line 12/31 is the separate 2503-126 choice. No further choices after."
+  },
+  {
+   "id": "2503-126",
+   "engine": {
+    "script": "2503",
+    "event": 126
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Go to the concert",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Stay here",
+     "goto": null
+    }
+   ],
+   "date": "12/31 (Mari line)",
+   "effects": {},
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "cc-c16m",
+   "note": "Mari-line New Year's Eve. Recovered from a mega-token; concert is the unselectable dummy, stay confirms Mari."
+  },
+  {
+   "id": "3003-1006",
+   "engine": {
+    "script": "3003",
+    "event": 1006
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "I mean to propose soon.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "We have been together for two years.",
+     "goto": null
+    }
+   ],
+   "date": "12/24 prologue",
+   "effects": {
+    "1": {
+     "aff": {
+      "s": 1
+     }
+    },
+    "2": {}
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c01",
+   "note": "Coda's opening router (SAVE here). Recovered from a mega-token. Opt1 -> Setsuna-True/Normal side; opt2 -> Kazusa-True/Cheating side."
+  },
+  {
+   "id": "3005-187",
+   "engine": {
+    "script": "3005",
+    "event": 187
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Never see Kazusa again",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "I met Kazusa",
+     "goto": null
+    }
+   ],
+   "date": "12/28~31? (drifts)",
+   "effects": {
+    "1": {
+     "flag": "ne_path"
+    },
+    "2": {
+     "aff": {
+      "s": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c02",
+   "note": "'Never see Kazusa again / I met Kazusa'. Opt1 SKIPS the next two choices. Preceded by the 12/24 prologue router in 3003 (coda-c01)."
+  },
+  {
+   "id": "3005-257",
+   "engine": {
+    "script": "3005",
+    "event": 257
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "That was all",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "I had reunited with Kazusa on Christmas Eve",
+     "goto": null
+    }
+   ],
+   "date": "12/31 cont.",
+   "effects": {
+    "1": {},
+    "2": {
+     "aff": {
+      "s": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c03"
+  },
+  {
+   "id": "3005-266",
+   "engine": {
+    "script": "3005",
+    "event": 266
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Not worth mentioning",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Something I wanted no one to know",
+     "goto": null
+    }
+   ],
+   "date": "12/31 cont.",
+   "effects": {
+    "1": {
+     "uwaki": 1
+    },
+    "2": {
+     "aff": {
+      "k": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c04"
+  },
+  {
+   "id": "3009-1347",
+   "engine": {
+    "script": "3009",
+    "event": 1347
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "I want to hear Setsuna's voice.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "I promised I wouldn't contact her first.",
+     "goto": null
+    }
+   ],
+   "date": "1/13",
+   "effects": {
+    "1": {
+     "aff": {
+      "s": 1
+     },
+     "uwaki": 1
+    },
+    "2": {}
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c05",
+   "note": "Opt1 SKIPS the next choice."
+  },
+  {
+   "id": "3009-1474",
+   "engine": {
+    "script": "3009",
+    "event": 1474
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "I'm doing it for Kazusa.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "There's nothing to worry about.",
+     "goto": null
+    }
+   ],
+   "date": "1/13 cont.",
+   "effects": {
+    "1": {
+     "aff": {
+      "k": 1
+     }
+    },
+    "2": {
+     "aff": {
+      "s": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c06"
+  },
+  {
+   "id": "3012-605",
+   "engine": {
+    "script": "3012",
+    "event": 605
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "I won't go",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "I can't go",
+     "goto": null
+    }
+   ],
+   "date": "1/18",
+   "effects": {
+    "1": {
+     "aff": {
+      "s": 1
+     }
+    },
+    "2": {
+     "uwaki": 1
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c07"
+  },
+  {
+   "id": "3012-951",
+   "engine": {
+    "script": "3012",
+    "event": 951
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Hold her.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Let her lean against my chest.",
+     "goto": null
+    }
+   ],
+   "date": "1/19",
+   "effects": {
+    "1": {
+     "aff": {
+      "k": 1
+     },
+     "uwaki": 1
+    },
+    "2": {
+     "aff": {
+      "s": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c08"
+  },
+  {
+   "id": "3013-751",
+   "engine": {
+    "script": "3013",
+    "event": 751
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Go home",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Keep watching her sleep",
+     "goto": null
+    }
+   ],
+   "date": "1/21",
+   "effects": {
+    "1": {
+     "aff": {
+      "s": 1
+     }
+    },
+    "2": {}
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c09",
+   "note": "Opt1 SKIPS the next choice."
+  },
+  {
+   "id": "3013-805",
+   "engine": {
+    "script": "3013",
+    "event": 805
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Keep this forever",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Want to hold her",
+     "goto": null
+    }
+   ],
+   "date": "1/21 cont.",
+   "effects": {
+    "1": {
+     "aff": {
+      "k": 1
+     }
+    },
+    "2": {
+     "uwaki": 1
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "NEEDS_PLAYTEST",
+   "walk": "coda-c10",
+   "note": "Sources disagree on mapping (Scribd vs gameline); held as gameline. Verify in game."
+  },
+  {
+   "id": "3013-1849",
+   "engine": {
+    "script": "3013",
+    "event": 1849
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Look away",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Meet her eyes",
+     "goto": null
+    }
+   ],
+   "date": "1/25",
+   "effects": {
+    "1": {
+     "aff": {
+      "s": 1
+     }
+    },
+    "2": {
+     "aff": {
+      "k": 1
+     }
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c11",
+   "note": "Present in v2.1.0; absent from v1.3.6 engine data."
+  },
+  {
+   "id": "3014-377",
+   "engine": {
+    "script": "3014",
+    "event": 377
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "I just wanted to see you",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Tell her the truth about Kazusa",
+     "goto": null
+    }
+   ],
+   "date": "1/27 DECIDER",
+   "effects": {
+    "1": {
+     "aff": {
+      "k": 1
+     }
+    },
+    "2": {
+     "flag": "s_honest"
+    }
+   },
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c12",
+   "note": "Opt2 required for Setsuna True."
+  },
+  {
+   "id": "3016-826",
+   "engine": {
+    "script": "3016",
+    "event": 826
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Let go of her hands",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Turn my face away",
+     "goto": "3901"
+    }
+   ],
+   "date": "1/29 FINAL ROUTER",
+   "effects": {},
+   "gated": {
+    "1": "selectable only if s_flag OFF"
+   },
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c13",
+   "note": "Engine goto: opt2->3901 (Kazusa side files). Opt1 skips the final choice -> cheating end."
+  },
+  {
+   "id": "3016-863",
+   "engine": {
+    "script": "3016",
+    "event": 863
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "I love Setsuna",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "I can't lie to Kazusa",
+     "goto": null
+    }
+   ],
+   "date": "1/29 FINAL",
+   "effects": {},
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c14",
+   "note": "'I love Setsuna' with s_flag ON -> Setsuna True; with s_flag OFF -> Normal. 'I can't lie to Kazusa' needs kazusa aff=6 -> Kazusa True."
+  },
+  {
+   "id": "3904_2-386",
+   "engine": {
+    "script": "3904_2",
+    "event": 386
+   },
+   "options": [
+    {
+     "n": 1,
+     "text": "Remove her glasses.",
+     "goto": null
+    },
+    {
+     "n": 2,
+     "text": "Kiss her with her glasses on.",
+     "goto": null
+    }
+   ],
+   "date": "2/14 (cheating only)",
+   "effects": {},
+   "gated": {},
+   "walkthrough": null,
+   "status": "EXPERT_SOURCED",
+   "walk": "coda-c15",
+   "note": "CG-only choice; both options converge. Save + take both."
+  }
+ ]
+}

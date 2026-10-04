@@ -1,0 +1,20 @@
+{
+  "name": "wa2-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "WHITE ALBUM 2 Extended Edition - BYOA web port (engine + QoL shell; no assets committed)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vitest": "^3.0.0"
+  }
+}

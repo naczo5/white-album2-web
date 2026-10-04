@@ -1,0 +1,114 @@
+{
+ "version": 1,
+ "status_note": "Route-end and provisional-chain overrides plus the one cross-line bridge. Every entry needs in-game confirmation (docs/QA.md).",
+ "terminals": {
+  "1013": {
+   "action": "chain",
+   "to": "2001",
+   "note": "IC->CC auto-transition (bare link + all sources agree)",
+   "status": "ENGINE_EVIDENCED"
+  },
+  "2033": {
+   "action": "chain",
+   "to": "3001",
+   "note": "Setsuna-line end -> Coda prologue (bare 3001 hint at 2033:155 + proposal-then-Coda content flow; numeric-next 2301 would be wrong)",
+   "status": "ENGINE_EVIDENCED"
+  },
+  "2322": {
+   "action": "end",
+   "ending": null,
+   "guess": "cc chiaki-line end (normal or true by flags)",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "2413": {
+   "action": "end",
+   "ending": null,
+   "guess": "cc-mari",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "2517": {
+   "action": "end",
+   "ending": null,
+   "guess": "cc koharu/setsuna/normal line end (flag-decided)",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "3024": {
+   "action": "chain",
+   "to": "3101",
+   "note": "numeric continuation; 31xx identity unknown (epilogue or route tail?)",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "3111": {
+   "action": "chain",
+   "to": "3201",
+   "note": "numeric continuation; see 3024",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "3211": {
+   "action": "end",
+   "ending": null,
+   "guess": "coda normal-side end? (mv21 concert tail)",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "3909": {
+   "action": "end",
+   "ending": null,
+   "guess": "coda kazusa-side end",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "5000": {
+   "action": "end",
+   "ending": null,
+   "note": "digital-novel intro; continuation 5001 not in en.pak (DEAD link)",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "5100": {
+   "action": "end",
+   "ending": null,
+   "note": "digital-novel intro; continuation 5101 not in en.pak (DEAD link)",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "5200": {
+   "action": "end",
+   "ending": null,
+   "note": "special menu stub; continuation 5201 not in en.pak",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "5300": {
+   "action": "end",
+   "ending": null,
+   "note": "special menu stub; continuation 5301 not in en.pak",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "5400": {
+   "action": "end",
+   "ending": null,
+   "note": "special menu stub; continuation 5401 has .bnr only, no .txt",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "7000": {
+   "action": "end",
+   "ending": null,
+   "note": "special contents menu/voice message?",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "7100": {
+   "action": "end",
+   "ending": null,
+   "note": "special contents menu/voice message?",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "7200": {
+   "action": "end",
+   "ending": null,
+   "note": "special contents menu/voice message?",
+   "status": "NEEDS_PLAYTEST"
+  },
+  "7300": {
+   "action": "end",
+   "ending": null,
+   "note": "special contents menu/voice message?",
+   "status": "NEEDS_PLAYTEST"
+  }
+ }
+}

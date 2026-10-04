@@ -1,0 +1,138 @@
+{
+ "unlock_gating": {
+  "cc_chiaki_true_option": "LOCKED until cc-chiaki-normal cleared once",
+  "closing_chapter": "unlocked by clearing introductory_chapter (auto-transition)",
+  "coda": "unlocked by clearing cc-setsuna (auto-transition into coda)",
+  "extra_fugutaiten": "unlocked by clearing coda-cheating (Special menu, no choices)",
+  "ic_replay_scenes": "extra scenes on 2nd IC playthrough and after cc-chiaki-normal",
+  "voice_message": "unlocked by clearing ALL endings"
+ },
+ "version": 1,
+ "status_note": "Endings join walkthrough consensus to engine file ranges. File->ending mapping is approximate until play-tested (see docs/QA.md). Statuses mirror flow.json.",
+ "endings": [
+  {
+   "id": "ic-end",
+   "chapter": "intro",
+   "name": "Introductory Chapter End",
+   "files": [
+    "1001-1013 + replay variants"
+   ],
+   "choices": 0,
+   "unlock": "read to end; linear",
+   "status": "EXPERT_SOURCED"
+  },
+  {
+   "id": "cc-normal1",
+   "chapter": "closing",
+   "name": "CC Normal End (common bad end)",
+   "files": [
+    "25xx line"
+   ],
+   "unlock": "Avoid all heroine flags; 2019-1488 opt3, then stay-alone path without Setsuna affinity",
+   "status": "NEEDS_PLAYTEST"
+  },
+  {
+   "id": "cc-koharu",
+   "chapter": "closing",
+   "name": "Sugiura Koharu End",
+   "files": [
+    "25xx line"
+   ],
+   "unlock": "Koharu-favoring chain (2005/2009 accompany, 2018 opt2) + 2019-1488 opt3",
+   "epilogue": true,
+   "status": "EXPERT_SOURCED"
+  },
+  {
+   "id": "cc-mari",
+   "chapter": "closing",
+   "name": "Kazaoka Mari End",
+   "files": [
+    "2401-2413"
+   ],
+   "unlock": "Mari chain (2011/2017 opt2) + 2019-1488 opt2 (gated mari aff>=3) + 2503-126 opt2 (Stay here)",
+   "epilogue": true,
+   "status": "EXPERT_SOURCED"
+  },
+  {
+   "id": "cc-chiaki-normal",
+   "chapter": "closing",
+   "name": "Izumi Chiaki Normal End",
+   "files": [
+    "23xx line?"
+   ],
+   "unlock": "Chiaki chain (2007 opt1) + 2019-1488 opt1 (gated chiaki aff>=3). UNLOCKS 12/1 opt1 + IC extra scene.",
+   "gates": "cc_chiaki_true_option",
+   "status": "NEEDS_PLAYTEST"
+  },
+  {
+   "id": "cc-chiaki-true",
+   "chapter": "closing",
+   "name": "Izumi Chiaki True End",
+   "files": [
+    "23xx line?"
+   ],
+   "unlock": "PREREQ cc-chiaki-normal. Restart CC; 2003-241 opt1, same chain, 2019-1488 opt1.",
+   "status": "NEEDS_PLAYTEST"
+  },
+  {
+   "id": "cc-setsuna",
+   "chapter": "closing",
+   "name": "Ogiso Setsuna End",
+   "files": [
+    "25xx line"
+   ],
+   "unlock": "Avoid Koharu/Mari/Chiaki flags, keep Setsuna affinity; 2019-1488 opt3 + shrine visit. Auto-transitions into Coda.",
+   "gates": "coda",
+   "status": "NEEDS_PLAYTEST"
+  },
+  {
+   "id": "coda-normal",
+   "chapter": "coda",
+   "name": "Coda Normal End",
+   "unlock": "Fail Kazusa and Setsuna-True flag sets; typical: 3016-863 opt1 without s_flag.",
+   "status": "EXPERT_SOURCED"
+  },
+  {
+   "id": "coda-cheating",
+   "chapter": "coda",
+   "name": "Cheating End (Kazusa Normal)",
+   "unlock": "Kazusa-leaning chain + 3016-826 opt1 (skips final choice). UNLOCKS Extra Episode.",
+   "gates": "extra_fugutaiten",
+   "status": "EXPERT_SOURCED"
+  },
+  {
+   "id": "coda-kazusa-true",
+   "chapter": "coda",
+   "name": "Touma Kazusa True End",
+   "unlock": "Kazusa chain (kazusa aff=6) + 3016-826 opt2 -> 3901 + 3016-863 opt2.",
+   "status": "EXPERT_SOURCED"
+  },
+  {
+   "id": "coda-setsuna-true",
+   "chapter": "coda",
+   "name": "Ogiso Setsuna True End (finale)",
+   "unlock": "Setsuna-honest chain (3014-377 opt2) + 3016-826 opt2 + 3016-863 opt1 with s_flag.",
+   "status": "EXPERT_SOURCED"
+  },
+  {
+   "id": "extra-fugutaiten",
+   "chapter": "coda",
+   "name": "Extra Episode: To You, My Irreconcilable",
+   "choices": 0,
+   "unlock": "clear coda-cheating; Special menu; linear.",
+   "status": "EXPERT_SOURCED"
+  }
+ ],
+ "recommended_order": [
+  "ic-end",
+  "cc-koharu",
+  "cc-chiaki-normal",
+  "cc-mari",
+  "cc-chiaki-true",
+  "cc-setsuna",
+  "coda-normal",
+  "coda-cheating",
+  "coda-kazusa-true",
+  "coda-setsuna-true"
+ ]
+}
