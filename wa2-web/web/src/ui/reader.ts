@@ -238,9 +238,14 @@ function eventsBefore(save: SaveData): ScenarioEvent[] {
 
 function stageImageHint(save: SaveData): string | null {
   const evs = eventsBefore(save);
+  const ch = chapterOfScript(save.position.script);
   for (let i = evs.length - 1; i >= 0; i--) {
     const e = evs[i];
-    if (e.t === "image") return imageUrl(e.file);
+    if (e.t === "image") {
+      const url = imageUrl(e.file, ch);
+      if (url) return url;
+      // fall through to older backdrops when the latest is missing
+    }
   }
   return null;
 }
@@ -256,9 +261,13 @@ function stageImageHintLabel(save: SaveData): string {
 
 function stageBgmHint(save: SaveData): string | null {
   const evs = eventsBefore(save);
+  const ch = chapterOfScript(save.position.script);
   for (let i = evs.length - 1; i >= 0; i--) {
     const e = evs[i];
-    if (e.t === "bgm") return bgmUrl(e.file);
+    if (e.t === "bgm") {
+      const url = bgmUrl(e.file, ch);
+      if (url) return url;
+    }
   }
   return null;
 }

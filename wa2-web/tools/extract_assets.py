@@ -143,6 +143,14 @@ def handle_movie(pak_path: str, dst_mp4: str, name: str, missing: list) -> bool:
     return True
 
 
+def _pak_tag(pak: str, game: str) -> str:
+    """Chapter tag from archive location (main vs IC dirs)."""
+    rel = os.path.relpath(pak, game).split(os.sep)
+    if len(rel) > 1 and rel[0].lower() == "ic":
+        return "ic"
+    return ""
+
+
 def sniff_audio_ext(payload: bytes) -> str:
     """Identify nameless voice payloads: RIFF WAV, Ogg, or Leaf .w."""
     if payload[:4] == b"RIFF":
@@ -184,12 +192,15 @@ def extract_lac_nested(lac_path: str, out_dir: str) -> list[tuple[str, int]]:
     for i in range(count):
         raw = data[pos:pos + 24]
         (_a, _b, size, off) = struct.unpack_from("<IIII", data, pos + 24)
+        name = ""
         try:
-            name = raw.split(b"\x00")[0].decode("cp932")
-            if not name or any(ord(c) < 32 for c in name):
-                raise ValueError
+            cand = raw.split(b"\x00")[0].decode("cp932")
         except Exception:
-            name = ""
+            cand = ""
+        ext = cand.rsplit(".", 1)[-1].lower() if "." in cand else ""
+        if ext in ("w", "wav", "ogg", "g", "tga", "bmp", "txt", "px", "ani",
+                   "amp", "bnr", "scc", "dat", "fnc", "psh"):
+            name = cand
         entries.append((name or f"voice-{i:05d}", size, off))
         pos += 40
     # sanity: entries must tile inside the file
@@ -319,8 +330,13 @@ def run_pool(jobs: list[tuple], manifest: dict, missing: list,
                 dst = emit(sub, stem, ".png")
                 with open(dst, "wb") as f:
                     f.write(web)
-                manifest["images"][name] = f"{sub}/{stem}.png"
-                manifest["images"][name.lower()] = f"{sub}/{stem}.png"
+                rel = os.path.relpath(dst, args.out)
+                manifest["images"][name] = rel
+                manifest["images"][name.lower()] = rel
+                if "/" in sub:  # chapter-namespaced (ic/...): extra key
+                    ns = sub.split("/")[0]
+                    manifest["images"][f"{ns}/{name}"] = rel
+                    manifest["images"][f"{ns}/{name.lower()}"] = rel
             elif kind == "audio-w":
                 dst = emit(sub, stem, ".wav")
                 with open(dst, "wb") as f:
@@ -413,28 +429,42 @@ def main() -> None:
                 iname = os.path.basename(name)
                 if ext in ("w", "wav"):
                     sub = voice_or_se(base)
-                    lac_jobs.append(("audio-w", iname, 0, stored, sub,
-                                     iname.rsplit(".", 1)[0], sub))
+                    tag = _pak_tag(pak, args.game)
+                    key = f"{tag}-{iname}" if tag else iname
+                    lac_jobs.append(("audio-w", key, 0, stored, sub,
+                                     key.rsplit(".", 1)[0], sub))
                 elif ext == "g":
                     stem = iname.rsplit(".", 1)[0]
-                    dst = emit("bgm", stem, ".ogg")
+                    tag = _pak_tag(pak, args.game)
+                    key = f"{tag}-{iname}" if tag else iname
+                    sub = f"{tag}/bgm" if tag else "bgm"
+                    dst = emit(sub, stem, ".ogg")
                     if stored[:4] == b"OggS":
                         with open(dst, "wb") as f:
                             f.write(stored)
-                        manifest["bgm"][iname] = f"bgm/{stem}.ogg"
+                        manifest["bgm"][key] = os.path.relpath(dst, args.out)
                     else:
                         missing.append(f"{base}:{iname}: .g needs arc_unpacker")
                 elif ext in ("tga", "bmp"):
+                    tag = _pak_tag(pak, args.game)
                     stem = iname.rsplit(".", 1)[0]
+                    sub = image_sub(iname)
+                    if tag:
+                        sub = f"{tag}/{sub}"
                     lac_jobs.append(("image", iname, 0, stored,
-                                     image_sub(iname), stem, "images"))
+                                     sub, stem, "images"))
                 elif ext == "px":
                     missing.append(f"{base}:{iname}: .px needs arc_unpacker")
                 elif ext == "ogg":
-                    dst = emit("bgm", iname.rsplit(".", 1)[0], ".ogg")
+                    sub = voice_or_se(base)
+                    tag = _pak_tag(pak, args.game)
+                    key = f"{tag}-{iname}" if tag else iname
+                    if tag:
+                        sub = f"{tag}/{sub}"
+                    dst = emit(sub, key.rsplit(".", 1)[0], ".ogg")
                     with open(dst, "wb") as f:
                         f.write(stored)
-                    manifest["bgm"][iname] = os.path.relpath(dst, args.out)
+                    manifest[sub][key] = os.path.relpath(dst, args.out)
                 # ignore the rest (txt/bnr/cues handled elsewhere)
             continue
         lname = base.lower()
@@ -456,19 +486,30 @@ def main() -> None:
                 is_en = os.path.basename(pak).lower().startswith("en") or \
                     "en.pak" in os.path.basename(pak).lower()
                 sub = "ui" if is_en else image_sub(name)
+                tag = _pak_tag(pak, args.game)
+                if tag and not is_en:
+                    sub = f"{tag}/{sub}"
                 jobs.append(("image", name, flag, stored, sub, stem,
                              "images"))
             elif ext == "w":
                 sub = voice_or_se(base)
-                jobs.append(("audio-w", name, flag, stored, sub, stem, sub))
+                tag = _pak_tag(pak, args.game)
+                key = f"{tag}-{name}" if tag else name
+                if tag:
+                    sub = f"{tag}/{sub}"
+                jobs.append(("audio-w", key, flag, stored, sub,
+                             key.rsplit(".", 1)[0], sub))
             elif ext == "g":
-                dst = emit("bgm", stem, ".ogg")
+                tag = _pak_tag(pak, args.game)
+                key = f"{tag}-{name}" if tag else name
+                sub = f"{tag}/bgm" if tag else "bgm"
+                dst = emit(sub, stem, ".ogg")
                 # plain-Ogg passthrough when possible; else delegate
                 _k, payload = decode_entry(name, flag, stored)
                 if payload[:4] == b"OggS":
                     with open(dst, "wb") as f:
                         f.write(payload)
-                    manifest["bgm"][name] = f"bgm/{stem}.ogg"
+                    manifest["bgm"][key] = os.path.relpath(dst, args.out)
                 else:
                     missing.append(f"{base}:{name}: .g needs arc_unpacker leaf/g")
             elif ext == "px":

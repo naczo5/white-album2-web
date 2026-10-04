@@ -33,13 +33,25 @@ function lookup(table: Record<string, string> | undefined, key: string): string 
   return lower ?? null;
 }
 
-export function imageUrl(file: string): string | null {
+export function imageUrl(file: string, chapter?: string): string | null {
+  if (chapter === "intro") {
+    const ic = lookup(manifest?.images, `ic/${file}`) ??
+      lookup(manifest?.images, `ic/${file.toLowerCase()}`);
+    if (ic) return ic;
+  }
   return lookup(manifest?.images, file);
 }
 
-export function bgmUrl(file: string): string | null {
+export function bgmUrl(file: string, chapter?: string): string | null {
   // Engine cues use .AMP names; extracted web audio keeps the stem.
   const stem = file.replace(/\.[^.]+$/, "");
+  const cands = chapter === "intro"
+    ? [`ic-${file}`, `ic-${stem}.ogg`, `ic-${stem}.mp3`]
+    : [];
+  for (const c of cands) {
+    const hit = lookup(manifest?.bgm, c);
+    if (hit) return hit;
+  }
   return (
     lookup(manifest?.bgm, file) ??
     lookup(manifest?.bgm, `${stem}.ogg`) ??
