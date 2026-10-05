@@ -52,10 +52,13 @@ python3 tools/fetch_mao.py IR_MAIN IR_SPECIAL --clone /path/to/mao-clone
 cd web && npx vitest run && npx tsc --noEmit && npm run build
 ```
 
-Current status: 22 pytest + 27 vitest green; full-game sim walks 202/245
+Current status: 21 pytest + 35 vitest green; full-game sim walks 202/245
 scripts stall-free (43 unvisited = flag-gated scene variants awaiting
 in-game verification); MAO v2.1.0 drift audit 0.986 containment over
 193 game scripts; voices wired (46k clips via XOR-decoded line addresses);
-movies resolve; exact .AMP color LUTs; sprite overlays; typewriter/auto/
-skip/volumes; novels + Special menu. Open: BGM track mapping + SE triggers
-(both .bnr-driven). Details in `docs/QA.md`.
+movies resolve; exact .AMP color LUTs; sprite overlays with .bnr fades;
+typewriter/auto/skip/volumes (voice + BGM); novels + Special menu.
+Music: BGM scene→track map solved statically (.bnr opcode (4,158), 1288
+plays across 242 scripts, loop pairs preferred). Open residuals: 11
+file-less BGM tracks (sustain), SE trigger mapping (seam live, nothing
+guessed), dynamic sprite slots, flag/variant rules. Details in `docs/QA.md`.

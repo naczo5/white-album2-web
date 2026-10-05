@@ -43,8 +43,15 @@ working with placeholders. Leaf `.px` sprites and `.g` audio need
 `arc_unpacker` (`--dec=leaf/...`; archived GPLv3 tool) — see
 `tools/extract_assets.py` for the command ladder; contributions welcome.
 
-Voice: `VOICE.PAK` dumps in archive order; per-line voice wiring is an
-open QA item (docs/QA.md §6) — files ship browsable, auto-play follows.
+Voice: `VOICE.PAK` filenames are XOR-0xFF `{script}_{token}_{take}.OGG`;
+the parser records the raw token index (`tok`) on every say/narrate event
+and the player auto-plays the clip (46k lines, ic-namespaced).
+BGM/SE: `BGM.PAK`/`SE.PAK` names are the same XOR-0xFF cipher
+(`BGM_001_A.OGG`, `SE_0000.WAV`); the extractor decodes them to real names
+(older builds misnamed them `voice-*` — rerun `tools/fix_audio_names.py`
+once per assets copy to repair). Music timing comes from `.bnr` opcode
+(4,158) via `tools/build_bgm.py` → `data/bgm.json` (build artifact, kept
+next to the other generated data).
 
 ## 3. Play
 

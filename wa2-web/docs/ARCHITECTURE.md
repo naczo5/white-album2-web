@@ -55,6 +55,10 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
 - Movie `mvNN` cues resolve to `mvNN0`/`mvNN1` file pairs (transcoded MP4).
 - `.AMP` cues are image color-grade LUTs, not music: exact 256-entry RGB
   curves ship in data/luts.json and render via SVG feComponentTransfer
-  (CSS fallback); BGM track selection is .bnr-driven (open, docs/QA.md).
-- Sprites: grp-layer event art renders as fullscreen overlays; dynamic
-  standing-sprite compositing awaits .bnr positions (seam documented).
+  (CSS fallback); BGM track selection is .bnr opcode (4,158), decoded by
+  tools/build_bgm.py into a data/bgm.json timeline the player follows
+  (loop _A/_B pairs preferred; 11 file-less tracks sustain previous BGM).
+- Sprites: grp-layer event art renders as fullscreen overlays with .bnr
+  fade timing (tools/decode_bnr.py); standing-sprite prefix table in
+  data/sprites.json; per-line identity + slots await .bnr integer-slot
+  decode (nothing guessed on stage).

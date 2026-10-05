@@ -151,18 +151,19 @@ def _pak_tag(pak: str, game: str) -> str:
     return ""
 
 
-def decode_voice_name(raw: bytes) -> str:
-    """XOR-0xFF filename cipher -> `{script}_{line}_{take}.OGG`, or ''.
+def decode_lac_name(raw: bytes) -> str:
+    """XOR-0xFF filename cipher -> audio name, or ''.
 
-    Voice archive names are obfuscated with a single-byte XOR 0xFF.
-    Decoded names carry the engine line address directly.
+    Nested BGM/SE/VOICE LAC names are obfuscated with single-byte XOR 0xFF.
+    Unlike decode_voice_name (voice-line shaped `{script}_{line}_{take}`),
+    this accepts any audio filename (`BGM_001_A.OGG`, `SE_0000.WAV`, ...).
     """
     try:
         s = bytes(b ^ 0xFF for b in raw.split(b"\x00")[0]).decode("ascii")
     except Exception:
         return ""
     import re as _re
-    if _re.match(r"^[A-Za-z0-9]+_[0-9]+_[0-9]+\.[A-Za-z0-9]+$", s):
+    if _re.match(r"^[\w\-]+\.(ogg|wav|w|g)$", s, _re.IGNORECASE):
         return s
     return ""
 
@@ -185,7 +186,7 @@ def extract_voice(pak_path: str, out_sub: str, args, manifest: dict,
     dupes = 0
     for i in range(count):
         off = 8 + i * 40
-        name = decode_voice_name(data[off:off + 24])
+        name = decode_lac_name(data[off:off + 24])
         if not name:
             continue
         (_a, _b, size, doff) = struct.unpack_from("<IIII", data, off + 24)
@@ -233,9 +234,10 @@ def sniff_audio_ext(payload: bytes) -> str:
 def extract_lac_nested(lac_path: str, out_dir: str) -> list[tuple[str, int]]:
     """Extract a nested audio LAC (BGM/SE/VOICE): 40-byte entries.
 
-    Layout differs from installer LACs: name[24] (often obfuscated bytes,
-    not decodable) + u32 + u32 + u32 size + u32 offset (absolute). Files
-    are contiguous (offset[i+1] == offset[i] + size[i]). Nameless entries
+    Layout differs from installer LACs: name[24] (XOR-0xFF obfuscated like
+    voice archives, e.g. `BGM_001_A.OGG`, `SE_0000.WAV`) + u32 + u32 + u32
+    size + u32 offset (absolute). Files are contiguous
+    (offset[i+1] == offset[i] + size[i]). Only genuinely nameless entries
     get synthesized voice-%05d ids; extensions are sniffed from payload
     magic by the caller.
     """
@@ -253,14 +255,20 @@ def extract_lac_nested(lac_path: str, out_dir: str) -> list[tuple[str, int]]:
         raw = data[pos:pos + 24]
         (_a, _b, size, off) = struct.unpack_from("<IIII", data, pos + 24)
         name = ""
-        try:
-            cand = raw.split(b"\x00")[0].decode("cp932")
-        except Exception:
-            cand = ""
-        ext = cand.rsplit(".", 1)[-1].lower() if "." in cand else ""
-        if ext in ("w", "wav", "ogg", "g", "tga", "bmp", "txt", "px", "ani",
-                   "amp", "bnr", "scc", "dat", "fnc", "psh"):
-            name = cand
+        # XOR-0xFF first (BGM/SE/VOICE real names); cp932 fallback for
+        # any plain entries.
+        xord = decode_lac_name(raw)
+        if xord:
+            name = xord
+        else:
+            try:
+                cand = raw.split(b"\x00")[0].decode("cp932")
+            except Exception:
+                cand = ""
+            ext = cand.rsplit(".", 1)[-1].lower() if "." in cand else ""
+            if ext in ("w", "wav", "ogg", "g", "tga", "bmp", "txt", "px", "ani",
+                       "amp", "bnr", "scc", "dat", "fnc", "psh"):
+                name = cand
         entries.append((name or f"voice-{i:05d}", size, off))
         pos += 40
     # sanity: entries must tile inside the file

@@ -7,9 +7,9 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit (tools) | `pytest tests/` | 18 passed |
+| unit (tools) | `pytest tests/` | 21 passed (bnr 6 + kcap 4 + parse_txt 11) |
 | corpus (BYOA) | `WA2_EN_PAK=... pytest tests/` | 205+49 files, census, routers, mega-choices, warnings allowlist |
-| web unit | `cd web && vitest run` | 21 passed (text/router/save) |
+| web unit | `cd web && vitest run` | 35 passed (text/router/save/assets/bgm) |
 | types+build | `tsc --noEmit && npm run build` | clean |
 | flow parity | `check_flow.py IR flow.json` | 32/32 nodes, wording exact |
 | full sim | `simulate.py … routers/first/chiaki/mari/koharu/special` | 202/245 scripts, 0 stalls |
@@ -36,31 +36,58 @@ is proven, what is assumed, and exactly how to close each gap.
 4. **2019-764 frame**: confirm work/stay belongs to the opt1 path and
    2501-path Koharu/Setsuna/Normal split is flag-only (no missing choice).
 5. **Endings mapping**: file-end → ending screen (5 route terminals).
-6. **BGM track mapping**: `.AMP` cues proved to be image LUTs, not music;
-   real BGM selection is .bnr-driven (LSCR opcodes unmapped; static
-   rarity/pair/dominant-value analyses found no track signal). Options:
-   scripted Wine playthrough with audio fingerprinting (blocked earlier
-   by session hijacking — needs a hands-off window), or .bnr VM RE.
-7. **SE triggers**: todokanai/subtitles covers 46 voice-overlay blocks,
-   not general sound effects; SE mapping is .bnr-driven (open).
-8. **Dynamic sprites**: grp-layer event art displays; standing-sprite
-   (aco/f parts) identity + positions need .bnr or playtest mapping
-   (data seam ready: speaker -> files + slot).
+6. **BGM track mapping — SOLVED statically** (tools/proto_bgm_report.md):
+   `.bnr` opcode (4,158) is BGM play, pushes[0] = track (`BGM_%03d`,
+   engine derives `_a/_b` loop pair), pushes[1] = fade; stop shape is
+   ops-based `(4,5),(3,X),(4,158)`; track 0 = pause (normalized to stop).
+   Provenance: exe sprintf/call-chain disassembly + zero-counterexample
+   corpus census. Player timeline in data/bgm.json (242 scripts,
+   1288 plays, 10 stops), test-pinned (play/stop/sustain/missing).
+   Residuals: 11 cued tracks (4, 5, 19-22, 28, 29, 32, 78, 79) have no
+   file in either BGM.PAK — player sustains previous BGM there; placement
+   is scene-exact, ±few lines within a scene (JP-counter vs EN-token drift).
+7. **SE triggers**: files recovered with real names (`SE_%04d`, 1962 clips;
+   pipeline bug fixed + one-shot migration tools/fix_audio_names.py);
+   player seam live (seUrl + confidence-gated triggers + volume element).
+   Trigger mapping stays open: the ascending-integer-run candidate shape
+   (1008_030.bnr offsets 5029-5485) is documented in docs/PARSING.md, but
+   corpus-wide filters catch JP token counters too (false positives
+   verified), so nothing is auto-played rather than guessing wrong.
+8. **Dynamic sprites**: grp-layer event art displays with .bnr fade timing;
+   standing sprites inventoried (ako face-variants 322×684 need no
+   compositing; kaz/set/… full-height slot canvases; prefix table in
+   data/sprites.json). Per-line identity + screen slots need .bnr
+   integer-slot decode (no slot floats exist in .bnr — positions are
+   integer records or engine defaults). Nothing is guessed on stage.
 9. **Voice take semantics**: third filename field (04/98/00/…) unmapped;
    one clip per line assumed (6 multi-clip lines: first wins).
-7. **Coda 31xx/32xx identity** (epilogues vs route tails).
-8. **v1.3.6→v2.1.0 structural diff**: 2007 + 3013 choices exist only in
+10. **Coda 31xx/32xx identity** (epilogues vs route tails).
+11. **v1.3.6→v2.1.0 structural diff**: 2007 + 3013 choices exist only in
    v2.1.0; build is version-agnostic but flow.json here is v2.1.0.
-9. **2021/2022/2023 → 2025 SWITCH skips**: consecutive bare-jump pairs
+12. **2021/2022/2023 → 2025 SWITCH skips**: consecutive bare-jump pairs
    offer skipping ahead (including skipping the 2024 12/31 choice).
    Router plays everything linearly; plausibly flag-gated short paths.
-10. **3016 → 3024 bare hint**: mid-tail either/or pair with the
+13. **3016 → 3024 bare hint**: mid-tail either/or pair with the
     `CATCH3 → 3017` marker (same pattern as the 3015 switch). The port
     reads `3016→3017→…→3024` linearly (content-coherent); confirm.
-11. **3023:536 `CATCH3 → {3201, 3101}`** vs linear `3023→3024`: same
-    question as 10, same default-plays-linear treatment.
+14. **3023:536 `CATCH3 → {3201, 3101}`** vs linear `3023→3024`: same
+    question as 13, same default-plays-linear treatment.
 
 ## Subagent verification log
+
+- 2026-10-05: three static-only research passes (no game execution):
+  BGM opcode RE (found (4,158) + exe call chain + corpus census, now
+  tools/proto_bgm.py + tools/build_bgm.py + data/bgm.json timeline),
+  sprite/SE inventory (face-variant finding, SE LAC naming bug, prefix
+  table data/sprites.json, tools/decode_bnr.py fades/cams), BYOA + static
+  QA audit (clean tree, gap list closed out below).
+  - audio naming bug fixed (decode_lac_name) + one-shot migration
+    (tools/fix_audio_names.py): 165 BGM + 1962 SE files renamed to real
+    `BGM_*`/`SE_*` names, manifest tables rebuilt namespaced (ic/ keys).
+  - player: BGM timeline playback + bgm volume, confidence-gated SE seam,
+    .bnr fade timing on overlays, se audio element, bgm/bnr data loading.
+  - static-fix batch from the audit: .gitignore media patterns, QA
+    numbering + test counts, BYOA voice paragraph, LEGAL label count.
 
 - 2026-10-04: three research passes (MAO release survey, Leaf engine
   survey, local asset inventory) — findings integrated, specs corrected

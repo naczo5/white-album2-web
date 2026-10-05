@@ -5,7 +5,7 @@ import type { SaveData } from "./engine/types";
 import { loadGameData, type GameData } from "./ui/data";
 import { renderFlowchart } from "./ui/flowchart";
 import { renderGuide, type GuideData } from "./ui/guide";
-import { installLutFilters, pushLog, renderReader, setScenarioLookup, skipLatches } from "./ui/reader";
+import { installLutFilters, pushLog, renderReader, setBgmLookup, setBnrLookup, setScenarioLookup, skipLatches } from "./ui/reader";
 import { renderSaves } from "./ui/saves";
 import "./style.css";
 
@@ -17,6 +17,7 @@ interface Settings {
   textSpeed: number; // chars/sec, 0 = instant
   autoDelay: number; // ms, 0 = off
   voiceVol: number; // 0..1
+  bgmVol: number; // 0..1
 }
 
 const settings: Settings = {
@@ -25,6 +26,7 @@ const settings: Settings = {
   textSpeed: Number(localStorage.getItem("wa2web.textSpeed") ?? 45),
   autoDelay: Number(localStorage.getItem("wa2web.autoDelay") ?? 0),
   voiceVol: Number(localStorage.getItem("wa2web.voiceVol") ?? 0.9),
+  bgmVol: Number(localStorage.getItem("wa2web.bgmVol") ?? 0.7),
 };
 
 let skipping = false;
@@ -35,6 +37,7 @@ function persistSettings(): void {
   localStorage.setItem("wa2web.textSpeed", String(settings.textSpeed));
   localStorage.setItem("wa2web.autoDelay", String(settings.autoDelay));
   localStorage.setItem("wa2web.voiceVol", String(settings.voiceVol));
+  localStorage.setItem("wa2web.bgmVol", String(settings.bgmVol));
 }
 
 function clampFont(n: number): number {
@@ -53,6 +56,8 @@ async function boot(): Promise<void> {
   data = await loadGameData();
   router = new Router(data.scenarios, data.flow, data.links, data.terminals);
   setScenarioLookup((script) => router.scripts.get(script));
+  setBgmLookup((script) => data.bgm?.cues[script]);
+  setBnrLookup((script) => data.bnr?.recs[script]);
   await loadManifest("assets/manifest.json");
   try {
     const lutRes = await fetch("data/luts.json");
@@ -174,6 +179,7 @@ function render(): void {
         textSpeed: settings.textSpeed,
         autoDelay: settings.autoDelay,
         voiceVol: settings.voiceVol,
+        bgmVol: settings.bgmVol,
       },
       skipping,
       ...hooks,
@@ -267,6 +273,7 @@ function render(): void {
       <div><label>Text speed <input type="range" id="ts" min="0" max="120" step="5" value="${settings.textSpeed}"> <span class="dim">${settings.textSpeed === 0 ? "instant" : settings.textSpeed + "/s"}</span></label></div>
       <div><label>Auto-play delay <input type="range" id="ad" min="0" max="8000" step="500" value="${settings.autoDelay}"> <span class="dim">${settings.autoDelay === 0 ? "off" : (settings.autoDelay / 1000) + "s"}</span></label></div>
       <div><label>Voice volume <input type="range" id="vv" min="0" max="100" value="${Math.round(settings.voiceVol * 100)}"></label></div>
+      <div><label>BGM volume <input type="range" id="bv" min="0" max="100" value="${Math.round(settings.bgmVol * 100)}"></label></div>
       <div><button class="back" id="back">← Back</button></div></div>`;
     const sp = app.querySelector("#sp") as HTMLInputElement;
     sp.onchange = () => {
@@ -294,6 +301,11 @@ function render(): void {
     const vv = app.querySelector("#vv") as HTMLInputElement;
     vv.oninput = () => {
       settings.voiceVol = Number(vv.value) / 100;
+      persistSettings();
+    };
+    const bv = app.querySelector("#bv") as HTMLInputElement;
+    bv.oninput = () => {
+      settings.bgmVol = Number(bv.value) / 100;
       persistSettings();
     };
     app.querySelector("#back")?.addEventListener("click", () => { screen = "title"; render(); });

@@ -1,15 +1,16 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
-import { bgmUrl, imageUrl, movieUrl, voiceUrl } from "../engine/assets";
+import { bgmTrackUrl, imageUrl, movieUrl, seUrl, voiceUrl } from "../engine/assets";
 import { Router, chapterOfScript } from "../engine/router";
 import { plainText, renderText, spanize } from "../engine/text";
-import type { Position, SaveData, ScenarioEvent } from "../engine/types";
+import type { BgmData, BnrData, Position, SaveData, ScenarioEvent } from "../engine/types";
 import { writeAutosave } from "../engine/save";
 
 export interface ReaderSettings {
   textSpeed: number; // chars per second, 0 = instant
   autoDelay: number; // ms after line completes, 0 = off
   voiceVol: number; // 0..1
+  bgmVol: number; // 0..1
 }
 
 let autoTimer: number | null = null;
@@ -84,7 +85,8 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     <div class="choices" id="choices"></div>
     <div class="advance-hint" id="hint">click / space to continue</div>`;
 
-  paintStage(el.querySelector("#stage") as HTMLElement, save);
+  paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol);
+  fireSe(save);
   const box = el.querySelector("#textbox") as HTMLElement;
   const ch = el.querySelector("#choices") as HTMLElement;
   const hint = el.querySelector("#hint") as HTMLElement;
@@ -367,7 +369,7 @@ export function pushLog(router: Router, save: SaveData): void {
   }
 }
 
-function paintStage(stage: HTMLElement, save: SaveData): void {
+function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number): void {
   const url = stageImageHint(save);
   const prevPh = stage.querySelector(":scope > .stage-ph");
   if (url) {
@@ -385,20 +387,8 @@ function paintStage(stage: HTMLElement, save: SaveData): void {
   }
   stage.style.filter = stageFilter(save);
   paintOverlay(stage, save);
-  const bgm = stageBgmHint(save);
-  const audio = document.getElementById("bgm") as HTMLAudioElement | null;
-  if (!audio) return;
-  if (bgm) {
-    if (audio.dataset.cur !== bgm) {
-      audio.dataset.cur = bgm;
-      audio.src = bgm;
-      audio.play().catch(() => undefined);
-    }
-  } else if (audio.dataset.cur) {
-    delete audio.dataset.cur;
-    audio.pause();
-    audio.removeAttribute("src");
-  }
+  paintBgm(save, bgmVol);
+  paintFade(stage, save);
 }
 
 // These walk the loaded scenarios via a module-level ref set by main.ts.
@@ -465,20 +455,143 @@ function paintOverlay(stage: HTMLElement, save: SaveData): void {
   img.dataset.cur = url;
   img.src = url;
   img.alt = "";
+  const ms = bnrFadeAt(save) ?? 0;
+  if (ms > 0) {
+    img.style.opacity = "0";
+    img.style.transition = `opacity ${ms}ms`;
+    requestAnimationFrame(() => {
+      img.style.opacity = "1";
+    });
+  }
   stage.appendChild(img);
 }
 
-function stageBgmHint(save: SaveData): string | null {
-  const evs = eventsBefore(save);
+/** BGM timeline state at the current position (data/bgm.json, .bnr (4,158)).
+ * Latest cue at/before the event wins; files with no cue inherit prior BGM
+ * (sustain); `missing` tracks (no file in BGM.PAKs) also sustain — the
+ * player never inserts silence except on explicit stops. */
+export function bgmCueAt(save: SaveData): { kind: "play"; url: string } | { kind: "stop" } | { kind: "sustain" } {
+  const cues = bgmLookup?.(save.position.script);
+  if (!cues || cues.length === 0) return { kind: "sustain" };
   const ch = chapterOfScript(save.position.script);
-  for (let i = evs.length - 1; i >= 0; i--) {
-    const e = evs[i];
-    if (e.t === "bgm") {
-      const url = bgmUrl(e.file, ch);
-      if (url) return url;
+  return resolveBgmTimeline(cues, save.position.event, (t) => bgmTrackUrl(t, ch));
+}
+
+/** Pure BGM timeline resolver (DOM-free; test-pinned).
+ * Latest cue at/before `event` wins; stops silence; missing tracks and
+ * unresolvable files sustain previous BGM (never silence for a play cue). */
+export function resolveBgmTimeline(
+  cues: { ev: number; track?: number; stop?: boolean; missing?: boolean }[],
+  event: number,
+  resolve: (track: number) => string | null,
+): { kind: "play"; url: string } | { kind: "stop" } | { kind: "sustain" } {
+  let pending: { kind: "play"; url: string } | { kind: "stop" } | null = null;
+  for (const c of cues) {
+    if (c.ev > event) break;
+    if (c.stop) {
+      pending = { kind: "stop" };
+    } else if (c.track !== undefined && !c.missing) {
+      const url = resolve(c.track);
+      if (url) pending = { kind: "play", url };
+    }
+  }
+  return pending ?? { kind: "sustain" };
+}
+
+type BgmLookup = (script: string) => BgmData["cues"][string] | undefined;
+let bgmLookup: BgmLookup | null = null;
+export function setBgmLookup(fn: BgmLookup | null): void {
+  bgmLookup = fn;
+}
+
+function paintBgm(save: SaveData, bgmVol: number): void {
+  const audio = document.getElementById("bgm") as HTMLAudioElement | null;
+  if (!audio) return;
+  audio.volume = Math.max(0, Math.min(1, bgmVol));
+  const cue = bgmCueAt(save);
+  if (cue.kind === "play") {
+    if (audio.dataset.cur !== cue.url) {
+      audio.dataset.cur = cue.url;
+      audio.src = cue.url;
+      audio.play().catch(() => undefined);
+    }
+  } else if (cue.kind === "stop") {
+    if (audio.dataset.cur) {
+      delete audio.dataset.cur;
+      audio.pause();
+      audio.removeAttribute("src");
+    }
+  }
+  // sustain: leave the current track playing (engine inherits BGM across
+  // files; only explicit stops silence it).
+}
+
+/** Backdrop fade duration from high-confidence .bnr fade records.
+ * Capped: a wrong semantic here must degrade to a slightly-off fade, never
+ * a stuck stage. No record -> default CSS duration. */
+export function bnrFadeAt(save: SaveData): number | null {
+  const recs = bnrLookup?.(save.position.script);
+  if (!recs) return null;
+  return resolveFade(recs, save.position.event);
+}
+
+/** Pure fade resolver (DOM-free; test-pinned). */
+export function resolveFade(
+  recs: { ev: number; fadeMs?: number; conf: string }[],
+  event: number,
+): number | null {
+  let pending: number | null = null;
+  for (const r of recs) {
+    if (r.ev > event) break;
+    if (r.conf !== "high") continue;
+    // A newer high-confidence record supersedes (no fadeMs = fade cleared).
+    pending = r.fadeMs ? Math.max(0, Math.min(2000, r.fadeMs)) : null;
+  }
+  return pending;
+}
+
+function paintFade(stage: HTMLElement, save: SaveData): void {
+  const ms = bnrFadeAt(save);
+  stage.style.transitionDuration = ms !== null ? `${ms}ms` : "";
+}
+
+/** Fire-and-forget high-confidence SE triggers (data/bnr.json).
+ * Hypothesis-confidence records are deliberately ignored (docs/QA.md). */
+export function seCueAt(save: SaveData): string | null {
+  const recs = bnrLookup?.(save.position.script);
+  if (!recs) return null;
+  const ch = chapterOfScript(save.position.script);
+  const id = resolveSeRec(recs, save.position.event);
+  return id === null ? null : seUrl(id, ch);
+}
+
+/** Pure SE trigger resolver (DOM-free; test-pinned). Only high-confidence
+ * records fire; hypothesis records are ignored by design. */
+export function resolveSeRec(
+  recs: { ev: number; se?: number[]; conf: string }[],
+  event: number,
+): number | null {
+  for (const r of recs) {
+    if (r.ev === event && r.conf === "high" && r.se?.length) {
+      return r.se[0];
     }
   }
   return null;
+}
+
+type BnrLookup = (script: string) => BnrData["recs"][string] | undefined;
+let bnrLookup: BnrLookup | null = null;
+export function setBnrLookup(fn: BnrLookup | null): void {
+  bnrLookup = fn;
+}
+
+function fireSe(save: SaveData): void {
+  const url = seCueAt(save);
+  if (!url) return;
+  const audio = document.getElementById("se") as HTMLAudioElement | null;
+  if (!audio) return;
+  audio.src = url;
+  audio.play().catch(() => undefined);
 }
 
 /** Latest .AMP color-grade filter at/before position.

@@ -6,8 +6,9 @@ Steps:
   1. extract .txt scenario sources (KCAP) from each en.pak
   2. parse to event IR JSON (two-pass corpus census for mega resolution)
   3. emit web data dir: build/data/{scripts/*.json, flow.json, endings.json,
-     links.json, terminals.json} (flow/links from IR; endings/terminals
-     from data/*.json after parity check)
+     links.json, terminals.json, sprites.json, bgm.json, bnr.json,
+     luts.json} (flow/links from IR; endings/terminals/sprites from data/;
+     bgm/bnr from .bnr bytecode; luts from grp.pak when --game is given)
   4. run parity gates (all engine choices covered, option text exact)
 
 Install: cp -r build/data/* web/public/data/  (see docs/BYOA.md)
@@ -77,12 +78,20 @@ def main() -> None:
         print(__doc__)
         sys.exit(2)
     paks = []
+    game = None
     out = os.path.join(HERE, "..", "build")
-    for a in sys.argv[1:]:
-        if a.endswith(".pak"):
-            paks.append(a)
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--game":
+            game = args[i + 1]
+            i += 2
+        elif args[i].endswith(".pak"):
+            paks.append(args[i])
+            i += 1
         else:
-            out = a
+            out = args[i]
+            i += 1
     txt_dirs, ir_dir = [], os.path.join(out, "ir")
     data_dir = os.path.join(out, "data")
     os.makedirs(ir_dir, exist_ok=True)
@@ -120,9 +129,23 @@ def main() -> None:
                     os.path.join(scripts_out, s + ".json"))
     with open(os.path.join(scripts_out, "index.json"), "w") as f:
         json.dump(index, f)
-    for name in ("endings.json", "terminals.json"):
+    for name in ("endings.json", "terminals.json", "sprites.json"):
         shutil.copy(os.path.join(HERE, "..", "data", name),
                     os.path.join(data_dir, name))
+    # BGM timeline + presentation records from .bnr bytecode (static).
+    bgm_cmd = [sys.executable, os.path.join(HERE, "build_bgm.py"), *paks,
+               os.path.join(data_dir, "bgm.json")]
+    if game:
+        bgm_cmd += ["--game", game]
+    subprocess.run(bgm_cmd, check=True)
+    subprocess.run([sys.executable, os.path.join(HERE, "decode_bnr.py"),
+                    *paks, os.path.join(data_dir, "bnr.json")], check=True)
+    if game:
+        grp = os.path.join(game, "grp.pak")
+        if os.path.isfile(grp):
+            subprocess.run([sys.executable, os.path.join(HERE, "build_luts.py"),
+                            grp, os.path.join(data_dir, "luts.json")],
+                           check=True)
     r = subprocess.run([sys.executable, os.path.join(HERE, "check_flow.py"),
                         ir_dir, os.path.join(data_dir, "flow.json")])
     if r.returncode != 0:

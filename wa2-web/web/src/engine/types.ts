@@ -96,6 +96,48 @@ export interface Position {
   event: number;
 }
 
+/** BGM cue table (built by tools/build_bgm.py from .bnr opcode (4,158)).
+ * Cues are timeline data: latest cue at/before the event wins; `stop`
+ * silences; files with no cue inherit prior BGM. `missing` tracks have no
+ * file in BGM.PAKs (player sustains previous BGM, never silence). */
+export interface BgmCue {
+  ev: number;
+  track?: number;
+  stop?: boolean;
+  fade?: number | null;
+  missing?: boolean;
+}
+
+export interface BgmData {
+  version: number;
+  cues: Record<string, BgmCue[]>;
+}
+
+/** Per-event presentation records (built by tools/decode_bnr.py).
+ * Only `conf: "high"` records drive playback; anything weaker is
+ * documented hypothesis the player deliberately ignores. */
+export interface BnrRec {
+  ev: number;
+  se?: number[];
+  cam?: { zoom: number; dur: number };
+  fadeMs?: number;
+  conf: "high" | "hypothesis";
+}
+
+export interface BnrData {
+  version: number;
+  recs: Record<string, BnrRec[]>;
+}
+
+/** Speaker -> standing-sprite filename prefix.
+ * Prefixes are lowercase first-3 of the speaker name (Ako->aco, ...);
+ * screen slots + variants/expressions per line await .bnr integer-slot
+ * decode (data seam ready; nothing is guessed). */
+export interface SpriteData {
+  version: number;
+  speakers: Record<string, { prefix: string }>;
+}
+
 export interface Flags {
   aff: Record<string, number>;
   set: Record<string, boolean>;

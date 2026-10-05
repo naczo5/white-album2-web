@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "speakers": {
+    "Ako": { "prefix": "aco" },
+    "Chiaki": { "prefix": "chi" },
+    "Hamada": { "prefix": "ham" },
+    "Io": { "prefix": "ioo" },
+    "Kazusa": { "prefix": "kaz" },
+    "Koharu": { "prefix": "koh" },
+    "Mari": { "prefix": "mar" },
+    "Matsuoka": { "prefix": "mat" },
+    "Mihoko": { "prefix": "mih" },
+    "Nakagawa": { "prefix": "nak" },
+    "Sayuri": { "prefix": "say" },
+    "Satou": { "prefix": "sat" },
+    "Sawako": { "prefix": "saw" },
+    "Setsuna": { "prefix": "set" },
+    "Suzuki": { "prefix": "suz" },
+    "Takeya": { "prefix": "tak" },
+    "Tomo": { "prefix": "tom" },
+    "Uehara": { "prefix": "ueh" },
+    "Youko": { "prefix": "you" }
+  }
+}

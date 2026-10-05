@@ -5,7 +5,7 @@
 - **No game content is committed**: no scenario text, images, audio,
   movies, fonts, executables, or archives. `.gitignore` excludes `*.pak`,
   `*.LAC`, `*.iso`, discs, zips, caches, and all build outputs. The only
-  words from the game present in source are ~40 short functional choice
+  words from the game present in source are 65 short functional choice
   labels (e.g. option texts) used as join keys between engine positions
   and walkthrough research — comparable to quoting button labels — plus
   our own annotations. Everything substantive is supplied by the user at

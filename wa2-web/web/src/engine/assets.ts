@@ -55,7 +55,8 @@ export function imageUrl(file: string, chapter?: string): string | null {
 }
 
 export function bgmUrl(file: string, chapter?: string): string | null {
-  // Engine cues use .AMP names; extracted web audio keeps the stem.
+  // Legacy .AMP-stem cue path (pre-.bnr era): kept for IR compat; the live
+  // BGM timeline comes from data/bgm.json via bgmTrackUrl().
   const stem = file.replace(/\.[^.]+$/, "");
   const cands = chapter === "intro"
     ? [`ic-${file}`, `ic-${stem}.ogg`, `ic-${stem}.mp3`]
@@ -70,6 +71,34 @@ export function bgmUrl(file: string, chapter?: string): string | null {
     lookup(manifest?.bgm, `${stem}.mp3`) ??
     null
   );
+}
+
+/**
+ * BGM track file for a .bnr cue. Engine plays BGM_%03d: a loop pair
+ * (_A intro + _B body) or a solo file. Prefers the loop body when both
+ * exist; intro chapter checks ic/-namespaced keys first.
+ */
+export function bgmTrackUrl(track: number, chapter?: string): string | null {
+  const id = `BGM_${String(track).padStart(3, "0")}`;
+  const cands = chapter === "intro" ? [`ic/${id}_B.OGG`, `ic/${id}_A.OGG`, `ic/${id}.OGG`] : [];
+  cands.push(`${id}_B.OGG`, `${id}_A.OGG`, `${id}.OGG`);
+  for (const c of cands) {
+    const hit = lookup(manifest?.bgm, c);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Sound-effect file by engine id (SE_%04d). Chapter-namespaced like BGM. */
+export function seUrl(id: number | string, chapter?: string): string | null {
+  const base = typeof id === "number" ? `SE_${String(id).padStart(4, "0")}` : id;
+  const cands = chapter === "intro" ? [`ic/${base}.WAV`, `ic/${base}.wav`] : [];
+  cands.push(`${base}.WAV`, `${base}.wav`, `${base}.ogg`, `${base}.OGG`);
+  for (const c of cands) {
+    const hit = lookup(manifest?.sfx, c);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 export function resolveMovieUrl(
