@@ -97,8 +97,16 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   );
 
   if (!ev) {
-    // Past the end of a script without a terminal: offer wayfinding
-    // instead of stranding the player.
+    // Past the end of a script: try to keep going (heals stale saves),
+    // else offer wayfinding instead of stranding the player.
+    const cont = router.advance(pos, save.flags);
+    if (!cont.ended) {
+      save.position = skipLatches(router, cont.pos, save.flags);
+      pushLog(router, save);
+      writeAutosave(localStorage, save);
+      h.onChange();
+      return;
+    }
     box.innerHTML = `<div class="narrate">— End of ${escapeAttr(pos.script)} —</div>
       <div class="dim">The story continues in another file; use the chart or title.</div>`;
     hint.style.display = "none";

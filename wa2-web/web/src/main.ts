@@ -136,6 +136,7 @@ function render(): void {
         <h1>WHITE ALBUM 2</h1>
         <div class="subtitle">Extended Edition — web port <span class="dim">(BYOA build${data.demo ? ", demo content" : ""})</span></div>
         ${data.demo ? `<div class="warn-box">No game data found. Copy built <code>data/</code> + <code>assets/</code> per docs/BYOA.md, or press Start to tour the engine demo.</div>` : ""}
+        ${!data.demo && data.incomplete.length > 0 ? `<div class="warn-box">Data incomplete: ${data.incomplete.length} files failed to load (stale cache?). Hard-refresh (Ctrl+Shift+R). Missing: <code>${data.incomplete.slice(0, 5).join(", ")}</code></div>` : ""}
         <div class="menu">
           <button data-m="read">Start / Continue <span class="dim">${save.position.script}:${save.position.event}</span></button>
           <button data-m="new">New game (reset progress)</button>

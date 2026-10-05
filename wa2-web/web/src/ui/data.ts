@@ -12,6 +12,9 @@ export interface GameData {
   terminals: TerminalsData;
   endings: { endings: { id: string; name: string; unlock: string }[] };
   demo: boolean;
+  /** Scripts listed in the index that failed to load (stale cache/partial
+   * copy). Empty when healthy; boot warns otherwise. */
+  incomplete: string[];
 }
 
 async function tryFetch<T>(url: string): Promise<T | null> {
@@ -62,9 +65,14 @@ export async function loadGameData(): Promise<GameData> {
   ]);
   if (index && index.length > 0 && flow) {
     const scenarios: Scenario[] = [];
+    const failed: string[] = [];
     for (const id of index) {
       const sc = await tryFetch<Scenario>(`data/scripts/${id}.json`);
       if (sc) scenarios.push(sc);
+      else failed.push(id);
+    }
+    if (failed.length > 0) {
+      console.warn(`[wa2] ${failed.length}/${index.length} scripts failed to load (hard-refresh?):`, failed.slice(0, 5));
     }
     if (scenarios.length > 0) {
       return {
@@ -73,6 +81,7 @@ export async function loadGameData(): Promise<GameData> {
         terminals: terminals ?? { version: 1, terminals: {} },
         endings: endings ?? { endings: [] },
         demo: false,
+        incomplete: failed,
       };
     }
   }
@@ -83,5 +92,6 @@ export async function loadGameData(): Promise<GameData> {
     terminals: { version: 1, terminals: {} },
     endings: { endings: [] },
     demo: true,
+    incomplete: [],
   };
 }
