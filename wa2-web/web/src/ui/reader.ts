@@ -1,10 +1,25 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
-import { bgmUrl, imageUrl, movieUrl } from "../engine/assets";
+import { bgmUrl, imageUrl, movieUrl, voiceUrl } from "../engine/assets";
 import { Router, chapterOfScript } from "../engine/router";
 import { plainText, renderText } from "../engine/text";
 import type { Position, SaveData, ScenarioEvent } from "../engine/types";
 import { writeAutosave } from "../engine/save";
+
+// .AMP color-grade LUTs (sepia/nega/night/...) mapped to CSS filters.
+// Unknown filters render unfiltered (logged once in console).
+const FILTER_CSS: Record<string, string> = {
+  sepia: "sepia(1)",
+  sepia2: "sepia(0.7)",
+  nega: "invert(1)",
+  night: "brightness(0.65) saturate(0.8)",
+  evening: "sepia(0.45) hue-rotate(-15deg)",
+  indoor: "sepia(0.2)",
+  blue: "hue-rotate(190deg) saturate(0.7)",
+  blue2: "hue-rotate(190deg) saturate(0.5)",
+  green: "hue-rotate(90deg) saturate(0.6)",
+  red: "hue-rotate(-50deg) saturate(0.8)",
+};
 
 export interface ReaderHooks {
   router: Router;
@@ -87,6 +102,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       b.innerHTML = renderText(o.text) + (gate ? ` <span class="lock">🔒 ${escapeAttr(gate)}</span>` : "");
       b.onclick = (e) => {
         e.stopPropagation();
+        cutVoice();
         const r = router.pick(pos, o.n, save.flags);
         save.picks[node?.id ?? `${pos.script}:${pos.event}`] = o.n;
         if (r.ending && !save.endings.includes(r.ending)) {
@@ -105,6 +121,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   }
 
   if (ev.t === "say" || ev.t === "narrate") {
+    playVoice(save, ev);
     if (ev.t === "say") {
       const who = ev.speaker ? `<div class="speaker">${escapeAttr(ev.speaker)}</div>` : "";
       box.innerHTML = `${who}<div class="say${ev.style === "whisper" ? " whisper" : ""}">${renderText(ev.text)}</div>`;
@@ -135,7 +152,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   // Directives / latches auto-advance on click.
   const label =
     ev.t === "image" ? `🖼 ${ev.file} [${ev.layer ?? "?"}]` :
-    ev.t === "bgm" ? `♪ ${ev.file}` :
+    ev.t === "filter" ? `◐ ${ev.file}` :
     ev.t === "anim" ? `✦ ${ev.file} [${ev.layer ?? "?"}]` :
     ev.t === "latch" ? `— ${ev.name} —` :
     ev.t === "jump" ? `⇢ ${ev.kind} ${ev.targets.join(" ")}` :
@@ -146,6 +163,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
 
 export function stepForward(h: ReaderHooks): void {
   const { router, save } = h;
+  cutVoice();
   const r = router.advance(save.position, save.flags);
   if (r.ended) {
     if (r.ending && !save.endings.includes(r.ending)) {
@@ -169,7 +187,7 @@ export function skipLatches(router: Router, pos: Position, flags: { aff: Record<
   for (let i = 0; i < 200; i++) {
     const ev = router.at(p);
     if (!ev) break;
-    if (ev.t === "latch" || ev.t === "image" || ev.t === "bgm" || ev.t === "anim" || ev.t === "layer") {
+    if (ev.t === "latch" || ev.t === "image" || ev.t === "filter" || ev.t === "bgm" || ev.t === "anim" || ev.t === "layer") {
       p = { script: p.script, event: p.event + 1 };
       continue;
     }
@@ -208,6 +226,7 @@ function paintStage(stage: HTMLElement, save: SaveData): void {
     stage.style.backgroundImage = "";
     stage.innerHTML = `<div class="stage-ph">${stageImageHintLabel(save)}</div>`;
   }
+  stage.style.filter = stageFilter(save);
   const bgm = stageBgmHint(save);
   const audio = document.getElementById("bgm") as HTMLAudioElement | null;
   if (!audio) return;
@@ -270,6 +289,52 @@ function stageBgmHint(save: SaveData): string | null {
     }
   }
   return null;
+}
+
+/** Latest .AMP color-grade filter at/before position (CSS projection). */
+function stageFilter(save: SaveData): string {
+  const evs = eventsBefore(save);
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.t === "filter") {
+      const stem = e.file.replace(/\.[^.]+$/, "").toLowerCase();
+      return FILTER_CSS[stem] ?? "";
+    }
+    if (e.t === "image" && e.layer === "bak") {
+      // A fresh backdrop keeps the current grade (engine behavior:
+      // filters persist until the next .AMP cue).
+      continue;
+    }
+  }
+  return "";
+}
+
+/** Play the voice clip for a displayed line, if the archive has it. */
+function playVoice(save: SaveData, ev: ScenarioEvent): void {
+  const audio = document.getElementById("voice") as HTMLAudioElement | null;
+  if (!audio) return;
+  const ch = chapterOfScript(save.position.script);
+  const url = ev.t !== "say" && ev.t !== "narrate"
+    ? null
+    : voiceUrl(save.position.script, ev.tok, ch);
+  if (url) {
+    if (audio.dataset.cur !== url) {
+      audio.dataset.cur = url;
+      audio.src = url;
+      audio.play().catch(() => undefined);
+    }
+  } else {
+    cutVoice();
+  }
+}
+
+function cutVoice(): void {
+  const audio = document.getElementById("voice") as HTMLAudioElement | null;
+  if (audio && audio.dataset.cur) {
+    delete audio.dataset.cur;
+    audio.pause();
+    audio.removeAttribute("src");
+  }
 }
 
 function escapeAttr(s: string): string {

@@ -3,11 +3,12 @@
 export type Layer = "bak" | "grp" | null;
 
 export type ScenarioEvent =
-  | { t: "say"; speaker: string; text: string; style?: "whisper" }
-  | { t: "narrate"; text: string; style?: "whisper" }
+  | { t: "say"; speaker: string; text: string; style?: "whisper"; tok?: number }
+  | { t: "narrate"; text: string; style?: "whisper"; tok?: number }
   | { t: "latch"; name: string }
   | { t: "movie"; id: string }
   | { t: "image"; file: string; layer: Layer }
+  | { t: "filter"; file: string }
   | { t: "bgm"; file: string }
   | { t: "anim"; file: string; layer: Layer }
   | { t: "layer"; layer: string }

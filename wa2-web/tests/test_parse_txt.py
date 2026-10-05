@@ -23,8 +23,9 @@ def test_say_latch_and_narration():
     assert warnings == []
     kinds = [e["t"] for e in events]
     assert kinds == ["latch", "say", "narrate", "latch", "say"]
-    assert events[1] == {"t": "say", "speaker": "Haruki", "text": "Ah…"}
-    assert events[2]["text"] == "Snow falls."
+    assert events[1]["t"] == "say" and events[1]["speaker"] == "Haruki" \
+        and events[1]["text"] == "Ah…" and events[1]["tok"] == 1
+    assert events[2]["text"] == "Snow falls." and events[2]["tok"] == 2
 
 
 def test_choice_with_marker_after():
@@ -57,10 +58,12 @@ def test_directives():
     toks = P.split_tokens(enc('mv01,sepia.AMP,b105300.tga,,bak,scene.ani,,grp'))
     events, warnings = P.parse_tokens(toks)
     assert warnings == []
-    assert events[0] == {"t": "movie", "id": "mv01"}
-    assert events[1] == {"t": "bgm", "file": "sepia.AMP"}
-    assert events[2] == {"t": "image", "file": "b105300.tga", "layer": "bak"}
-    assert events[3] == {"t": "anim", "file": "scene.ani", "layer": "grp"}
+    assert events[0]["t"] == "movie" and events[0]["id"] == "mv01"
+    assert events[1]["t"] == "filter" and events[1]["file"] == "sepia.AMP"
+    assert events[2]["t"] == "image" and events[2]["file"] == "b105300.tga" \
+        and events[2]["layer"] == "bak"
+    assert events[3]["t"] == "anim" and events[3]["file"] == "scene.ani" \
+        and events[3]["layer"] == "grp"
 
 
 def test_whisper_style_token():
@@ -76,13 +79,14 @@ def test_narration_does_not_latch():
     # speaker is unknown, not the sentence.
     toks = P.split_tokens(enc('And then~ she declared:,Haruki,"No."'))
     events, _ = P.parse_tokens(toks)
-    assert events[0] == {"t": "narrate", "text": "And then~ she declared:"}
+    assert events[0]["t"] == "narrate" and events[0]["tok"] == 0
     assert events[1] == {"t": "latch", "name": "Haruki"}
     assert events[2]["speaker"] == "Haruki"
     toks = P.split_tokens(enc('And then~ she declared:,"No."'))
     events, _ = P.parse_tokens(toks)
     assert events[0]["t"] == "narrate"
-    assert events[1] == {"t": "say", "speaker": "", "text": "No."}
+    assert events[1]["t"] == "say" and events[1]["speaker"] == "" \
+        and events[1]["text"] == "No."
 
 
 def test_latch_validation():
@@ -104,7 +108,8 @@ def test_jp_brackets_dialogue():
     toks = P.split_tokens(enc('武也,「行くぞ」'))
     events, _ = P.parse_tokens(toks)
     assert events[0] == {"t": "latch", "name": "武也"}
-    assert events[1] == {"t": "say", "speaker": "武也", "text": "行くぞ"}
+    assert events[1]["t"] == "say" and events[1]["speaker"] == "武也" \
+        and events[1]["text"] == "行くぞ"
     # unbalanced opener (F16 tail): still dialogue, never narration
     toks = P.split_tokens('「知るかよ。\\n<F16…俺が誘ったのは一人だけだって～の」>'.encode("cp932"))
     events, _ = P.parse_tokens(toks)

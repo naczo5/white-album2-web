@@ -28,7 +28,7 @@ Source format (verified on all 205 en.pak v1.3.6 scenario files):
 Output per script: dict with `events` list. Event shapes:
     {t:'say', speaker, text}        {t:'narrate', text}
     {t:'movie', id}                 {t:'image', file, layer}
-    {t:'bgm', file}                 {t:'anim', file}
+    {t:'filter', file}              {t:'anim', file}
     {t:'choice', options:[{n, text, goto|None}]}
     {t:'jump', kind, targets:[...]} (unconditional or flag-conditional link)
     {t:'latch', name}               (explicit speaker-latch moments, debug aid)
@@ -194,7 +194,7 @@ def classify_bare(tok: str) -> str:
     if IMAGE.match(tok):
         return "image"
     if BGM.match(tok):
-        return "bgm"
+        return "filter"
     if ANIM.match(tok):
         return "anim"
     if SCRIPT_ID.match(tok):
@@ -217,7 +217,7 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
             continue
         if is_dialogue(tok):
             events.append({"t": "say", "speaker": latch,
-                           "text": strip_dialogue(tok)})
+                           "text": strip_dialogue(tok), "tok": i})
             i += 1
             continue
         inner, style = strip_style(tok)
@@ -226,18 +226,21 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
             # it reads as a spoken line (heuristic: a speaker is latched).
             # F16 (whisper size) is recorded; other sizes render plain.
             if latch and is_spoken(tok):
-                events.append({"t": "say", "speaker": latch, "text": inner,
+                events.append({"t": "say", "speaker": latch, "tok": i,
+                               "text": inner,
                                **({"style": style} if style else {})})
             else:
-                events.append({"t": "narrate", "text": inner,
+                events.append({"t": "narrate", "tok": i, "text": inner,
                                **({"style": style} if style else {})})
             i += 1
             continue
         kind = classify_bare(tok)
         if kind == "movie":
             events.append({"t": "movie", "id": tok})
-        elif kind == "bgm":
-            events.append({"t": "bgm", "file": tok})
+        elif kind == "filter":
+            # .AMP files are image color-grade LUTs (sepia/nega/night/...),
+            # NOT music: fullscreen filter applied from this point on.
+            events.append({"t": "filter", "file": tok})
         elif kind == "anim":
             layer = None
             j = i + 1
@@ -312,10 +315,10 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
                 else:
                     # audit B1: narration masquerading as a speaker (long /
                     # markup-debris tokens). Keep the text, drop the claim.
-                    events.append({"t": "narrate", "text": tok})
+                    events.append({"t": "narrate", "tok": i, "text": tok})
                     latch = ""
             else:
-                events.append({"t": "narrate", "text": tok})
+                events.append({"t": "narrate", "tok": i, "text": tok})
         i += 1
     return (events, warnings)
 
@@ -416,7 +419,7 @@ def resplit_mega(events: list[dict], names: set[str],
                             f"recovered inside a mega-token (verify in game)")
             pending_opts.clear()
 
-    def emit_frags(page, style):
+    def emit_frags(page, style, tok):
         # cut on structural segments first (directives/ids/options/layers)
         segs = []
         for piece in page.split(","):
@@ -466,9 +469,9 @@ def resplit_mega(events: list[dict], names: set[str],
             merged.append(f)
             i += 1
         for f in merged:
-            emit_frag(f, style)
+            emit_frag(f, style, tok)
 
-    def emit_frag(f, style):
+    def emit_frag(f, style, tok):
         nonlocal latch
         if not f.strip().strip(","):
             return
@@ -511,13 +514,14 @@ def resplit_mega(events: list[dict], names: set[str],
         if c.startswith(('"', "'", "「")) or q % 2 == 1:
             flush_opts()
             say_text = strip_dialogue(c)
-            ent = {"t": "say", "speaker": latch, "text": say_text}
+            ent = {"t": "say", "speaker": latch, "text": say_text,
+                 "tok": tok}
             if style:
                 ent["style"] = style
             out.append(ent)
         else:
             flush_opts()
-            nent = {"t": "narrate", "text": c}
+            nent = {"t": "narrate", "text": c, "tok": tok}
             if style:
                 nent["style"] = style
             out.append(nent)
@@ -546,7 +550,7 @@ def resplit_mega(events: list[dict], names: set[str],
                 flush_opts()
                 out.append(e)
                 continue
-            emit_frags(text, style)
+            emit_frags(text, style, e.get("tok"))
         else:
             for page in pages:
                 struct_hit = any(STRUCT_SEG.match(s.strip())
@@ -559,13 +563,15 @@ def resplit_mega(events: list[dict], names: set[str],
                         flush_opts()
                         out.append({"t": "say", "speaker": latch,
                                     "text": c[1:-1] if len(c) >= 2 else c,
+                                    "tok": e.get("tok"),
                                     **({"style": style} if style else {})})
                     else:
                         flush_opts()
                         out.append({"t": "narrate", "text": c,
+                                    "tok": e.get("tok"),
                                     **({"style": style} if style else {})})
                 else:
-                    emit_frags(page, style)
+                    emit_frags(page, style, e.get("tok"))
     flush_opts()
     return out, warnings
 
@@ -581,7 +587,7 @@ def structural_event(seg: str, latch: str) -> tuple:
         # layer resolves as unknown here and is repaired by fixup below.
         return {"t": "image", "file": s, "layer": None}, ""
     if BGM.match(s):
-        return {"t": "bgm", "file": s}, ""
+        return {"t": "filter", "file": s}, ""
     if ANIM.match(s):
         return {"t": "anim", "file": s, "layer": None}, ""
     if CATCH.match(s):

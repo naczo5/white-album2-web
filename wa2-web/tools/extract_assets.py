@@ -151,6 +151,66 @@ def _pak_tag(pak: str, game: str) -> str:
     return ""
 
 
+def decode_voice_name(raw: bytes) -> str:
+    """XOR-0xFF filename cipher -> `{script}_{line}_{take}.OGG`, or ''.
+
+    Voice archive names are obfuscated with a single-byte XOR 0xFF.
+    Decoded names carry the engine line address directly.
+    """
+    try:
+        s = bytes(b ^ 0xFF for b in raw.split(b"\x00")[0]).decode("ascii")
+    except Exception:
+        return ""
+    import re as _re
+    if _re.match(r"^[A-Za-z0-9]+_[0-9]+_[0-9]+\.[A-Za-z0-9]+$", s):
+        return s
+    return ""
+
+
+def extract_voice(pak_path: str, out_sub: str, args, manifest: dict,
+                  missing: list) -> None:
+    """Voice archive -> voice table keyed by decoded `{script}_{line}`.
+
+    One clip per line (6 engine-wide duplicates: first wins, noted).
+    `out_sub` namespaces main vs IC (ic/ subdir + `ic/` key prefix).
+    """
+    import re as _re
+    with open(pak_path, "rb") as f:
+        data = f.read()
+    if data[:4] != b"LAC\x00":
+        missing.append(f"{pak_path}: not a voice LAC")
+        return
+    (count,) = struct.unpack_from("<I", data, 4)
+    by_line: dict[str, str] = {}
+    dupes = 0
+    for i in range(count):
+        off = 8 + i * 40
+        name = decode_voice_name(data[off:off + 24])
+        if not name:
+            continue
+        (_a, _b, size, doff) = struct.unpack_from("<IIII", data, off + 24)
+        if doff + size > len(data) or size <= 0:
+            missing.append(f"{pak_path}: entry {i} out of range")
+            continue
+        m = _re.match(r"^([A-Za-z0-9]+_[0-9]+)_[0-9]+\.([A-Za-z0-9]+)$", name)
+        if not m:
+            continue
+        key = f"{out_sub}{m.group(1)}" if out_sub else m.group(1)
+        if key in by_line:
+            dupes += 1
+            continue
+        dst_dir = os.path.join(args.out, "voice", out_sub) if out_sub else \
+            os.path.join(args.out, "voice")
+        os.makedirs(dst_dir, exist_ok=True)
+        dst = os.path.join(dst_dir, name)
+        with open(dst, "wb") as f:
+            f.write(data[doff:doff + size])
+        by_line[key] = os.path.relpath(dst, args.out)
+    for key, rel in by_line.items():
+        manifest.setdefault("voice", {})[key] = rel
+    log(f"  voice: {len(by_line)} lines ({dupes} duplicate takes skipped)")
+
+
 def sniff_audio_ext(payload: bytes) -> str:
     """Identify nameless voice payloads: RIFF WAV, Ogg, or Leaf .w."""
     if payload[:4] == b"RIFF":
@@ -399,9 +459,15 @@ def main() -> None:
             missing.append(f"{base}: unreadable ({e})")
             continue
         if magic == b"LAC\x00":
-            # nested installer-style archive (BGM/SE/VOICE): unpack to a
-            # temp dir and queue the inner files (raw payloads). Voice
-            # archives use a 40-byte entry variant with obfuscated names.
+            # Voice archives carry XOR-obfuscated line addresses; decode
+            # straight into the voice table (see decode_voice_name).
+            if base.upper() == "VOICE.PAK":
+                tag = _pak_tag(pak, args.game)
+                extract_voice(pak, f"{tag}/" if tag else "", args,
+                              manifest, missing)
+                continue
+            # Other nested archives (BGM/SE): unpack to a temp dir and
+            # queue the inner files (raw payloads).
             import tempfile
             from extract_lac import extract as extract_lac
             tmp = tempfile.mkdtemp(prefix="wa2lac-")
