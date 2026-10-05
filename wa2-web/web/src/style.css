@@ -56,6 +56,15 @@ code { font-size: 0.85em; }
   border-bottom: 1px solid #2c3a4f;
 }
 .stage-ph { color: var(--dim); padding: 1rem; text-align: center; }
+.stage-ov {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.stage { position: relative; overflow: hidden; }
 .hud {
   display: flex;
   justify-content: space-between;

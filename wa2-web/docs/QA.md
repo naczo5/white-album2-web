@@ -36,9 +36,18 @@ is proven, what is assumed, and exactly how to close each gap.
 4. **2019-764 frame**: confirm work/stay belongs to the opt1 path and
    2501-path Koharu/Setsuna/Normal split is flag-only (no missing choice).
 5. **Endings mapping**: file-end → ending screen (5 route terminals).
-6. **Voice wiring**: VOICE.PAK order vs CATCH ids; BGM `.AMP` channels;
-   movie timing; `.bnr` presentation track (frame-exact sprites/fades —
-   explicitly out of scope for v1 text parity).
+6. **BGM track mapping**: `.AMP` cues proved to be image LUTs, not music;
+   real BGM selection is .bnr-driven (LSCR opcodes unmapped; static
+   rarity/pair/dominant-value analyses found no track signal). Options:
+   scripted Wine playthrough with audio fingerprinting (blocked earlier
+   by session hijacking — needs a hands-off window), or .bnr VM RE.
+7. **SE triggers**: todokanai/subtitles covers 46 voice-overlay blocks,
+   not general sound effects; SE mapping is .bnr-driven (open).
+8. **Dynamic sprites**: grp-layer event art displays; standing-sprite
+   (aco/f parts) identity + positions need .bnr or playtest mapping
+   (data seam ready: speaker -> files + slot).
+9. **Voice take semantics**: third filename field (04/98/00/…) unmapped;
+   one clip per line assumed (6 multi-clip lines: first wins).
 7. **Coda 31xx/32xx identity** (epilogues vs route tails).
 8. **v1.3.6→v2.1.0 structural diff**: 2007 + 3013 choices exist only in
    v2.1.0; build is version-agnostic but flow.json here is v2.1.0.

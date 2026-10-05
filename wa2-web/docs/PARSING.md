@@ -14,7 +14,7 @@ Source: 205 + 49 Shift-JIS token streams from KCAP `en.pak` archives
 | bare text | narration |
 | `mvNN` | movie cue |
 | `<img>.tga` + `bak`/`grp` | image cue + layer (also `.ani` + layer) |
-| `<name>.AMP` | BGM cue |
+| `<name>.AMP` | fullscreen color-grade filter (exact LUT in data/luts.json) |
 | `N. text` runs | choice UI (option 1 = fall through) |
 | bare `NNNN[_NNN]` | preload HINT (flow-neutral; proof: `2016` at 2015:1, else the documented 2015:212 choice would be unreachable) |
 | `CATCH`/`CATCH2`/`CATCH3` | voice/sync marker (flow-neutral; 174/176 mid-file) |
@@ -36,6 +36,14 @@ Adjacent 1-option choices merge (options interleaved with speaker tags).
 This recovered 5 walkthrough-documented choices invisible to naive
 parsing (2004 accept/decline, 2013 today/tomorrow, 2014 talk/leave,
 2503 concert/stay, 3003 propose/together).
+
+## Voice addressing
+
+Every say/narrate event carries `tok`: the raw comma-token index in its
+source file. Voice clips are addressed `{script}_{tok:04d}` (XOR-decoded
+VOICE.PAK names), so resplit fragments share their parent token's voice
+(played once, on the first fragment). Verified: 1008 tok199 and 2001
+tok19 match clip content exactly.
 
 ## Display granularity assumption (needs play-test)
 

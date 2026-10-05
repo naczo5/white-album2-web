@@ -49,6 +49,12 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
   `play: 2301`) move files.
 - 43 suffixed variant files (`2031_2`, `2312_2`, …) are flag/replay
   gated alternates; v1 plays base files, variants listed for QA.
-- Voice/BGM/movie wiring: BGM `.AMP` cues + movie `mvNN` cues are first
-  class; voice-clip mapping (VOICE.PAK order vs CATCH ids) is the known
-  gap, queued in docs/QA.md.
+- Voice wiring: VOICE.PAK filenames are XOR-0xFF `{script}_{token}_{take}.OGG`;
+  the parser records the raw token index (`tok`) on every say/narrate event
+  and the player auto-plays the clip (46k lines, ic-namespaced).
+- Movie `mvNN` cues resolve to `mvNN0`/`mvNN1` file pairs (transcoded MP4).
+- `.AMP` cues are image color-grade LUTs, not music: exact 256-entry RGB
+  curves ship in data/luts.json and render via SVG feComponentTransfer
+  (CSS fallback); BGM track selection is .bnr-driven (open, docs/QA.md).
+- Sprites: grp-layer event art renders as fullscreen overlays; dynamic
+  standing-sprite compositing awaits .bnr positions (seam documented).
