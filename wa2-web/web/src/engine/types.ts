@@ -129,6 +129,13 @@ export interface BnrRec {
   se?: number[];
   cam?: { zoom: number; dur: number };
   fadeMs?: number;
+  /** Backdrop/event-art cue: filename stems (prefix resolved at lookup). */
+  layer?: "bak" | "grp";
+  stems?: string[];
+  /** Transition duration ms for an image cue. */
+  fade?: number | null;
+  /** Stage clear (engine wipe): barrier for older cues. */
+  clear?: boolean;
   conf: "high" | "hypothesis";
 }
 

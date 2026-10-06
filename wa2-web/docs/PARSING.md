@@ -75,7 +75,8 @@ tools/decode_bnr.py (fades/cams).
 | `(5,3,0),(5,3,SCRIPT),(4,137)` | script load/jump | high |
 | `(5,3,X),(5,3,0),(5,3,0),(4,194)` | timed wait | medium |
 | `(5,3,SE),(5,3,255),(4,164)` | sound effect `SE_%04d` (2 pushes only; vol hardcoded 255) | high (thunk→allocator chain + 12/12 census) |
-| `(4,146/147/148)` + `[1,X,Y,fade,0,0,0]` + 1280/720 floats | backdrop/event-art show (`X`,`Y` build the filename: `X=2001,Y=1` → `b200101`; `X=0` clear, `X=-2` hide; `148` = event layer) | high (pak cross-checked) |
+| `(4,146/147)` + `[M,X,Y,F,0,0,0]` | backdrop show: X=0 → bare fade F (transition timing); X=-2 → clear; else filename stem `(str(X)+str(Y)).ljust(6,"0")` plus the `X+Y:02d` form (1004,0 → 100400; 1008,2 → 100820 + 100802; 9900,0 → 990000); prefix (b/v/tv) resolved at lookup | high (manifest cross-checked; 4176 cues) |
+| `(4,148)` + `[M,X,Y,F,…]` | event-visual overlay: stem `str(X)+str(Y)` (10010,0 → 100100; 20000,1 → 200001), v*/tv* preferred | high (358 cues) |
 | `(4,176)` + `[slot,MODE,2,256,last]` | txt-named image driver (MODE 14 = `.tga` grp, 12/13 = bak/grp; JP toks in `(3,*)` ops match the image context) | high (1007/1008_030 controls) |
 | `(4,185)` + `[slot,1,0,0]` after multi-image shows | slot selector for txt-named event art (one per loaded image) | medium (positions unknown) |
 | `(4,208)` + `[99,0,0]`/`[99,3,1]`/`[1,1,1]` | choice-present marker (exactly on choice toks; `[99,3,1]` = goto-carrying option) | high (31/31 gate) |

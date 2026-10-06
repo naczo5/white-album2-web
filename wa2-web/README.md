@@ -52,7 +52,7 @@ python3 tools/fetch_mao.py IR_MAIN IR_SPECIAL --clone /path/to/mao-clone
 cd web && npx vitest run && npx tsc --noEmit && npm run build
 ```
 
-Current status: 26 pytest + 35 vitest green; full-game sim walks 202/245
+Current status: 29 pytest + 45 vitest green; full-game sim walks 202/245
 scripts stall-free (43 unvisited = flag-gated scene variants awaiting
 in-game verification); MAO v2.1.0 drift audit 0.986 containment over
 193 game scripts; voices wired (46k clips via XOR-decoded line addresses);

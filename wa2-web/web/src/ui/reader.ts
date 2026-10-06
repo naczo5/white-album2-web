@@ -407,14 +407,52 @@ function eventsBefore(save: SaveData): ScenarioEvent[] {
 }
 
 function stageImageHint(save: SaveData): string | null {
-  const evs = eventsBefore(save);
-  const ch = chapterOfScript(save.position.script);
-  for (let i = evs.length - 1; i >= 0; i--) {
-    const e = evs[i];
-    if (e.t === "image") {
-      const url = imageUrl(e.file, ch);
+  return resolveStageImage(
+    eventsBefore(save).map((e, i) => ({ e, i })),
+    bnrLookup?.(save.position.script) ?? null,
+    save.position.event,
+    chapterOfScript(save.position.script),
+  );
+}
+
+/** Pure merged stage resolver (DOM-free; test-pinned).
+ * Timeline = txt image events (exact indices) + .bnr bak records
+ * (fractional indices). Latest resolvable cue at/before `event` wins;
+ * a clear is a barrier (stage wiped — nothing older shows). Unresolvable
+ * cues (assets not installed) fall through to older backdrops. */
+export function resolveStageImage(
+  txt: { e: ScenarioEvent; i: number }[],
+  bnr: BnrData["recs"][string] | null | undefined,
+  event: number,
+  chapter: string,
+): string | null {
+  type Cue = { ev: number; file?: string; stems?: string[]; clear?: boolean };
+  const cues: Cue[] = [];
+  for (const { e, i } of txt) {
+    if (e.t === "image") cues.push({ ev: i, file: e.file });
+  }
+  for (const r of bnr ?? []) {
+    if (r.conf !== "high" || r.ev > event) continue;
+    if (r.layer !== "bak") continue;
+    if (r.clear) cues.push({ ev: r.ev, clear: true });
+    else if (r.stems?.length) cues.push({ ev: r.ev, stems: r.stems });
+  }
+  cues.sort((a, b) => b.ev - a.ev);
+  for (const c of cues) {
+    if (c.ev > event) continue;
+    if (c.clear) return null;
+    if (c.file) {
+      const url = imageUrl(c.file, chapter);
       if (url) return url;
-      // fall through to older backdrops when the latest is missing
+    } else if (c.stems) {
+      // Bare stems: bx = backdrop, vx = event visual, tvx = TV frame.
+      // Backdrops prefer b*, overlays (below) prefer v*/tv*.
+      for (const stem of c.stems) {
+        for (const cand of [`b${stem}.tga`, `v${stem}.tga`, `tv${stem}.tga`]) {
+          const url = imageUrl(cand, chapter);
+          if (url) return url;
+        }
+      }
     }
   }
   return null;
@@ -430,18 +468,51 @@ function stageImageHintLabel(save: SaveData): string {
 }
 
 /** Latest grp-layer overlay at/before position (event CGs, spotlights).
- * Cleared by backdrop changes (new scene = clean overlay slate). */
+ * Merged timeline like the background: txt grp images + .bnr grp records;
+ * any bak cue (txt or .bnr) or clear resets the overlay slate. */
 function stageOverlayHint(save: SaveData): string | null {
-  const evs = eventsBefore(save);
-  const ch = chapterOfScript(save.position.script);
-  let overlay: string | null = null;
-  for (const e of evs) {
-    if (e.t === "image" && e.layer === "bak") overlay = null;
-    else if (e.t === "image" && e.layer === "grp") {
-      overlay = imageUrl(e.file, ch);
+  return resolveStageOverlay(
+    eventsBefore(save).map((e, i) => ({ e, i })),
+    bnrLookup?.(save.position.script) ?? null,
+    save.position.event,
+    chapterOfScript(save.position.script),
+  );
+}
+
+export function resolveStageOverlay(
+  txt: { e: ScenarioEvent; i: number }[],
+  bnr: BnrData["recs"][string] | null | undefined,
+  event: number,
+  chapter: string,
+): string | null {
+  type Cue = { ev: number; file?: string; stems?: string[]; reset?: boolean };
+  const cues: Cue[] = [];
+  for (const { e, i } of txt) {
+    if (e.t !== "image") continue;
+    if (e.layer === "bak") cues.push({ ev: i, reset: true });
+    else if (e.layer === "grp") cues.push({ ev: i, file: e.file });
+  }
+  for (const r of bnr ?? []) {
+    if (r.conf !== "high" || r.ev > event) continue;
+    if (r.layer === "bak") cues.push({ ev: r.ev, reset: true });
+    else if (r.layer === "grp") {
+      if (r.clear) cues.push({ ev: r.ev, reset: true });
+      else if (r.stems?.length) cues.push({ ev: r.ev, stems: r.stems });
     }
   }
-  return overlay;
+  cues.sort((a, b) => b.ev - a.ev);
+  for (const c of cues) {
+    if (c.ev > event) continue;
+    if (c.reset) return null;
+    const files = c.file
+      ? [c.file]
+      : (c.stems ?? []).flatMap((s) => [`v${s}.tga`, `tv${s}.tga`, `b${s}.tga`]);
+    for (const f of files) {
+      const url = imageUrl(f, chapter);
+      if (url) return url;
+    }
+  }
+  return null;
 }
 
 function paintOverlay(stage: HTMLElement, save: SaveData): void {
@@ -540,15 +611,20 @@ export function bnrFadeAt(save: SaveData): number | null {
 
 /** Pure fade resolver (DOM-free; test-pinned). */
 export function resolveFade(
-  recs: { ev: number; fadeMs?: number; conf: string }[],
+  recs: { ev: number; fadeMs?: number; fade?: number | null; stems?: string[]; clear?: boolean; se?: number[]; cam?: unknown; conf: string }[],
   event: number,
 ): number | null {
+  const cap = (v: number) => Math.max(0, Math.min(2000, v));
   let pending: number | null = null;
   for (const r of recs) {
-    if (r.ev > event) break;
-    if (r.conf !== "high") continue;
-    // A newer high-confidence record supersedes (no fadeMs = fade cleared).
-    pending = r.fadeMs ? Math.max(0, Math.min(2000, r.fadeMs)) : null;
+    if (r.ev > event || r.conf !== "high") continue;
+    if (r.fadeMs) {
+      pending = cap(r.fadeMs);
+    } else if (r.stems?.length || r.clear) {
+      // An image change carries its own transition (or the default when 0).
+      pending = r.fade ? cap(r.fade) : null;
+    }
+    // se/cam-only recs are not visual timing: ignored, never reset.
   }
   return pending;
 }

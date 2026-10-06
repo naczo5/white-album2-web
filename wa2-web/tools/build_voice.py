@@ -20,7 +20,8 @@ otherwise (1008 base toks 199-213 vs 1008_020's NNN 199-214 share the same
 Output (build artifact): {version: 1, map: {script: {ev: nnn}}}
 Files with no (4,138) records (1001 prologue) get no entry.
 
-Usage: python3 build_voice.py MAIN_EN_PAK [SPECIAL_EN_PAK] OUT_JSON --ir IR_DIR
+Usage: python3 build_voice.py MAIN_EN_PAK [SPECIAL_EN_PAK] OUT_JSON --ir IR_DIR [--jp SCRIPT_PAK]
+(--jp enables dialogue/narration affinity via JP token shapes.)
 """
 
 from __future__ import annotations
@@ -38,32 +39,70 @@ import parse_txt  # noqa: E402
 from proto_bgm import iter_statements, load_bnr, s32  # noqa: E402
 
 
-def voice_records(data: bytes, script: str):
-    """(stmt_idx, n_stmts, nnn) for every (4,138) voice record."""
+def voice_records(data: bytes, script: str, jp_data: bytes | None = None):
+    """(stmt_idx, n_stmts, nnn, is_dialog) for every (4,138) voice record.
+
+    is_dialog comes from JP token shapes near the record (quoted JP comma
+    tokens); None when no JP pak was given. Voice records sit next to
+    dialogue ~always (1002: 328/328, 2001: 316/316); the exceptions are
+    voiced narration (Haruki's thoughts, e.g. 1008 concert), which is why
+    the flag only biases assignment instead of filtering.
+    """
     payload, _ = load_bnr(data, script)
     stmts = list(iter_statements(payload))
     n = len(stmts)
+    jt = None
+    if jp_data is not None:
+        try:
+            jt = jp_tokens(jp_data, script)
+        except KeyError:
+            jt = None
     out = []
     for idx, _off, pushes, ops, _raw, _floats in stmts:
         if any(o == 4 and a == 138 for o, a in ops) and len(pushes) >= 5:
-            out.append((idx, n, s32(pushes[4])))
+            is_dialog = None
+            if jt is not None:
+                xs = []
+                for j in range(max(0, idx - 8), min(n, idx + 9)):
+                    xs += [a for o, a in stmts[j][3] if o == 3]
+                is_dialog = any(
+                    0 <= x < len(jt) and jt[x].strip().startswith(('"', "「"))
+                    for x in xs)
+            out.append((idx, n, s32(pushes[4]), is_dialog))
     return out
 
 
-def assign_nnn(fracs: list[tuple[float, int]], voiced: list[int],
-               m: int) -> dict[int, int]:
+def jp_tokens(jp_data: bytes, script: str) -> list[str]:
+    for e in kcap.read_index(jp_data):
+        if not e.is_folder and e.name == script + ".txt":
+            s, e2 = kcap.data_range(e)
+            blob = jp_data[s:e2]
+            if e.is_compressed:
+                orig, lz = lzss.split_datahdr(blob)
+                blob = lzss.decompress(lz, orig)
+            return parse_txt.split_tokens(blob)
+    raise KeyError(script + ".txt")
+
+
+def assign_nnn(fracs: list[tuple[float, int, bool | None]],
+               voiced: list[tuple[int, str]], m: int) -> dict[int, int]:
     """Monotonic greedy: records in statement order take the nearest
-    still-unassigned voiced event (by fractional target). Pure; tested."""
+    still-unassigned voiced event. Kind affinity first: a dialogue-shaped
+    record prefers say events (narration-shaped prefers narrate) with a
+    2%-of-file distance penalty for mismatches, so voiced thoughts still
+    map when nothing else is near. Pure; tested."""
+    penalty = max(1, m // 50)
     used: set[int] = set()
     rows: dict[int, int] = {}
-    for frac, nnn in fracs:
+    for frac, nnn, is_dialog in fracs:
         target = frac * m
+        want = "say" if is_dialog else ("narrate" if is_dialog is False else None)
         best: int | None = None
         best_key = None
-        for ev in voiced:
+        for ev, kind in voiced:
             if ev in used:
                 continue
-            key = (abs(ev - target), ev)
+            key = (abs(ev - target) + (0 if want is None or kind == want else penalty), ev)
             if best_key is None or key < best_key:
                 best_key = key
                 best = ev
@@ -73,7 +112,7 @@ def assign_nnn(fracs: list[tuple[float, int]], voiced: list[int],
         if rows:
             prev_max = max(rows)
             if best < prev_max:
-                later = [ev for ev in voiced
+                later = [ev for ev, _k in voiced
                          if ev not in used and ev >= prev_max]
                 if not later:
                     continue
@@ -86,14 +125,20 @@ def assign_nnn(fracs: list[tuple[float, int]], voiced: list[int],
 def main() -> None:
     argv = sys.argv[1:]
     ir_dir = None
+    jp_path = None
     if "--ir" in argv:
         i = argv.index("--ir")
         ir_dir = argv[i + 1]
+        del argv[i:i + 2]
+    if "--jp" in argv:
+        i = argv.index("--jp")
+        jp_path = argv[i + 1]
         del argv[i:i + 2]
     *paks, out_path = argv
     if ir_dir is None:
         print("need --ir IR_DIR")
         sys.exit(2)
+    jp_data = open(jp_path, "rb").read() if jp_path else None
     src: dict[str, bytes] = {}
     for pak_path in paks:
         with open(pak_path, "rb") as f:
@@ -112,16 +157,17 @@ def main() -> None:
         if not isinstance(ir, dict):
             continue
         events = ir.get("events", [])
-        voiced = [i for i, e in enumerate(events)
+        voiced = [(i, e.get("t")) for i, e in enumerate(events)
                   if isinstance(e, dict) and e.get("t") in ("say", "narrate")]
         if not voiced:
             continue
         try:
-            recs = voice_records(src[script], script)
+            recs = voice_records(src[script], script, jp_data)
         except KeyError:
             continue
         m = len(events)
-        fracs = [(idx / max(1, n), nnn) for idx, n, nnn in recs]
+        fracs = [(idx / max(1, n), nnn, is_dialog)
+                 for idx, n, nnn, is_dialog in recs]
         placed = assign_nnn(fracs, voiced, m)
         n_rec += len(recs)
         n_hit += len(placed)

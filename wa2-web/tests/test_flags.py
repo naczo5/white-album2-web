@@ -52,11 +52,21 @@ def test_choice_flag_targets_fullwidth_digits(tmp_path):
 
 def test_assign_nnn_monotonic_no_collisions():
     # two records snapping near the same event: order wins, no sharing
-    rows = assign_nnn([(0.45, 1), (0.5, 2)], [8, 9, 10], 20)
+    rows = assign_nnn([(0.45, 1, None), (0.5, 2, None)],
+                      [(8, "say"), (9, "say"), (10, "say")], 20)
     assert sorted(rows) == [9, 10]
     assert rows[9] == 1 and rows[10] == 2
 
 
 def test_assign_nnn_spread():
-    rows = assign_nnn([(0.0, 5), (0.5, 6)], [0, 10, 20], 20)
+    rows = assign_nnn([(0.0, 5, None), (0.5, 6, None)],
+                      [(0, "narrate"), (10, "narrate"), (20, "narrate")], 20)
     assert rows == {0: 5, 10: 6}
+
+
+def test_assign_nnn_kind_affinity():
+    # dialogue-shaped record prefers the say event at equal distance
+    rows = assign_nnn([(0.5, 7, True)], [(9, "narrate"), (11, "say")], 20)
+    assert rows == {11: 7}
+    rows = assign_nnn([(0.5, 7, False)], [(9, "narrate"), (11, "say")], 20)
+    assert rows == {9: 7}

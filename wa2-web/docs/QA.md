@@ -7,9 +7,9 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit (tools) | `pytest tests/` | 26 passed (bnr 7 + flags 4 + kcap 4 + parse_txt 11) |
+| unit (tools) | `pytest tests/` | 29 passed (bnr 7 + flags 7 + kcap 4 + parse_txt 11) |
 | corpus (BYOA) | `WA2_EN_PAK=... pytest tests/` | 205+49 files, census, routers, mega-choices, warnings allowlist |
-| web unit | `cd web && vitest run` | 35 passed (text/router/save/assets/bgm) |
+| web unit | `cd web && vitest run` | 45 passed (text/router/save/assets/bgm) |
 | types+build | `tsc --noEmit && npm run build` | clean |
 | flow parity | `check_flow.py IR flow.json` | 32/32 nodes, wording exact |
 | bnr choice gate | `check_bnr_choices.py IR script.pak` | 31/31 choices carry (4,208) markers |
@@ -110,6 +110,11 @@ is proven, what is assumed, and exactly how to close each gap.
   mapped, (4,208)/(4,209) choice gate 31/31 in tools/check_bnr_choices.py),
   SE-opcode-via-dispatcher (found (4,164) → allocator 0x406450, 12 high
   cues now live), sprite/flag negatives with next-probe notes.
+- 2026-10-06 (playtest feedback): `.bnr` backdrops were missing from the
+  stage — (4,146/147) `[M,X,Y,F]` cues decoded (4176 bak + 358 grp,
+  filename stems + clear barriers, prefix resolved at lookup) and merged
+  with txt images in the player (latest-wins, clear = barrier); voice map
+  gained dialogue/narration kind-affinity via JP token shapes.
 
 - 2026-10-04: three research passes (MAO release survey, Leaf engine
   survey, local asset inventory) — findings integrated, specs corrected

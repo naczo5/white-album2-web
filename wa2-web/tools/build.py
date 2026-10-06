@@ -143,9 +143,14 @@ def main() -> None:
                     *paks, os.path.join(data_dir, "bnr.json")], check=True)
     # Per-line voice numbers from .bnr (4,138) (needs parsed IR + en.paks;
     # falls back to comma-tok at runtime where a script has no map).
-    subprocess.run([sys.executable, os.path.join(HERE, "build_voice.py"),
-                    *paks, os.path.join(data_dir, "voicemap.json"),
-                    "--ir", ir_dir], check=True)
+    voice_cmd = [sys.executable, os.path.join(HERE, "build_voice.py"),
+                 *paks, os.path.join(data_dir, "voicemap.json"),
+                 "--ir", ir_dir]
+    if game:
+        vspak = os.path.join(game, "script.pak")
+        if os.path.isfile(vspak):
+            voice_cmd += ["--jp", vspak]
+    subprocess.run(voice_cmd, check=True)
     if game:
         grp = os.path.join(game, "grp.pak")
         if os.path.isfile(grp):

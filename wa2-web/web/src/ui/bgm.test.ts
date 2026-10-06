@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { resolveBgmTimeline, resolveFade, resolveSeRec, resolveVoiceNnn, renderSpanPartial } from "./reader";
+import { beforeAll, describe, expect, it } from "vitest";
+import { resolveBgmTimeline, resolveFade, resolveSeRec, resolveVoiceNnn, renderSpanPartial, resolveStageImage, resolveStageOverlay } from "./reader";
+import { loadManifest } from "../engine/assets";
 
 const RESOLVE = (t: number) => `bgm/BGM_${String(t).padStart(3, "0")}_B.OGG`;
 
@@ -72,6 +73,60 @@ describe("typewriter partial rendering (escape-before-break)", () => {
   });
 });
 
+describe("merged stage timeline (txt images + bnr backdrops)", () => {
+  const MANIFEST = {
+    version: 1,
+    images: {
+      "ic/b100400.tga": "ic/bg/b100400.png",
+      "b200101.tga": "bg/b200101.png",
+      "g.tga": "cg/g.png",
+    },
+    bgm: {},
+    sfx: {},
+    voice: {},
+    movies: {},
+  };
+  const origFetch = globalThis.fetch;
+  beforeAll(async () => {
+    globalThis.fetch = (async () => ({
+      ok: true, json: async () => MANIFEST,
+    })) as unknown as typeof fetch;
+    await loadManifest("assets/manifest.json");
+    globalThis.fetch = origFetch;
+  });
+
+  const txtEv = (e: { t: string; file?: string; layer?: string }, i: number) => ({
+    e: e as { t: "image"; file: string; layer: "bak" | "grp" | null },
+    i,
+  });
+
+  it("bnr classroom shows long before the first txt image (1002 early game)", () => {
+    const txt = [txtEv({ t: "image", file: "g.tga", layer: "grp" }, 432)];
+    const bnr = [{ ev: 6, layer: "bak" as const, stems: ["100400"], fade: 30, conf: "high" as const }];
+    expect(resolveStageImage(txt, bnr, 34, "intro")).toBe("assets/ic/bg/b100400.png");
+  });
+
+  it("later txt backdrops win; clear is a barrier", () => {
+    const txt = [txtEv({ t: "image", file: "b200101.tga", layer: "bak" }, 500)];
+    const bnr = [{ ev: 6, layer: "bak" as const, stems: ["100400"], conf: "high" as const }];
+    expect(resolveStageImage(txt, bnr, 600, "closing")).toBe("assets/bg/b200101.png");
+    const cleared = [{ ev: 550, layer: "bak" as const, clear: true, conf: "high" as const }];
+    expect(resolveStageImage(txt, cleared, 600, "closing")).toBeNull();
+  });
+
+  it("overlays show grp art and reset on backdrops", () => {
+    const txt = [
+      txtEv({ t: "image", file: "g.tga", layer: "grp" }, 432),
+      txtEv({ t: "image", file: "b200101.tga", layer: "bak" }, 500),
+    ];
+    expect(resolveStageOverlay(txt, null, 450, "intro")).toBe("assets/cg/g.png");
+    expect(resolveStageOverlay(txt, null, 550, "intro")).toBeNull();
+    const bnr = [{ ev: 460, layer: "grp" as const, stems: ["v100100"], conf: "high" as const }];
+    // v100100 not installed here: falls through to the older overlay
+    expect(resolveStageOverlay(txt, bnr, 470, "intro")).toBe("assets/cg/g.png");
+  });
+});
+
 describe("SE trigger gate (bnr confidence)", () => {
   it("fires only high-confidence records", () => {
     const recs = [
@@ -89,12 +144,21 @@ describe("fade resolver (bnr fadeMs)", () => {
     const recs = [
       { ev: 2, fadeMs: 1000, conf: "high" },
       { ev: 5, fadeMs: 99999, conf: "high" },
-      { ev: 9, conf: "high" },
+      { ev: 9, stems: ["100400"], conf: "high" },
     ];
     expect(resolveFade(recs, 1)).toBeNull();
     expect(resolveFade(recs, 2)).toBe(1000);
     expect(resolveFade(recs, 6)).toBe(2000);
+    // image change without fade value: default timing
     expect(resolveFade(recs, 10)).toBeNull();
+  });
+
+  it("ignores non-visual records without resetting", () => {
+    const recs = [
+      { ev: 2, fadeMs: 1000, conf: "high" },
+      { ev: 5, se: [447], conf: "high" },
+    ];
+    expect(resolveFade(recs, 6)).toBe(1000);
   });
 
   it("ignores hypothesis records", () => {

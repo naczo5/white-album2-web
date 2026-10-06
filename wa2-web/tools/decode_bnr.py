@@ -70,6 +70,26 @@ def decode_script(data: bytes, script: str) -> list[dict]:
         if idx in se_by_stmt:
             recs.append({"ev": ev, "se": [se_by_stmt[idx]],
                          "conf": "high"})
+        # Backdrops / event art: (4,146)/(4,147) [M,X,Y,F,...], (4,148).
+        # X==0: bare fade (transition timing); X==-2: clear; else filename
+        # stems (prefix resolved at lookup). 146/147 -> bak, 148 -> grp.
+        has146 = any(o == 4 and a == 146 for o, a in ops)
+        has147 = any(o == 4 and a == 147 for o, a in ops)
+        has148 = any(o == 4 and a == 148 for o, a in ops)
+        if (has146 or has147 or has148) and len(s) >= 4:
+            _m, x, y, fade = s[0], s[1], s[2], s[3]
+            if x == 0:
+                if fade:
+                    recs.append({"ev": ev, "fadeMs": fade, "conf": "high"})
+            elif x == -2:
+                recs.append({"ev": ev, "clear": True,
+                             "layer": "grp" if has148 else "bak",
+                             "conf": "high"})
+            elif x > 0:
+                recs.append({"ev": ev,
+                             "layer": "grp" if has148 else "bak",
+                             "stems": stem_candidates(x, y),
+                             "fade": fade, "conf": "high"})
         # fade: mode push + 1000ms + CMD(6,16)
         if (6, 16) in op_set and 1000 in s:
             recs.append({"ev": ev, "fadeMs": 1000, "conf": "high"})
@@ -91,6 +111,23 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             seen.add(k)
             out.append(r)
     return out
+
+
+def stem_candidates(x: int, y: int) -> list[str]:
+    """Backdrop/event-art filename stems for a (4,146/147/148) X/Y pair.
+
+    Verified against manifest hits: 6-digit zero-padded base from X+Y
+    (1004,0 -> 100400; 1008,2 -> 100820; 10130,0 -> 101300; 20050,1 ->
+    200501; 9900,0 -> 990000) plus the Y:02d form (1008,2 -> 100802).
+    Prefix (b/v/tv) and bak-vs-overlay choice happen at lookup: the player
+    tries candidates in order via the image manifest.
+    """
+    base = (str(x) + str(y)).ljust(6, "0")[:6]
+    alt = str(x) + "%02d" % y
+    stems = [base]
+    if alt != base:
+        stems.append(alt)
+    return stems
 
 
 def main() -> None:
