@@ -28,6 +28,15 @@ script-data is exactly v2.1.0 and audits wording (expect ~0.98).
 
 ## 2. Images / audio / movies (optional, text-first without)
 
+**Disc images (ISO):** the tools never run or install the game — they
+read loose `*.pak` files only. Extract them from the disc images once
+(ISO9660 is plain data; no Windows/Wine involved):
+
+```sh
+7z x disc1.iso -o~/wa2-discs/disc1        # or: sudo mount -o loop,ro disc1.iso /mnt/wa2
+# then point the extractor at the dir that now contains the .pak files
+```
+
 The extractor reads only `*.pak` files and accepts ANY subset — you do
 not need a full installed copy. Copy just the archives you want into a
 scratch dir and point the tool at it; missing paks simply leave those
