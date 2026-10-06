@@ -22,6 +22,17 @@ export async function loadManifest(url: string): Promise<AssetManifest | null> {
     const res = await fetch(url);
     if (!res.ok) return null;
     manifest = (await res.json()) as AssetManifest;
+    // Manifest values are paths relative to the manifest's own directory
+    // (e.g. "ic/cg/X.png" inside assets/manifest.json). Rebase them to
+    // page-relative URLs once, here, so every lookup below returns a
+    // fetchable URL in both dev (public/) and build (dist/) layouts.
+    const base = url.slice(0, url.lastIndexOf("/") + 1);
+    for (const table of [manifest.images, manifest.bgm, manifest.sfx,
+      manifest.voice, manifest.movies]) {
+      for (const [k, v] of Object.entries(table ?? {})) {
+        if (!/^(https?:|data:|blob:|\/)/.test(v)) table[k] = base + v;
+      }
+    }
     voiceIdx = new Map();
     for (const [key, val] of Object.entries(manifest.voice ?? {})) {
       const m = /^(ic\/)?(\d+_\d+)/.exec(key);

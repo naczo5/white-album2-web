@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveMovieUrl } from "./assets";
+import { bgmTrackUrl, imageUrl, loadManifest, resolveMovieUrl } from "./assets";
 
 const TABLE = {
   mv000: "movie/mv000.mp4",
@@ -26,6 +26,30 @@ describe("movie cue resolution (engine mvNN -> file mvNN0/1 pairs)", () => {
     }
     for (const c of cues) {
       expect(resolveMovieUrl(full, c)).toBe(`movie/${c}0.mp4`);
+    }
+  });
+});
+
+describe("manifest URL rebasing (assets/ relative -> page fetchable)", () => {
+  it("prefixes the manifest directory onto relative values", async () => {
+    const body = {
+      version: 1,
+      images: { "a.tga": "bg/a.png" },
+      bgm: { "BGM_008_A.OGG": "bgm/BGM_008_A.OGG" },
+      sfx: {},
+      voice: {},
+      movies: {},
+    };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true, json: async () => body,
+    })) as unknown as typeof fetch;
+    try {
+      await loadManifest("assets/manifest.json");
+      expect(imageUrl("a.tga")).toBe("assets/bg/a.png");
+      expect(bgmTrackUrl(8)).toBe("assets/bgm/BGM_008_A.OGG");
+    } finally {
+      globalThis.fetch = origFetch;
     }
   });
 });
