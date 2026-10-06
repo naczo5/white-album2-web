@@ -160,10 +160,11 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     const cls = ev.t === "say" ? "say" : "narrate";
     const who = ev.t === "say" && ev.speaker
       ? `<div class="speaker">${escapeAttr(ev.speaker)}</div>` : "";
-    const full = `${who}<div class="${cls}${ev.style === "whisper" ? " whisper" : ""}">${renderText(ev.text)}</div>`;
+    const outer = `${cls}${ev.style === "whisper" ? " whisper" : ""}`;
+    const full = `${who}<div class="${outer}">${renderText(ev.text)}</div>`;
     const speed = h.skipping ? 0 : h.settings.textSpeed;
     if (speed > 0) {
-      startTypewriter(box, full, ev.text, speed, () => scheduleAuto(h));
+      startTypewriter(box, full, ev.text, who, outer, speed, () => scheduleAuto(h));
       el.onclick = () => {
         if (completeTypewriter(box, full)) return; // first click completes
         stepForward(h);
@@ -206,7 +207,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
 }
 
 /** Progressive typewriter that preserves markup: reveal span by span. */
-function startTypewriter(box: HTMLElement, full: string, raw: string, cps: number, onDone: () => void): void {
+function startTypewriter(box: HTMLElement, full: string, raw: string, who: string, outer: string, cps: number, onDone: () => void): void {
   if (typeTimer !== null) {
     clearInterval(typeTimer);
     typeTimer = null;
@@ -229,9 +230,8 @@ function startTypewriter(box: HTMLElement, full: string, raw: string, cps: numbe
       html += renderSpanPartial(sp, take);
       if (rest <= 0 && take < len) break;
     }
-    // speaker label + style wrapper match renderText() output shape
-    box.innerHTML = html;
-    void full;
+    // Same wrapper shape as the finished line: speaker label + style div.
+    box.innerHTML = `${who}<div class="${outer}">${html}</div>`;
   };
   box.dataset.typing = "1";
   const tick = () => {
@@ -250,12 +250,15 @@ function startTypewriter(box: HTMLElement, full: string, raw: string, cps: numbe
 }
 
 function plainLength(s: string): number {
-  return s.replace(/\\n/g, " ").length;
+  return s.replace(/\\k/g, "  ").replace(/\\n/g, " ").length;
 }
 
-function renderSpanPartial(sp: { text: string; whisper?: boolean; ruby?: string }, take: number): string {
+/** Partial-span renderer for the typewriter (exported for unit tests).
+ * Mirrors renderText(): escape first, then convert breaks. */
+export function renderSpanPartial(sp: { text: string; whisper?: boolean; ruby?: string }, take: number): string {
   const esc = (x: string) => x.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  let t = esc(sp.text.replace(/\\n/g, "<br>"));
+  // Mirror renderText(): escape first, THEN convert breaks (never the reverse).
+  let t = esc(sp.text).replace(/\\k/g, "<br><br>").replace(/\\n/g, "<br>");
   // cut visible chars (approximate on escaped text; fine for latin + JP)
   const cut = (html: string, n: number) => {
     let out = "", count = 0, i = 0;

@@ -39,11 +39,19 @@ parsing (2004 accept/decline, 2013 today/tomorrow, 2014 talk/leave,
 
 ## Voice addressing
 
-Every say/narrate event carries `tok`: the raw comma-token index in its
-source file. Voice clips are addressed `{script}_{tok:04d}` (XOR-decoded
-VOICE.PAK names), so resplit fragments share their parent token's voice
-(played once, on the first fragment). Verified: 1008 tok199 and 2001
-tok19 match clip content exactly.
+Voice clips are addressed by the `.bnr` voice index NNN from `(4,138)`
+records `[A,256,0,0,NNN]` (A = speaker slot) — NOT by the script
+comma-token. The namespace is per scene-family: base 1008 plays NNN
+0-198, variant 1008_020 continues 199-214 (main VOICE.PAK), 1008_030
+continues 215-376 — proven by 020's 16 records exactly filling ic's 16
+key gaps. tools/build_voice.py maps each NNN record's fractional statement
+position to EN events (monotonic greedy, data/voicemap.json); events
+without NNN are unvoiced.
+
+Comma-tok coincides with NNN only while a translation stays token-aligned
+(1008) and plays wrong-scene clips otherwise: 1002 comma-toks run to 558
+while NNN runs 0-353, and 1008 base toks 199-213 collide with 1008_020's
+NNN 199-214 (same 16 files — positional truth decides).
 
 ## `.bnr` presentation bytecode (LSCR, decoded statically)
 

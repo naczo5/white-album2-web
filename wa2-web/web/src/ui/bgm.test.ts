@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveBgmTimeline, resolveFade, resolveSeRec, resolveVoiceNnn } from "./reader";
+import { resolveBgmTimeline, resolveFade, resolveSeRec, resolveVoiceNnn, renderSpanPartial } from "./reader";
 
 const RESOLVE = (t: number) => `bgm/BGM_${String(t).padStart(3, "0")}_B.OGG`;
 
@@ -50,6 +50,25 @@ describe("voice-number resolver (bnr NNN map + tok fallback)", () => {
   it("falls back to comma-tok only with no map", () => {
     expect(resolveVoiceNnn(undefined, 99)).toBe(99);
     expect(resolveVoiceNnn(undefined, undefined)).toBeNull();
+  });
+});
+
+describe("typewriter partial rendering (escape-before-break)", () => {
+  it("converts engine breaks without leaking literal tags", () => {
+    expect(renderSpanPartial({ text: "a\\nb" }, 10)).toBe("<span>a<br>b</span>");
+    expect(renderSpanPartial({ text: "a\\kb" }, 10)).toBe("<span>a<br><br>b</span>");
+  });
+
+  it("escapes HTML in the source text", () => {
+    const html = renderSpanPartial({ text: "<F16 hi>" }, 10);
+    expect(html).not.toContain("<F16");
+  });
+
+  it("reveals prefixes without breaking entities", () => {
+    const full = renderSpanPartial({ text: "ab&cd" }, 99);
+    const part = renderSpanPartial({ text: "ab&cd" }, 3);
+    expect(full).toBe("<span>ab&amp;cd</span>");
+    expect(part).toBe("<span>ab&amp;</span>");
   });
 });
 

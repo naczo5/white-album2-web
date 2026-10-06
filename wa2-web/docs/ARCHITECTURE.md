@@ -49,9 +49,11 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
   `play: 2301`) move files.
 - 43 suffixed variant files (`2031_2`, `2312_2`, …) are flag/replay
   gated alternates; v1 plays base files, variants listed for QA.
-- Voice wiring: VOICE.PAK filenames are XOR-0xFF `{script}_{token}_{take}.OGG`;
-  the parser records the raw token index (`tok`) on every say/narrate event
-  and the player auto-plays the clip (46k lines, ic-namespaced).
+- Voice wiring: VOICE.PAK filenames are XOR-0xFF `{script}_{NNN}_{take}.OGG`
+  where NNN is the .bnr voice index from `(4,138)` records (per
+  scene-family namespace, split across main/ic paks); tools/build_voice.py
+  maps records to events (data/voicemap.json) and the player auto-plays
+  the clip (46k lines, ic-namespaced).
 - Movie `mvNN` cues resolve to `mvNN0`/`mvNN1` file pairs (transcoded MP4).
 - `.AMP` cues are image color-grade LUTs, not music: exact 256-entry RGB
   curves ship in data/luts.json and render via SVG feComponentTransfer
