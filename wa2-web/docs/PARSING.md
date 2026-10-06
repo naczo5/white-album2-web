@@ -141,8 +141,14 @@ docs/QA.md verification log):
   sprite-show opcodes; op 176 is the txt-named image driver (MODE 14 =
   .tga grp, already decoded for event art).
 
-**Per-line sprite identity is unresolved, so the player deliberately
-renders no character sprites.** Next leads: map ctx layout of dispatch
+**Per-line sprite identity is unresolved, so nothing engine-faithful is
+guessed.** At the user's explicit request (2026-10-06), the player shows an
+EXPERIMENTAL stand-in layer: on say-lines, `data/sprites.json` maps the EN
+display speaker to its 3-letter prefix and `defaultSpriteUrl()`
+(web/src/engine/assets.ts) picks the lowest-numbered `NNNNNN.tga` frame
+from the manifest as a fixed default (narration keeps the last sprite).
+This is a test feature only — never treat its frame choice as engine data.
+Next leads: map ctx layout of dispatch
 entries 26/27 precisely, or instrument (4,176) statements whose `(3,X)`
 toks point at dialogue toks (the sprite change likely coincides with
 speaker turns).

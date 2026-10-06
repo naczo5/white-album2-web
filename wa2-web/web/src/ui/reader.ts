@@ -1,6 +1,6 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
-import { bgmTrackUrl, imageUrl, movieUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
+import { bgmTrackUrl, defaultSpriteUrl, imageUrl, movieUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
 import { Router, chapterOfScript } from "../engine/router";
 import { plainText, renderText, spanize } from "../engine/text";
 import type { BgmData, BnrData, Position, SaveData, ScenarioEvent } from "../engine/types";
@@ -86,6 +86,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     <div class="advance-hint" id="hint">click / space to continue</div>`;
 
   paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol);
+  paintSprite(el.querySelector("#stage") as HTMLElement, save, ev);
   fireSe(save);
   updateAmbient(save);
   const box = el.querySelector("#textbox") as HTMLElement;
@@ -835,10 +836,45 @@ export function setSpeakerLookup(fn: SpeakerLookup | null): void {
   speakerLookup = fn;
 }
 
+/** EXPERIMENTAL sprite layer (user-requested test feature): speaker
+ * display name -> sprite file prefix from data/speakers.json. The engine's
+ * per-line sprite identity is NOT decoded yet — each speaker shows one
+ * fixed default frame (see docs/QA.md verification log). */
+type SpriteLookup = (speaker: string) => string | null | undefined;
+let spriteLookup: SpriteLookup | null = null;
+export function setSpriteLookup(fn: SpriteLookup | null): void {
+  spriteLookup = fn;
+}
+
 function displaySpeaker(save: SaveData, ev: ScenarioEvent): string {
   if (ev.t !== "say" || !ev.speaker) return "";
   return speakerLookup?.(save.position.script, save.position.event) ??
     ev.speaker;
+}
+
+/** EXPERIMENTAL: paint the speaker sprite on the stage. Only say-events
+ * with a known prefix re-evaluate it; everything else (narration,
+ * choices, directives) keeps the last sprite, standard VN behaviour.
+ * Inserted below the grp overlay so CGs still draw on top. */
+function paintSprite(stage: HTMLElement, save: SaveData, ev: ScenarioEvent | null): void {
+  if (!ev || ev.t !== "say" || !ev.speaker) return;
+  let img = stage.querySelector(":scope > img.stage-spr") as
+    HTMLImageElement | null;
+  const prefix = spriteLookup?.(displaySpeaker(save, ev)) ?? null;
+  const url = prefix ? defaultSpriteUrl(prefix) : null;
+  if (!url) {
+    img?.remove();
+    return;
+  }
+  if (!img) {
+    img = document.createElement("img");
+    img.className = "stage-spr";
+    img.alt = "";
+    const ov = stage.querySelector(":scope > img.stage-ov");
+    if (ov) stage.insertBefore(img, ov);
+    else stage.appendChild(img);
+  }
+  if (img.getAttribute("src") !== url) img.setAttribute("src", url);
 }
 
 /** Play the voice clip for a displayed line, if the archive has it. */

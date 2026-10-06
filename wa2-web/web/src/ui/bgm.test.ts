@@ -1,6 +1,24 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { resolveAmbCue, resolveAmbStop, resolveBgmTimeline, resolveFade, resolveSeRec, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay } from "./reader";
-import { loadManifest } from "../engine/assets";
+import { loadManifest, pickDefaultSpriteKey } from "../engine/assets";
+
+describe("default sprite picker (EXPERIMENTAL speaker sprites)", () => {
+  const keys = [
+    "kaz101307.tga", "kaz001101.tga", "kaz001204.tga",
+    "ic/cg/kaz001101.tga", "set001101.tga", "v105300.tga", "chi001107.tga",
+  ];
+  it("picks the lowest-numbered frame for the prefix", () => {
+    expect(pickDefaultSpriteKey(keys, "kaz")).toBe("kaz001101.tga");
+    expect(pickDefaultSpriteKey(keys, "chi")).toBe("chi001107.tga");
+    expect(pickDefaultSpriteKey(["chi001107.tga"], "chi")).toBe("chi001107.tga");
+  });
+  it("ignores other prefixes, overlay stems, ic/ keys; empty prefix -> null", () => {
+    expect(pickDefaultSpriteKey(keys, "set")).toBe("set001101.tga");
+    expect(pickDefaultSpriteKey(keys, "v")).toBeNull(); // 1-letter stems never match
+    expect(pickDefaultSpriteKey(keys, "")).toBeNull();
+    expect(pickDefaultSpriteKey([], "kaz")).toBeNull();
+  });
+});
 
 const RESOLVE = (t: number) => `bgm/BGM_${String(t).padStart(3, "0")}_B.OGG`;
 

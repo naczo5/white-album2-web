@@ -9,7 +9,7 @@ is proven, what is assumed, and exactly how to close each gap.
 |---|---|---|
 | unit (tools) | `pytest tests/` | 35 passed (bnr 7 + flags 7 + kcap 4 + parse_txt 11 + voice 6) |
 | corpus (BYOA) | `WA2_EN_PAK=... pytest tests/` | 205+49 files, census, routers, mega-choices, warnings allowlist |
-| web unit | `cd web && vitest run` | 48 passed (text/router/save/assets/bgm) |
+| web unit | `cd web && vitest run` | 50 passed (text/router/save/assets/bgm) |
 | types+build | `tsc --noEmit && npm run build` | clean |
 | flow parity | `check_flow.py IR flow.json` | 32/32 nodes, wording exact |
 | bnr choice gate | `check_bnr_choices.py IR script.pak` | 31/31 choices carry (4,208) markers |
@@ -74,6 +74,11 @@ is proven, what is assumed, and exactly how to close each gap.
    0x4160e0–0x416548, `%s%06d.tga` format, per-slot struct stride 0x74 at
    0x5267f0, prefix string table 0x4a2904+) — see docs/PARSING.md
    "Character sprite system". Nothing is guessed on stage.
+   **EXPERIMENTAL layer (user-requested, 2026-10-06)**: the player now
+   shows a fixed default frame per speaker (sprites.json prefix →
+   lowest-numbered manifest frame; narration keeps the last sprite).
+   Deliberately NOT engine-faithful — per-line identity remains open and
+   this layer must not gate or influence parity work.
 9. **Voice take semantics**: third filename field (04/98/00/…) unmapped;
    one clip per line assumed (6 multi-clip lines: first wins).
 10. **Coda 31xx/32xx identity** (epilogues vs route tails).
@@ -178,3 +183,16 @@ is proven, what is assumed, and exactly how to close each gap.
     walkthrough-derived; variant entry rules unmapped; 3904_2
     dynamically unreachable until variants map; linear over-inclusion
     at 3016/2021-23 SWITCH sites is invisible to the sim by design.
+
+### 2026-10-06 — experimental default-frame sprite layer (user request)
+The user asked for sprites on stage to test despite the open per-line
+identity question. Added an explicitly experimental layer: say-lines look
+up the EN display speaker in `data/sprites.json` → 3-letter prefix →
+`pickDefaultSpriteKey` (web/src/engine/assets.ts, pure/test-pinned) picks
+the lowest-numbered `{prefix}NNNNNN.tga` manifest frame; narration keeps
+the last sprite; unknown prefixes clear it. Sprite img sits below the grp
+overlay. Verified all 19 sprites.json prefixes resolve (manifest frame
+coverage 7–527 per prefix; alpha 45–73% so no blank canvases picked).
+Gates: pytest 35 (unchanged), tsc clean, vitest 50 passed (+2 picker
+tests). Per-line identity work (dispatch entries 26/27) remains the real
+solution; this layer must not influence parity tooling.

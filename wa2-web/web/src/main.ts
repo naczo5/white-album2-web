@@ -5,7 +5,7 @@ import type { SaveData } from "./engine/types";
 import { loadGameData, type GameData } from "./ui/data";
 import { renderFlowchart } from "./ui/flowchart";
 import { renderGuide, type GuideData } from "./ui/guide";
-import { installLutFilters, pushLog, renderReader, setBgmLookup, setBnrLookup, setScenarioLookup, setSpeakerLookup, setVoiceLookup, skipLatches } from "./ui/reader";
+import { installLutFilters, pushLog, renderReader, setBgmLookup, setBnrLookup, setScenarioLookup, setSpeakerLookup, setSpriteLookup, setVoiceLookup, skipLatches } from "./ui/reader";
 import { renderSaves } from "./ui/saves";
 import "./style.css";
 
@@ -68,6 +68,8 @@ async function boot(): Promise<void> {
   });
   // JP speaker labels -> EN names (MAO manuscript, name-vote based)
   setSpeakerLookup((script, ev) => data.speakers?.speakers[script]?.[String(ev)]);
+  // EXPERIMENTAL default-frame sprites keyed by EN speaker display name
+  setSpriteLookup((speaker) => data.sprites?.speakers[speaker]?.prefix ?? null);
   await loadManifest("assets/manifest.json");
   try {
     const lutRes = await fetch("data/luts.json");
