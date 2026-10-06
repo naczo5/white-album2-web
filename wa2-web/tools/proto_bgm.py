@@ -19,7 +19,7 @@ Provenance:
 
 Usage:
   python3 proto_bgm.py EN_PAK SCRIPT [SCRIPT ...] [--bgm-pak BGM.PAK]
-  e.g. python3 proto_bgm.py /tmp/opencode/wa2v21/en.pak 2001 2019 2301
+  e.g. python3 proto_bgm.py /path/to/en.pak 2001 2019 2301
 """
 
 from __future__ import annotations
