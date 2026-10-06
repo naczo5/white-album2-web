@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveBgmTimeline, resolveFade, resolveSeRec } from "./reader";
+import { resolveBgmTimeline, resolveFade, resolveSeRec, resolveVoiceNnn } from "./reader";
 
 const RESOLVE = (t: number) => `bgm/BGM_${String(t).padStart(3, "0")}_B.OGG`;
 
@@ -38,6 +38,18 @@ describe("BGM timeline (bnr (4,158) cues)", () => {
     const cues = [{ ev: 3, stop: true }, { ev: 60, track: 1 }];
     expect(resolveBgmTimeline(cues, 10, RESOLVE)).toEqual({ kind: "stop" });
     expect(resolveBgmTimeline(cues, 60, RESOLVE).kind).toBe("play");
+  });
+});
+
+describe("voice-number resolver (bnr NNN map + tok fallback)", () => {
+  it("prefers the map; null map entry means unvoiced", () => {
+    expect(resolveVoiceNnn(12, 99)).toBe(12);
+    expect(resolveVoiceNnn(null, 99)).toBeNull();
+  });
+
+  it("falls back to comma-tok only with no map", () => {
+    expect(resolveVoiceNnn(undefined, 99)).toBe(99);
+    expect(resolveVoiceNnn(undefined, undefined)).toBeNull();
   });
 });
 

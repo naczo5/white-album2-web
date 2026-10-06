@@ -5,7 +5,7 @@ import type { SaveData } from "./engine/types";
 import { loadGameData, type GameData } from "./ui/data";
 import { renderFlowchart } from "./ui/flowchart";
 import { renderGuide, type GuideData } from "./ui/guide";
-import { installLutFilters, pushLog, renderReader, setBgmLookup, setBnrLookup, setScenarioLookup, skipLatches } from "./ui/reader";
+import { installLutFilters, pushLog, renderReader, setBgmLookup, setBnrLookup, setScenarioLookup, setVoiceLookup, skipLatches } from "./ui/reader";
 import { renderSaves } from "./ui/saves";
 import "./style.css";
 
@@ -58,6 +58,14 @@ async function boot(): Promise<void> {
   setScenarioLookup((script) => router.scripts.get(script));
   setBgmLookup((script) => data.bgm?.cues[script]);
   setBnrLookup((script) => data.bnr?.recs[script]);
+  // Map hit (even null = unvoiced step) beats comma-tok; scripts without
+  // a map fall back to tok via undefined.
+  setVoiceLookup((script, ev) => {
+    const m = data.voicemap?.map[script];
+    if (!m) return undefined;
+    const v = m[String(ev)];
+    return v === undefined ? null : v;
+  });
   await loadManifest("assets/manifest.json");
   try {
     const lutRes = await fetch("data/luts.json");

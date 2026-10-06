@@ -8,6 +8,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
 from build_flags import choice_flag_targets, parse_fnc, parse_gflag, parse_vrb  # noqa: E402
+from build_voice import assign_nnn  # noqa: E402
 
 
 def test_parse_vrb_sjis_csv():
@@ -47,3 +48,15 @@ def test_choice_flag_targets_fullwidth_digits(tmp_path):
     assert out["FLG_第３部15条件２"] == {
         "script": "3015", "option": 2, "kind": "condition", "verified": True}
     assert "FLG_雪菜好意度" not in out
+
+
+def test_assign_nnn_monotonic_no_collisions():
+    # two records snapping near the same event: order wins, no sharing
+    rows = assign_nnn([(0.45, 1), (0.5, 2)], [8, 9, 10], 20)
+    assert sorted(rows) == [9, 10]
+    assert rows[9] == 1 and rows[10] == 2
+
+
+def test_assign_nnn_spread():
+    rows = assign_nnn([(0.0, 5), (0.5, 6)], [0, 10, 20], 20)
+    assert rows == {0: 5, 10: 6}

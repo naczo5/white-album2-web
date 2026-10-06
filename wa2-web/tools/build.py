@@ -8,7 +8,7 @@ Steps:
   3. emit web data dir: build/data/{scripts/*.json, flow.json, endings.json,
      links.json, terminals.json, sprites.json, bgm.json, bnr.json,
      luts.json} (flow/links from IR; endings/terminals/sprites from data/;
-     bgm/bnr from .bnr bytecode; luts from grp.pak when --game is given;
+     bgm/bnr/voicemap from .bnr bytecode; luts from grp.pak with --game;
      flags.json flag reference + .bnr choice gate need script.pak)
   4. run parity gates (all engine choices covered, option text exact)
 
@@ -141,6 +141,11 @@ def main() -> None:
     subprocess.run(bgm_cmd, check=True)
     subprocess.run([sys.executable, os.path.join(HERE, "decode_bnr.py"),
                     *paks, os.path.join(data_dir, "bnr.json")], check=True)
+    # Per-line voice numbers from .bnr (4,138) (needs parsed IR + en.paks;
+    # falls back to comma-tok at runtime where a script has no map).
+    subprocess.run([sys.executable, os.path.join(HERE, "build_voice.py"),
+                    *paks, os.path.join(data_dir, "voicemap.json"),
+                    "--ir", ir_dir], check=True)
     if game:
         grp = os.path.join(game, "grp.pak")
         if os.path.isfile(grp):

@@ -113,6 +113,14 @@ export interface BgmData {
   cues: Record<string, BgmCue[]>;
 }
 
+/** Per-line voice map (built by tools/build_voice.py from .bnr (4,138)).
+ * Keys are event indices; values are voice numbers (NNN). Events without
+ * an entry are unvoiced. */
+export interface VoiceMapData {
+  version: number;
+  map: Record<string, Record<string, number>>;
+}
+
 /** Per-event presentation records (built by tools/decode_bnr.py).
  * Only `conf: "high"` records drive playback; anything weaker is
  * documented hypothesis the player deliberately ignores. */

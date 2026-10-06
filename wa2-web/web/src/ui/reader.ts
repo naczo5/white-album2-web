@@ -650,15 +650,36 @@ export function installLutFilters(luts: Record<string, { r: number[]; g: number[
   document.body.appendChild(svg);
 }
 
+/** Pure voice-number resolver (DOM-free; test-pinned). The .bnr NNN map
+ * decides when present (null = unvoiced step); comma-tok is only a
+ * fallback for scripts with no map (aligned files coincide anyway). */
+export function resolveVoiceNnn(
+  mapped: number | null | undefined,
+  tok: number | undefined,
+): number | null {
+  if (mapped !== undefined) return mapped;
+  return tok ?? null;
+}
+
+type VoiceLookup = (script: string, ev: number) => number | null | undefined;
+let voiceLookup: VoiceLookup | null = null;
+export function setVoiceLookup(fn: VoiceLookup | null): void {
+  voiceLookup = fn;
+}
+
 /** Play the voice clip for a displayed line, if the archive has it. */
 function playVoice(save: SaveData, ev: ScenarioEvent, vol: number): void {
   const audio = document.getElementById("voice") as HTMLAudioElement | null;
   if (!audio) return;
   audio.volume = Math.max(0, Math.min(1, vol));
   const ch = chapterOfScript(save.position.script);
-  const url = ev.t !== "say" && ev.t !== "narrate"
+  const mapped = ev.t !== "say" && ev.t !== "narrate"
     ? null
-    : voiceUrl(save.position.script, ev.tok, ch);
+    : voiceLookup?.(save.position.script, save.position.event);
+  const nnn = ev.t !== "say" && ev.t !== "narrate"
+    ? null
+    : resolveVoiceNnn(mapped, ev.tok);
+  const url = nnn === null ? null : voiceUrl(save.position.script, nnn, ch);
   if (url) {
     if (audio.dataset.cur !== url) {
       audio.dataset.cur = url;

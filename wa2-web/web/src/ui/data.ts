@@ -3,7 +3,7 @@
 // Built data lives in /data (emitted by tools/build.py) and is gitignored;
 // demo content below is original placeholder text, not game content.
 
-import type { BgmData, BnrData, FlowData, LinksData, Scenario, TerminalsData } from "../engine/types";
+import type { BgmData, BnrData, FlowData, LinksData, Scenario, TerminalsData, VoiceMapData } from "../engine/types";
 
 export interface GameData {
   scenarios: Scenario[];
@@ -15,6 +15,8 @@ export interface GameData {
   bgm: BgmData | null;
   /** Presentation records (built by tools/decode_bnr.py); null = none. */
   bnr: BnrData | null;
+  /** Per-line voice numbers (built by tools/build_voice.py); null = tok fallback. */
+  voicemap: VoiceMapData | null;
   demo: boolean;
   /** Scripts listed in the index that failed to load (stale cache/partial
    * copy). Empty when healthy; boot warns otherwise. */
@@ -60,7 +62,7 @@ const DEMO_FLOW: FlowData = {
 };
 
 export async function loadGameData(): Promise<GameData> {
-  const [index, flow, endings, links, terminals, bgm, bnr] = await Promise.all([
+  const [index, flow, endings, links, terminals, bgm, bnr, voicemap] = await Promise.all([
     tryFetch<string[]>("data/scripts/index.json"),
     tryFetch<FlowData>("data/flow.json"),
     tryFetch<GameData["endings"]>("data/endings.json"),
@@ -68,6 +70,7 @@ export async function loadGameData(): Promise<GameData> {
     tryFetch<TerminalsData>("data/terminals.json"),
     tryFetch<BgmData>("data/bgm.json"),
     tryFetch<BnrData>("data/bnr.json"),
+    tryFetch<VoiceMapData>("data/voicemap.json"),
   ]);
   if (index && index.length > 0 && flow) {
     const scenarios: Scenario[] = [];
@@ -86,7 +89,7 @@ export async function loadGameData(): Promise<GameData> {
         links: links ?? { version: 1, links: [] },
         terminals: terminals ?? { version: 1, terminals: {} },
         endings: endings ?? { endings: [] },
-        bgm, bnr,
+        bgm, bnr, voicemap,
         demo: false,
         incomplete: failed,
       };
@@ -98,7 +101,7 @@ export async function loadGameData(): Promise<GameData> {
     links: { version: 1, links: [] },
     terminals: { version: 1, terminals: {} },
     endings: { endings: [] },
-    bgm: null, bnr: null,
+    bgm: null, bnr: null, voicemap: null,
     demo: true,
     incomplete: [],
   };
