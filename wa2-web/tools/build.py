@@ -80,12 +80,16 @@ def main() -> None:
         sys.exit(2)
     paks = []
     game = None
+    mao = None
     out = os.path.join(HERE, "..", "build")
     args = sys.argv[1:]
     i = 0
     while i < len(args):
         if args[i] == "--game":
             game = args[i + 1]
+            i += 2
+        elif args[i] == "--mao":
+            mao = args[i + 1]
             i += 2
         elif args[i].endswith(".pak"):
             paks.append(args[i])
@@ -141,8 +145,10 @@ def main() -> None:
     subprocess.run(bgm_cmd, check=True)
     subprocess.run([sys.executable, os.path.join(HERE, "decode_bnr.py"),
                     *paks, os.path.join(data_dir, "bnr.json")], check=True)
-    # Per-line voice numbers from .bnr (4,138) (needs parsed IR + en.paks;
-    # falls back to comma-tok at runtime where a script has no map).
+    # Per-line voice map from .bnr (4,138). With --mao (MAO script-data
+    # clone, e.g. the fetch_mao.py upstream checkout) + --voice-dir, the
+    # exact anchor chain resolves each (4,138) NNN to a real archive key;
+    # otherwise the legacy fractional map is emitted.
     voice_cmd = [sys.executable, os.path.join(HERE, "build_voice.py"),
                  *paks, os.path.join(data_dir, "voicemap.json"),
                  "--ir", ir_dir]
@@ -150,6 +156,9 @@ def main() -> None:
         vspak = os.path.join(game, "script.pak")
         if os.path.isfile(vspak):
             voice_cmd += ["--jp", vspak]
+        voice_cmd += ["--voice-dir", game]
+    if mao:
+        voice_cmd += ["--mao", mao]
     subprocess.run(voice_cmd, check=True)
     if game:
         grp = os.path.join(game, "grp.pak")

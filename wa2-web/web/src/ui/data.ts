@@ -3,7 +3,7 @@
 // Built data lives in /data (emitted by tools/build.py) and is gitignored;
 // demo content below is original placeholder text, not game content.
 
-import type { BgmData, BnrData, FlowData, LinksData, Scenario, TerminalsData, VoiceMapData } from "../engine/types";
+import type { BgmData, BnrData, FlowData, LinksData, Scenario, SpeakersData, TerminalsData, VoiceMapData } from "../engine/types";
 
 export interface GameData {
   scenarios: Scenario[];
@@ -15,8 +15,10 @@ export interface GameData {
   bgm: BgmData | null;
   /** Presentation records (built by tools/decode_bnr.py); null = none. */
   bnr: BnrData | null;
-  /** Per-line voice numbers (built by tools/build_voice.py); null = tok fallback. */
+  /** Per-line voice map (built by tools/build_voice.py); null = tok fallback. */
   voicemap: VoiceMapData | null;
+  /** Display-name overrides (built by tools/build_voice.py); null = none. */
+  speakers: SpeakersData | null;
   demo: boolean;
   /** Scripts listed in the index that failed to load (stale cache/partial
    * copy). Empty when healthy; boot warns otherwise. */
@@ -62,16 +64,18 @@ const DEMO_FLOW: FlowData = {
 };
 
 export async function loadGameData(): Promise<GameData> {
-  const [index, flow, endings, links, terminals, bgm, bnr, voicemap] = await Promise.all([
-    tryFetch<string[]>("data/scripts/index.json"),
-    tryFetch<FlowData>("data/flow.json"),
-    tryFetch<GameData["endings"]>("data/endings.json"),
-    tryFetch<LinksData>("data/links.json"),
-    tryFetch<TerminalsData>("data/terminals.json"),
-    tryFetch<BgmData>("data/bgm.json"),
-    tryFetch<BnrData>("data/bnr.json"),
-    tryFetch<VoiceMapData>("data/voicemap.json"),
-  ]);
+  const [index, flow, endings, links, terminals, bgm, bnr, voicemap, speakers] =
+    await Promise.all([
+      tryFetch<string[]>("data/scripts/index.json"),
+      tryFetch<FlowData>("data/flow.json"),
+      tryFetch<GameData["endings"]>("data/endings.json"),
+      tryFetch<LinksData>("data/links.json"),
+      tryFetch<TerminalsData>("data/terminals.json"),
+      tryFetch<BgmData>("data/bgm.json"),
+      tryFetch<BnrData>("data/bnr.json"),
+      tryFetch<VoiceMapData>("data/voicemap.json"),
+      tryFetch<SpeakersData>("data/speakers.json"),
+    ]);
   if (index && index.length > 0 && flow) {
     const scenarios: Scenario[] = [];
     const failed: string[] = [];
@@ -89,7 +93,7 @@ export async function loadGameData(): Promise<GameData> {
         links: links ?? { version: 1, links: [] },
         terminals: terminals ?? { version: 1, terminals: {} },
         endings: endings ?? { endings: [] },
-        bgm, bnr, voicemap,
+        bgm, bnr, voicemap, speakers,
         demo: false,
         incomplete: failed,
       };
@@ -101,7 +105,7 @@ export async function loadGameData(): Promise<GameData> {
     links: { version: 1, links: [] },
     terminals: { version: 1, terminals: {} },
     endings: { endings: [] },
-    bgm: null, bnr: null, voicemap: null,
+    bgm: null, bnr: null, voicemap: null, speakers: null,
     demo: true,
     incomplete: [],
   };

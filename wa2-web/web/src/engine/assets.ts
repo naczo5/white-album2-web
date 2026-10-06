@@ -145,6 +145,15 @@ export function voiceUrl(script: string, tok: number | undefined, chapter?: stri
   return main?.length ? main[0] : null;
 }
 
+/**
+ * Voice clip by exact archive line key ("1008_0199" or "ic/1002_0000"),
+ * as resolved by tools/build_voice.py (family-base chain for variant
+ * scripts). Preferred path: the key IS the manifest key.
+ */
+export function voiceUrlByKey(key: string): string | null {
+  return lookup(manifest?.voice, key);
+}
+
 export function hasAssets(): boolean {
   return manifest !== null;
 }

@@ -1,6 +1,6 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
-import { bgmTrackUrl, imageUrl, movieUrl, seUrl, voiceUrl } from "../engine/assets";
+import { bgmTrackUrl, imageUrl, movieUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
 import { Router, chapterOfScript } from "../engine/router";
 import { plainText, renderText, spanize } from "../engine/text";
 import type { BgmData, BnrData, Position, SaveData, ScenarioEvent } from "../engine/types";
@@ -87,6 +87,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
 
   paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol);
   fireSe(save);
+  updateAmbient(save);
   const box = el.querySelector("#textbox") as HTMLElement;
   const ch = el.querySelector("#choices") as HTMLElement;
   const hint = el.querySelector("#hint") as HTMLElement;
@@ -158,8 +159,8 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   if (ev.t === "say" || ev.t === "narrate") {
     playVoice(save, ev, h.settings.voiceVol);
     const cls = ev.t === "say" ? "say" : "narrate";
-    const who = ev.t === "say" && ev.speaker
-      ? `<div class="speaker">${escapeAttr(ev.speaker)}</div>` : "";
+    const who = ev.t === "say" && displaySpeaker(save, ev)
+      ? `<div class="speaker">${escapeAttr(displaySpeaker(save, ev))}</div>` : "";
     const outer = `${cls}${ev.style === "whisper" ? " whisper" : ""}`;
     const full = `${who}<div class="${outer}">${renderText(ev.text)}</div>`;
     const speed = h.skipping ? 0 : h.settings.textSpeed;
@@ -362,7 +363,7 @@ export function pushLog(router: Router, save: SaveData): void {
   const ev: ScenarioEvent | null = router.at(save.position);
   if (ev && (ev.t === "say" || ev.t === "narrate")) {
     const text = plainText(ev.text);
-    const speaker = ev.t === "say" ? ev.speaker : "";
+    const speaker = ev.t === "say" ? displaySpeaker(save, ev) : "";
     const key = `${save.position.script}:${save.position.event}`;
     if (save.lastLogged !== key) {
       save.lastLogged = key;
@@ -673,6 +674,80 @@ function fireSe(save: SaveData): void {
   audio.play().catch(() => undefined);
 }
 
+/** Pure ambient-channel resolvers (DOM-free; test-pinned). Only
+ * high-confidence records drive playback (docs/QA.md). */
+export interface AmbCue { se: number; ch: number; vol: number; loop: boolean }
+export function resolveAmbCue(
+  recs: { ev: number; amb?: AmbCue; ambStop?: number; conf: string }[],
+  event: number,
+): AmbCue | null {
+  for (const r of recs) {
+    if (r.ev === event && r.conf === "high" && r.amb) return r.amb;
+  }
+  return null;
+}
+export function resolveAmbStop(
+  recs: { ev: number; amb?: AmbCue; ambStop?: number; conf: string }[],
+  event: number,
+): number | null {
+  for (const r of recs) {
+    if (r.ev === event && r.conf === "high" && r.ambStop !== undefined) {
+      return r.ambStop;
+    }
+  }
+  return null;
+}
+
+// Ambient channel state (engine .bnr (4,165)/(4,166)): up to four
+// looping channel players; a script switch cuts them all (engine
+// channel state does not carry across scripts).
+const ambEls = new Map<number, HTMLAudioElement>();
+let ambScript: string | null = null;
+
+function stopAmbChannel(ch: number): void {
+  const a = ambEls.get(ch);
+  if (a) {
+    a.pause();
+    a.removeAttribute("src");
+    delete a.dataset.cur;
+  }
+}
+
+function stopAllAmb(): void {
+  for (const ch of [...ambEls.keys()]) stopAmbChannel(ch);
+}
+
+function updateAmbient(save: SaveData): void {
+  if (ambScript !== null && ambScript !== save.position.script) {
+    stopAllAmb();
+  }
+  ambScript = save.position.script;
+  const recs = bnrLookup?.(save.position.script);
+  if (!recs) return;
+  const stop = resolveAmbStop(recs, save.position.event);
+  if (stop !== null) stopAmbChannel(stop);
+  const cue = resolveAmbCue(recs, save.position.event);
+  if (!cue) return;
+  const ch = chapterOfScript(save.position.script);
+  const url = seUrl(cue.se, ch);
+  let a = ambEls.get(cue.ch);
+  if (!a) {
+    a = document.createElement("audio");
+    a.dataset.ch = String(cue.ch);
+    ambEls.set(cue.ch, a);
+  }
+  if (!url) {
+    // missing asset: silence the channel rather than replay a stale cue
+    stopAmbChannel(cue.ch);
+    return;
+  }
+  a.dataset.cur = url;
+  a.src = url;
+  a.loop = cue.loop;
+  a.volume = Math.max(0, Math.min(1, cue.vol / 255));
+  a.play().catch(() => undefined);
+}
+
 /** Latest .AMP color-grade filter at/before position.
  * Exact engine LUTs via SVG feComponentTransfer when available
  * (data/luts.json), else the CSS approximation table. */
@@ -729,21 +804,41 @@ export function installLutFilters(luts: Record<string, { r: number[]; g: number[
   document.body.appendChild(svg);
 }
 
-/** Pure voice-number resolver (DOM-free; test-pinned). The .bnr NNN map
- * decides when present (null = unvoiced step); comma-tok is only a
- * fallback for scripts with no map (aligned files coincide anyway). */
-export function resolveVoiceNnn(
-  mapped: number | null | undefined,
+/** Pure voice resolver (DOM-free; test-pinned). The voicemap decides
+ * when present: a string is an exact archive key (voicemap v2), a number
+ * is a legacy bnr NNN (played via the script_token path); null = unvoiced
+ * step. Comma-tok is only a fallback for scripts with no map. */
+export type VoiceRef = string | number;
+export function resolveVoiceRef(
+  mapped: VoiceRef | null | undefined,
   tok: number | undefined,
-): number | null {
+): VoiceRef | null {
   if (mapped !== undefined) return mapped;
   return tok ?? null;
 }
 
-type VoiceLookup = (script: string, ev: number) => number | null | undefined;
+type VoiceLookup = (
+  script: string,
+  ev: number,
+) => VoiceRef | null | undefined;
 let voiceLookup: VoiceLookup | null = null;
 export function setVoiceLookup(fn: VoiceLookup | null): void {
   voiceLookup = fn;
+}
+
+/** Display-name overrides (data/speakers.json, built from the MAO
+ * manuscript's speakerEn): JP speaker labels map to EN names by
+ * script-scoped name votes. DOM-free. */
+type SpeakerLookup = (script: string, ev: number) => string | undefined;
+let speakerLookup: SpeakerLookup | null = null;
+export function setSpeakerLookup(fn: SpeakerLookup | null): void {
+  speakerLookup = fn;
+}
+
+function displaySpeaker(save: SaveData, ev: ScenarioEvent): string {
+  if (ev.t !== "say" || !ev.speaker) return "";
+  return speakerLookup?.(save.position.script, save.position.event) ??
+    ev.speaker;
 }
 
 /** Play the voice clip for a displayed line, if the archive has it. */
@@ -755,10 +850,14 @@ function playVoice(save: SaveData, ev: ScenarioEvent, vol: number): void {
   const mapped = ev.t !== "say" && ev.t !== "narrate"
     ? null
     : voiceLookup?.(save.position.script, save.position.event);
-  const nnn = ev.t !== "say" && ev.t !== "narrate"
+  const ref = ev.t !== "say" && ev.t !== "narrate"
     ? null
-    : resolveVoiceNnn(mapped, ev.tok);
-  const url = nnn === null ? null : voiceUrl(save.position.script, nnn, ch);
+    : resolveVoiceRef(mapped, ev.tok);
+  const url = ref === null
+    ? null
+    : typeof ref === "string"
+      ? voiceUrlByKey(ref)
+      : voiceUrl(save.position.script, ref, ch);
   if (url) {
     if (audio.dataset.cur !== url) {
       audio.dataset.cur = url;

@@ -7,9 +7,9 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit (tools) | `pytest tests/` | 29 passed (bnr 7 + flags 7 + kcap 4 + parse_txt 11) |
+| unit (tools) | `pytest tests/` | 35 passed (bnr 7 + flags 7 + kcap 4 + parse_txt 11 + voice 6) |
 | corpus (BYOA) | `WA2_EN_PAK=... pytest tests/` | 205+49 files, census, routers, mega-choices, warnings allowlist |
-| web unit | `cd web && vitest run` | 45 passed (text/router/save/assets/bgm) |
+| web unit | `cd web && vitest run` | 48 passed (text/router/save/assets/bgm) |
 | types+build | `tsc --noEmit && npm run build` | clean |
 | flow parity | `check_flow.py IR flow.json` | 32/32 nodes, wording exact |
 | bnr choice gate | `check_bnr_choices.py IR script.pak` | 31/31 choices carry (4,208) markers |
@@ -69,14 +69,25 @@ is proven, what is assumed, and exactly how to close each gap.
 8. **Dynamic sprites**: grp-layer event art displays with .bnr fade timing;
    standing sprites inventoried (ako face-variants 322×684 need no
    compositing; kaz/set/… full-height slot canvases; prefix table in
-   data/sprites.json). Per-line identity + screen slots need .bnr
-   integer-slot decode (no slot floats exist in .bnr — positions are
-   integer records or engine defaults). Nothing is guessed on stage.
+   data/sprites.json). Per-line identity + screen slots still unmapped;
+   exe disassembly now localizes the machinery (dispatch entries 26/27 →
+   0x4160e0–0x416548, `%s%06d.tga` format, per-slot struct stride 0x74 at
+   0x5267f0, prefix string table 0x4a2904+) — see docs/PARSING.md
+   "Character sprite system". Nothing is guessed on stage.
 9. **Voice take semantics**: third filename field (04/98/00/…) unmapped;
    one clip per line assumed (6 multi-clip lines: first wins).
 10. **Coda 31xx/32xx identity** (epilogues vs route tails).
 11. **v1.3.6→v2.1.0 structural diff**: 2007 + 3013 choices exist only in
    v2.1.0; build is version-agnostic but flow.json here is v2.1.0.
+    **Data now built from the MAO v2.1.0 release paks** (downloaded
+    release zip → en.pak × 2), pin audit passed (0.986 / 193 scripts).
+15. **Special-disc variant JP text** (blocks exact voice anchoring for 43
+   variant scripts): their `.bnr` anchors reference JP variant txts that
+   are NOT in script.pak (e.g. `2031_2.txt` only exists in MAO's en.pak,
+   partially translated — large JP portions are the official patch's own
+   state). Those scripts keep fractional voice assignment (resolved file
+   keys, so the right clips play); supplying the special/tokuten JP
+   script pak would close the gap via the same chain.
 12. **2021/2022/2023 → 2025 SWITCH skips**: consecutive bare-jump pairs
    offer skipping ahead (including skipping the 2024 12/31 choice).
    Router plays everything linearly; plausibly flag-gated short paths.
@@ -89,6 +100,34 @@ is proven, what is assumed, and exactly how to close each gap.
     question as 13, same default-plays-linear treatment.
 
 ## Subagent verification log
+
+- 2026-10-06 (third wave, static-only): voice/speaker/ambience overhaul.
+  - **Voice anchor proven exact**: every (4,138) NNN record is followed by
+    a (4,131) statement carrying (3,X) = the JP comma-token of the voiced
+    line — 41464/41464 (100.00%) against JP script.pak corpus-wide.
+    MAO's en.pak rebuilds .bnr payloads (0/174 identical) but keeps the
+    anchors in JP coordinates — the patched engine holds JP script.pak as
+    its coordinate spine (exe loads `patch.pak`/`pak\%s.pak` overlays).
+  - **tools/build_voice.py rewritten** (v2): NNN → (3,X) → JP display
+    line → MAO manuscript line (ruby-aware JP containment + ordinal gap
+    fill) → EN IR event (fetch_mao normalization) → resolved voice key
+    from VOICE.PAK/IC LAC names (family-base chain fixes the previously
+    silent variant lookups, e.g. 2031_3 → 2031_0612). 35871/48504 exact;
+    6865 fractional (special-disc variants without JP txt — QA open 15).
+    Legacy `assign_nnn` kept as tested fallback.
+  - **speakers.json added**: JP speaker labels → MAO speakerEn by
+    script-scoped name votes (13587 overrides / 40 scripts); a
+    text-position-based first attempt misattributed names and was
+    replaced — wrong displayed names are worse than JP ones.
+  - **Ambient channel SE**: (4,165) [ch, se, fade, loop, vol] = channel
+    play (dispatch entry 37 → 0x40f400; 645/646 ids are SE.PAK numbers),
+    (4,166) [ch,V≤0] = stop. decode_bnr emits 4926 cues + 51 stops
+    (conf high); player runs up to 4 looping channel players, stops on
+    script switch; skip-guarded (4,168) deliberately not emitted.
+  - **Rebuilt all data from MAO v2.1.0 release paks** (v1.3.6 paks were
+    stale); MAO pin audit re-passed (0.986 / 193 scripts).
+  - Gates: pytest 35, tsc + vitest 48, check_flow + bnr choice gate green
+    in build, fetch_mao drift audit green.
 
 - 2026-10-05: three static-only research passes (no game execution):
   BGM opcode RE (found (4,158) + exe call chain + corpus census, now

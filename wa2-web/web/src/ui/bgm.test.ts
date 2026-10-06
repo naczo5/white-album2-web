@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { resolveBgmTimeline, resolveFade, resolveSeRec, resolveVoiceNnn, renderSpanPartial, resolveStageImage, resolveStageOverlay } from "./reader";
+import { resolveAmbCue, resolveAmbStop, resolveBgmTimeline, resolveFade, resolveSeRec, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay } from "./reader";
 import { loadManifest } from "../engine/assets";
 
 const RESOLVE = (t: number) => `bgm/BGM_${String(t).padStart(3, "0")}_B.OGG`;
@@ -42,15 +42,39 @@ describe("BGM timeline (bnr (4,158) cues)", () => {
   });
 });
 
-describe("voice-number resolver (bnr NNN map + tok fallback)", () => {
+describe("ambient channel resolvers (4,165 cue / 4,166 stop)", () => {
+  const RECS = [
+    { ev: 5, amb: { se: 3019, ch: 0, vol: 128, loop: true }, conf: "high" },
+    { ev: 9, ambStop: 0, conf: "high" },
+    { ev: 12, amb: { se: 7, ch: 2, vol: 60, loop: false }, conf: "hypothesis" },
+  ];
+
+  it("fires only high-confidence cues at the exact event", () => {
+    expect(resolveAmbCue(RECS, 5)).toEqual({ se: 3019, ch: 0, vol: 128, loop: true });
+    expect(resolveAmbCue(RECS, 12)).toBeNull(); // hypothesis: ignored
+    expect(resolveAmbCue(RECS, 6)).toBeNull();
+  });
+
+  it("resolves channel stops", () => {
+    expect(resolveAmbStop(RECS, 9)).toBe(0);
+    expect(resolveAmbStop(RECS, 5)).toBeNull();
+  });
+});
+
+describe("voice resolver (archive-key/NNN map + tok fallback)", () => {
   it("prefers the map; null map entry means unvoiced", () => {
-    expect(resolveVoiceNnn(12, 99)).toBe(12);
-    expect(resolveVoiceNnn(null, 99)).toBeNull();
+    expect(resolveVoiceRef(12, 99)).toBe(12);
+    expect(resolveVoiceRef(null, 99)).toBeNull();
+  });
+
+  it("passes exact archive keys through (voicemap v2)", () => {
+    expect(resolveVoiceRef("1008_0199", 199)).toBe("1008_0199");
+    expect(resolveVoiceRef("ic/1002_0000", undefined)).toBe("ic/1002_0000");
   });
 
   it("falls back to comma-tok only with no map", () => {
-    expect(resolveVoiceNnn(undefined, 99)).toBe(99);
-    expect(resolveVoiceNnn(undefined, undefined)).toBeNull();
+    expect(resolveVoiceRef(undefined, 99)).toBe(99);
+    expect(resolveVoiceRef(undefined, undefined)).toBeNull();
   });
 });
 

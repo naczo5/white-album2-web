@@ -52,9 +52,9 @@ at build time.
 ## Commands
 
 ```sh
-cd wa2-web && python3 -m pytest tests/ -q   # 29 passed + 7 BYOA-skipped
-cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 45 passed
-python3 tools/build.py MAIN_EN_PAK [SPECIAL_EN_PAK] OUT [--game GAMEDIR]
+cd wa2-web && python3 -m pytest tests/ -q   # 35 passed + 7 BYOA-skipped
+cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 48 passed
+python3 tools/build.py MAIN_EN_PAK [SPECIAL_EN_PAK] OUT [--game GAMEDIR] [--mao MAO_SCRIPT_DATA]
 ```
 
 `--game` unlocks the asset-dependent steps (luts, flags, bnr choice gate).

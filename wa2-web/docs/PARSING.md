@@ -44,9 +44,26 @@ records `[A,256,0,0,NNN]` (A = speaker slot) — NOT by the script
 comma-token. The namespace is per scene-family: base 1008 plays NNN
 0-198, variant 1008_020 continues 199-214 (main VOICE.PAK), 1008_030
 continues 215-376 — proven by 020's 16 records exactly filling ic's 16
-key gaps. tools/build_voice.py maps each NNN record's fractional statement
-position to EN events (monotonic greedy, data/voicemap.json); events
-without NNN are unvoiced.
+key gaps. **Exact anchor chain (proven, replaces the fractional guess):**
+every `(4,138)` record is followed (within 3 statements) by a `(4,131)`
+statement carrying `(3,X)` where **X is the JP comma-token of the voiced
+line** — verified 41464/41464 exact against JP `script.pak` (100.00%).
+MAO's en.pak builds **rebuild** the `.bnr` payloads (0/174 files identical
+to JP script.pak) but preserve the `(4,138)`+`(3,X)` anchors in JP
+coordinates (1002 anchors run to X=852 while the EN txt has 560 tokens —
+the patched engine keeps the JP txt as its coordinate spine).
+tools/build_voice.py resolves each anchor exactly: NNN → (3,X) → JP
+display line (tok X) → MAO manuscript line (ruby-aware JP containment +
+ordinal gap fill) → EN IR event (fetch_mao normalization containment) →
+voice-archive line key (`{base}_{NNN:04d}`, family-base chain for
+variants) read from the VOICE.PAK/IC LAC names. 35871/48504 records chain
+exact; the rest are special-disc variant scripts whose JP txt is absent
+from script.pak — they keep the fractional statement-position assignment
+(with resolved keys so the right file plays). Output data/voicemap.json
+v2 `{script: {ev: key}}` plus data/speakers.json (JP speaker labels →
+MAO `speakerEn` by script-scoped name votes — never text position; a
+wrong displayed name is worse than a JP one). Events without NNN are
+unvoiced.
 
 Comma-tok coincides with NNN only while a translation stays token-aligned
 (1008) and plays wrong-scene clips otherwise: 1002 comma-toks run to 558
@@ -57,9 +74,11 @@ NNN 199-214 (same 16 files — positional truth decides).
 
 Each `NNN.bnr` (LZSS in en.pak) is a u32-LE statement stream split on the
 `(6,30)` boundary. Push tags: `(5,3,X)` int, `(5,4,F)` float; ops are
-`(2|3|4|6, arg)` pairs. `(3,X)` counters follow the JP token stream
-(JP `2001.txt` has 773 tokens vs EN 374 — align via fractional position,
-not raw index). Decoders: tools/proto_bgm.py (report:
+`(2|3|4|6, arg)` pairs. `(3,X)` counters are JP token indices: in the JP
+build they index the JP txt stream; MAO's en.pak keeps them in JP
+coordinates even though its own txt is restructured (the patched engine
+resolves them against the still-installed JP script.pak). Decoders:
+tools/proto_bgm.py (report:
 tools/proto_bgm_report.md), tools/build_bgm.py (timeline),
 tools/decode_bnr.py (fades/cams).
 
@@ -75,6 +94,9 @@ tools/decode_bnr.py (fades/cams).
 | `(5,3,0),(5,3,SCRIPT),(4,137)` | script load/jump | high |
 | `(5,3,X),(5,3,0),(5,3,0),(4,194)` | timed wait | medium |
 | `(5,3,SE),(5,3,255),(4,164)` | sound effect `SE_%04d` (2 pushes only; vol hardcoded 255) | high (thunk→allocator chain + 12/12 census) |
+| `(4,165)` + `[ch, se, fade_ms, loop, vol, ?]` | ambient channel SE play: ch 0-3, fade ms (0/30/60/120 common), loop flag (1: 955×, 0: 3528×), volume 0-255 (255/128/80/180/60 seen); thunk 0x40f400; 645/646 distinct ids are `SE_%04d` in SE.PAK (99%; only id 180 absent, sfx max 9801) | high (dispatch entry 37 → 0x40f400 + census) |
+| `(4,166)` + `[ch, V]` | channel volume set (V > 0) / channel stop (V ≤ 0 → emitted as `ambStop`) | high (0x40f590) |
+| `(4,168)` + `[ch, 0]` | channel stop guarded by engine skip-state check (0x40ad10) — NOT emitted (in normal play the engine keeps the channel; stopping it would be a wrong silence) | medium (documented only) |
 | `(4,146/147)` + `[M,X,Y,F,0,0,0]` | backdrop show: X=0 → bare fade F (transition timing); X=-2 → clear; else filename stem `(str(X)+str(Y)).ljust(6,"0")` plus the `X+Y:02d` form (1004,0 → 100400; 1008,2 → 100820 + 100802; 9900,0 → 990000); prefix (b/v/tv) resolved at lookup | high (manifest cross-checked; 4176 cues) |
 | `(4,148)` + `[M,X,Y,F,…]` | event-visual overlay: stem `str(X)+str(Y)` (10010,0 → 100100; 20000,1 → 200001), v*/tv* preferred | high (358 cues) |
 | `(4,176)` + `[slot,MODE,2,256,last]` | txt-named image driver (MODE 14 = `.tga` grp, 12/13 = bak/grp; JP toks in `(3,*)` ops match the image context) | high (1007/1008_030 controls) |
@@ -93,6 +115,37 @@ candidates, but corpus-wide filters catch JP token counters just as easily
 zero filenames (only ASCII run in any `.bnr` is `LSCR`) but address `.txt`
 by token index (verified: 1008_030 image anchors 44/46/65/67/90/92/107/109
 occur exactly 2× each).
+
+## Character sprite system (mapped, unproven — nothing displayed)
+
+Static findings from WA2.exe (.text 0x401000, .rdata 0x4a1000; see
+docs/QA.md verification log):
+
+- LSCR dispatch table: .data 0xc1010 (VA 0x4c2610), 112 handler thunks;
+  **handler index = opcode − 128** (validated: entry 36 = op 164 = SE
+  thunk 0x455720, entry 37 = op 165 = channel-SE 0x40f400). Push values
+  reach handlers from ctx `+0x18 + 0x14*i` (push[i] at 0x18, 0x2c, 0x40…).
+- Sprite files are built as `'%s%06d.tga'` (VA 0x4a28f8) under
+  `char\%s`; a 17-entry prefix table (strings 0x4a2904–0x4a2940, built at
+  0x415bf8–0x415caf) matches the `data/sprites.json` prefixes (aco, kaz,
+  setsu…). A second format `'0@%s%05d%d.tga'` exists (5-digit + face
+  digit). Extracted char.pak sprites are single full-alpha canvases
+  (e.g. aco 322×684, koh 488×720) — no compositing needed.
+- Per-slot state: stride 0x74 at base 0x5267f0 — +f6 WORD prefix index,
+  +f8 DWORD file number, +f2/+f4 anim state, +810..812 BYTEs, +816 WORD;
+  setter at 0x416460; big sprite function 0x4160e0–0x416548 is reachable
+  from dispatch entries 26 AND 27 (candidate ops (4,154)/(4,155)) but the
+  statement shapes (`p=[10,111,1000,1,0,256,128]`) do not confirm sprite
+  identity — possibly slot-anim/mouth ops instead.
+- Corpus tests ruled ops 143/156/159/161/166/168/170/180/185 out as
+  sprite-show opcodes; op 176 is the txt-named image driver (MODE 14 =
+  .tga grp, already decoded for event art).
+
+**Per-line sprite identity is unresolved, so the player deliberately
+renders no character sprites.** Next leads: map ctx layout of dispatch
+entries 26/27 precisely, or instrument (4,176) statements whose `(3,X)`
+toks point at dialogue toks (the sprite change likely coincides with
+speaker turns).
 
 ## Engine flag tables (script.pak, decoded statically)
 

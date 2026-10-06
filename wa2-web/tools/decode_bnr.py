@@ -18,8 +18,12 @@ during development), so value-range SE candidates are never emitted.
 The true SE opcode is (4,164): statement [SE,255]+(4,164) (LSCR thunk
 0x455720 -> SE channel allocator 0x406450; 12/12 corpus occurrences
 address real SE.PAK numbers) and IS emitted below with conf="high".
+Ambient channel playback is (4,165) [ch, se, fade_ms, loop, vol, ?]
+(0x40f400; 99% of ids are SE.PAK numbers), stopped by (4,166) [ch,0];
+both emitted with conf="high" (see docs/PARSING.md).
 
-Output: {version: 1, recs: {script: [{ev, se?, cam?, fadeMs?, conf}]}}
+Output: {version: 1, recs: {script: [{ev, se?, amb?, ambStop?, cam?,
+fadeMs?, conf}]}}
 Only conf="high" records drive playback (fades + SE); anything weaker is
 reference data the player ignores.
 Usage:
@@ -69,6 +73,21 @@ def decode_script(data: bytes, script: str) -> list[dict]:
         s = [s32(x) for x in pushes]
         if idx in se_by_stmt:
             recs.append({"ev": ev, "se": [se_by_stmt[idx]],
+                         "conf": "high"})
+        # Ambient/channel SE (opcode (4,165)): [ch, se_id, fade_ms, loop,
+        # volume, ?] -> thunk chain 0x40f400 (6 args); 645/646 distinct
+        # ids exist as SE_%04d in SE.PAK (99%, conf high). Volume is the
+        # raw 0-255 push. Zero-volume (4,166) [ch,0] stops the channel;
+        # the skip-guarded (4,168) stop is deliberately not emitted.
+        has165 = any(o == 4 and a == 165 for o, a in ops)
+        has166 = any(o == 4 and a == 166 for o, a in ops)
+        if has165 and len(s) >= 5:
+            recs.append({"ev": ev,
+                         "amb": {"se": s[1], "ch": max(0, min(3, s[0])),
+                                 "vol": s[4], "loop": bool(s[3])},
+                         "conf": "high"})
+        elif has166 and len(s) >= 2 and s[1] <= 0:
+            recs.append({"ev": ev, "ambStop": max(0, min(3, s[0])),
                          "conf": "high"})
         # Backdrops / event art: (4,146)/(4,147) [M,X,Y,F,...], (4,148).
         # X==0: bare fade (transition timing); X==-2: clear; else filename

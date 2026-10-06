@@ -114,11 +114,20 @@ export interface BgmData {
 }
 
 /** Per-line voice map (built by tools/build_voice.py from .bnr (4,138)).
- * Keys are event indices; values are voice numbers (NNN). Events without
- * an entry are unvoiced. */
+ * Keys are event indices; values are exact archive line keys (v2:
+ * "1008_0199" / "ic/1002_0000", resolved via the family-base chain) or
+ * legacy bare NNN numbers (runtime tok fallback). Events without an
+ * entry are unvoiced. */
 export interface VoiceMapData {
   version: number;
-  map: Record<string, Record<string, number>>;
+  map: Record<string, Record<string, string | number>>;
+}
+
+/** Display-name overrides (tools/build_voice.py from the MAO manuscript):
+ * JP speaker labels -> EN names, keyed by event index. */
+export interface SpeakersData {
+  version: number;
+  speakers: Record<string, Record<string, string>>;
 }
 
 /** Per-event presentation records (built by tools/decode_bnr.py).
@@ -127,6 +136,11 @@ export interface VoiceMapData {
 export interface BnrRec {
   ev: number;
   se?: number[];
+  /** Ambient channel cue (4,165): SE id, channel 0-3, volume 0-255,
+   * loop flag. */
+  amb?: { se: number; ch: number; vol: number; loop: boolean };
+  /** Ambient channel stop (4,166) with non-positive volume. */
+  ambStop?: number;
   cam?: { zoom: number; dur: number };
   fadeMs?: number;
   /** Backdrop/event-art cue: filename stems (prefix resolved at lookup). */
