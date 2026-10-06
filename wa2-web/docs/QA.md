@@ -79,6 +79,11 @@ is proven, what is assumed, and exactly how to close each gap.
    lowest-numbered manifest frame; narration keeps the last sprite).
    Deliberately NOT engine-faithful — per-line identity remains open and
    this layer must not gate or influence parity work.
+   **PARKED NEXT STEP (2026-10-06)**: decode per-line sprite identity —
+   instrument `(4,176)` statements whose `(3,X)` toks point at dialogue
+   toks (sprite changes likely coincide with speaker turns), and map
+   dispatch entries 26/27 ctx layout precisely; then derive file numbers
+   (`%s%06d.tga`) corpus-wide to replace the stand-in layer.
 9. **Voice take semantics**: third filename field (04/98/00/…) unmapped;
    one clip per line assumed (6 multi-clip lines: first wins).
 10. **Coda 31xx/32xx identity** (epilogues vs route tails).
