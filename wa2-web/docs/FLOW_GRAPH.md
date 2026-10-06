@@ -35,9 +35,13 @@ fixes the numbers. 12/24 + 12/31 + 2/14 dummies documented per node.
 
 Caveat: every effect map below (including `EXPERT_SOURCED` ones like
 `2013 flag_off: mari`, `2016 clear: chiaki`, `2017 aff_if_mari`, all Coda
-`uwaki` splits) is a walkthrough derivation with ZERO engine evidence —
-the engine stores no visible flag writes. Treat the whole flag model as
-one systemic NEEDS_PLAYTEST until save-state diffing confirms it.
+`uwaki` splits) is a walkthrough derivation — but it now has engine
+vocabulary behind it: script.pak `Global.vrb` names the live affection,
+cheat, route-kill, and per-choice pick flags (15/15 mapped to real
+scripts, tools/build_flags.py), and `GFLAG.dat` holds the 62
+ending/chapter/replay slots. What save-state diffing still owes us is the
+numeric layer (pick→delta amounts, gate thresholds), not the flag
+identities. Advisory gating stays until the numbers confirm.
 
 ## Variants (43 files: `2031_2`, `2312_2`, `3001_2`, …)
 

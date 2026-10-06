@@ -66,6 +66,14 @@ tools/decode_bnr.py (fades/cams).
 | `(5,3,1),(4,132)` etc. | dialogue-line marker | high (445×/2001) |
 | `(5,3,0),(5,3,SCRIPT),(4,137)` | script load/jump | high |
 | `(5,3,X),(5,3,0),(5,3,0),(4,194)` | timed wait | medium |
+| `(5,3,SE),(5,3,255),(4,164)` | sound effect `SE_%04d` (2 pushes only; vol hardcoded 255) | high (thunk→allocator chain + 12/12 census) |
+| `(4,146/147/148)` + `[1,X,Y,fade,0,0,0]` + 1280/720 floats | backdrop/event-art show (`X`,`Y` build the filename: `X=2001,Y=1` → `b200101`; `X=0` clear, `X=-2` hide; `148` = event layer) | high (pak cross-checked) |
+| `(4,176)` + `[slot,MODE,2,256,last]` | txt-named image driver (MODE 14 = `.tga` grp, 12/13 = bak/grp; JP toks in `(3,*)` ops match the image context) | high (1007/1008_030 controls) |
+| `(4,185)` + `[slot,1,0,0]` after multi-image shows | slot selector for txt-named event art (one per loaded image) | medium (positions unknown) |
+| `(4,208)` + `[99,0,0]`/`[99,3,1]`/`[1,1,1]` | choice-present marker (exactly on choice toks; `[99,3,1]` = goto-carrying option) | high (31/31 gate) |
+| `(4,209)` + `[0,0,1]` + `(2,0),(6,27),(4,209),(6,16),(6,0)` | choice-commit (1 per choice; payload identical across options — deltas are engine-side) | high |
+| `(4,137)` head `[0,SCRIPT]` vs `[N,SCRIPT]` | script load; head N (145-845) = variant entry/replay key (bases open `[0]`; keyless heads = mid-file splice-ins). Mid-file `[N,-1]` = intra-file label jump (N = label id, −1 = current script). | medium |
+| `(4,196)` + single ms value | timing/staging cue (0, 1000, …, 112770 — not audio) | medium |
 
 SE triggers unmapped: ascending integer runs below the SE.PAK entry count
 in voice-adjacent records (1008_030.bnr body offsets 5029-5485, X in
@@ -76,6 +84,20 @@ candidates, but corpus-wide filters catch JP token counters just as easily
 zero filenames (only ASCII run in any `.bnr` is `LSCR`) but address `.txt`
 by token index (verified: 1008_030 image anchors 44/46/65/67/90/92/107/109
 occur exactly 2× each).
+
+## Engine flag tables (script.pak, decoded statically)
+
+- `Global.vrb`: Shift-JIS CSV `type,name,init` — 29 live vars: timers,
+  affection (`FLG_雪菜/小春/千晶/麻理好意度`, `FLG_かずさ本気度`,
+  `FLG_かずさ浮気度` = uwaki), route-kill (`FLG_*ルート消滅`), per-choice
+  pick flags (`FLG_第２部03選択肢１` → script 2003 option 1; 条件 = branch
+  condition, e.g. `FLG_第３部15条件２` proves the 3015 switch is gated).
+  15/15 pick flags map to real scripts (tools/build_flags.py --ir).
+- `GFLAG.dat`: 62 slots × 260 B, `_GFLAG_EV_*` names — chapter clears,
+  `２周目以降` replay, novel clears, all route endings.
+- `LFScriptFunc{,Ex}.fnc`: opcode vocabulary (SetGameFlag/GetGameFlag,
+  SetSelect/SetSelectMess, LoadBmp/SetBmp*, GetReplayMode, EroMode).
+  Group numbers in `(4,X)`/`(6,X)` statements are NOT .fnc indices.
 
 ## Display granularity assumption (needs play-test)
 

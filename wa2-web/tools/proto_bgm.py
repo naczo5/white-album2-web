@@ -38,7 +38,9 @@ import parse_txt  # noqa: E402
 
 NEG2 = 0xFFFFFFFF - 1  # 0xFFFFFFFE (-2)
 OP_BGM = 158
+OP_SE = 164
 TRACK_MAX_EXE = 199  # exe 0x40fb85 bound (real tracks: 1..79 per BGM.PAK)
+SE_VOL = 255  # pushes[1] of every (4,164) statement (cf. exe push 0xff)
 
 
 def code_off(payload: bytes) -> int:
@@ -121,6 +123,25 @@ def find_bgm(payload: bytes):
             stops.append({"stmt": idx, "off": off,
                           "pushes": [s32(x) for x in pushes], "ops": ops})
     return plays, stops, n
+
+
+def find_se(payload: bytes):
+    """Return list of SE plays: {stmt, off, se}.
+
+    Opcode (4,164): statement shape [SE, 255] + (4,164) (2 pushes only;
+    pushes[1] = volume, constant 255 corpus-wide, cf. exe `push 0xff`).
+    Provenance: LSCR thunk 0x455720 calls the SE channel allocator
+    0x406450 with the 2 script args; handler table base+40 = 164 with 6
+    corroborating sibling slots; 12/12 corpus occurrences address real
+    SE.PAK numbers. See docs/PARSING.md.
+    """
+    out = []
+    for idx, off, pushes, ops, _raw, _floats in iter_statements(payload):
+        if not any(o == 4 and a == OP_SE for o, a in ops):
+            continue
+        if len(pushes) >= 2 and pushes[1] == SE_VOL:
+            out.append({"stmt": idx, "off": off, "se": s32(pushes[0])})
+    return out
 
 
 def load_bnr(en_pak_data: bytes, script: str):

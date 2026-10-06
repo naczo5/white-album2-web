@@ -32,13 +32,16 @@ Prototype: `tools/proto_bgm.py`. Run:
    slot 0 = first-pushed value = track. (`0x423d79` sibling calls `0x4068a0`
    directly with 7 pushes for the `(6,23)` variant path.)
 5. Corpus proof (206 main + 49 special `.bnr`): every `(4,158)` play's
-   pushes[0] ∈ BGM.PAK number set `{1..35,40..47,50..71,74}` ∪ `{78,79}`
-   (special pak). Zero counterexamples. Unused numbers
-   `{4(except 1 use),19..22,28..35,60..71,74}` have no in-script cue
-   (movie-scene or spare tracks). 203/206 main files carry cues; the 3
-   without (`1008_020, 1012_020, 3906_2`) inherit the previous file's BGM
-   (engine never auto-stops at file boundaries — only 5 explicit stops
-   exist corpus-wide).
+   pushes[0] is a shipped BGM number. Main BGM.PAK holds loop pairs plus
+   solo `BGM_NNN.OGG` files (004, 005, 019-022, 028, 029, 032 among them —
+   an early `track_set()` draft missed solos by splitting on `_`; fixed).
+   78/79 ship only on the bonus disc (WA2_EE_SC BGM.PAK, 140 files, cued by
+   bonus scenario 4009; JP 4009.bnr agrees stmt-for-stmt). Zero
+   counterexamples. Unused numbers `{30,31,34,35,60..71,74}` have no
+   in-script cue (movie-scene or spare tracks). 203/206 main files carry
+   cues; the 3 without (`1008_020, 1012_020, 3906_2`) inherit the previous
+   file's BGM (engine never auto-stops at file boundaries — only 10
+   explicit stops exist corpus-wide).
 
 ## Bytecode format (new, goes beyond prior attempts)
 

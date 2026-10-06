@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
 from extract_assets import decode_lac_name  # noqa: E402
-from proto_bgm import find_bgm, iter_statements  # noqa: E402
+from proto_bgm import find_bgm, find_se, iter_statements  # noqa: E402
 
 
 def xor_name(s: str) -> bytes:
@@ -61,6 +61,16 @@ def test_find_bgm_channel_variant_is_play():
     plays, stops, _ = find_bgm(payload)
     assert len(plays) == 1 and plays[0]["track"] == 20
     assert stops == []
+
+
+def test_find_se_shape():
+    payload = lscr_payload(
+        stmt([5, 3, 1001, 5, 3, 255, 4, 164]) +
+        stmt([5, 3, 7, 5, 3, -2, 5, 3, 1, 5, 3, 255, 4, 158]))
+    out = find_se(payload)
+    assert len(out) == 1 and out[0]["se"] == 1001
+    # BGM statement is not an SE statement
+    assert out[0]["stmt"] == 0
 
 
 def test_iter_statements_captures_float_pushes():

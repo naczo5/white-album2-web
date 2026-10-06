@@ -8,7 +8,8 @@ Steps:
   3. emit web data dir: build/data/{scripts/*.json, flow.json, endings.json,
      links.json, terminals.json, sprites.json, bgm.json, bnr.json,
      luts.json} (flow/links from IR; endings/terminals/sprites from data/;
-     bgm/bnr from .bnr bytecode; luts from grp.pak when --game is given)
+     bgm/bnr from .bnr bytecode; luts from grp.pak when --game is given;
+     flags.json flag reference + .bnr choice gate need script.pak)
   4. run parity gates (all engine choices covered, option text exact)
 
 Install: cp -r build/data/* web/public/data/  (see docs/BYOA.md)
@@ -146,6 +147,21 @@ def main() -> None:
             subprocess.run([sys.executable, os.path.join(HERE, "build_luts.py"),
                             grp, os.path.join(data_dir, "luts.json")],
                            check=True)
+        # Engine flag reference + .bnr choice-marker parity gate
+        # (both need the installed script.pak; skipped without --game).
+        spak = os.path.join(game, "script.pak")
+        if os.path.isfile(spak):
+            ir_for_flags = ir_dir
+            subprocess.run([sys.executable,
+                            os.path.join(HERE, "build_flags.py"),
+                            spak, os.path.join(data_dir, "flags.json"),
+                            "--ir", ir_for_flags], check=True)
+            r = subprocess.run([sys.executable,
+                                os.path.join(HERE, "check_bnr_choices.py"),
+                                ir_dir, spak])
+            if r.returncode != 0:
+                print("BUILD FAILED: bnr choice-marker gate")
+                sys.exit(1)
     r = subprocess.run([sys.executable, os.path.join(HERE, "check_flow.py"),
                         ir_dir, os.path.join(data_dir, "flow.json")])
     if r.returncode != 0:

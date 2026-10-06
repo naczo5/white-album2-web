@@ -7,11 +7,13 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit (tools) | `pytest tests/` | 21 passed (bnr 6 + kcap 4 + parse_txt 11) |
+| unit (tools) | `pytest tests/` | 26 passed (bnr 7 + flags 4 + kcap 4 + parse_txt 11) |
 | corpus (BYOA) | `WA2_EN_PAK=... pytest tests/` | 205+49 files, census, routers, mega-choices, warnings allowlist |
 | web unit | `cd web && vitest run` | 35 passed (text/router/save/assets/bgm) |
 | types+build | `tsc --noEmit && npm run build` | clean |
 | flow parity | `check_flow.py IR flow.json` | 32/32 nodes, wording exact |
+| bnr choice gate | `check_bnr_choices.py IR script.pak` | 31/31 choices carry (4,208) markers |
+| flag reference | `build_flags.py script.pak` | 29 vars + 62 gflags, 15/15 pick flags mapped |
 | full sim | `simulate.py … routers/first/chiaki/mari/koharu/special` | 202/245 scripts, 0 stalls |
 | MAO pin | `fetch_mao.py IR_MAIN IR_SPECIAL --clone …` | v2.1.0, 0.986 containment / 193 scripts |
 | assets | `extract_assets.py --selftest` | KCAP+TGA+WAV round-trip |
@@ -28,10 +30,18 @@ is proven, what is assumed, and exactly how to close each gap.
 ## Open (play-test against the PC build)
 
 1. **Flag numbers**: affection thresholds, uwaki arithmetic, gate
-   visibility (per-node NEEDS_PLAYTEST). Procedure: save-state diff per
-   choice; record pick→flag deltas; update `annotate_flow.py`.
-2. **Variant entry rules** (43 files): which flags/replay state selects
-   each `_2/_3/_020` file. Procedure: flag sweep at each base file end.
+   visibility (per-node NEEDS_PLAYTEST). Engine side now mapped:
+   script.pak `Global.vrb` names every live var (FLG_雪菜/小春/千晶/麻理
+   好意度, FLG_かずさ本気度/浮気度, route-kill + per-choice pick flags;
+   tools/build_flags.py → build/data/flags.json) and `GFLAG.dat` holds 62
+   ending/chapter/replay slots. What remains is numeric: pick→delta
+   amounts and gate thresholds. Procedure: save-state diff per choice;
+   record pick→flag deltas; update `annotate_flow.py`.
+2. **Variant entry rules** (43 files): base tails are branch-free and
+   variant heads carry `(4,137)` entry keys N (145-845; bases open [0]),
+   so selection is engine-side over GFLAG/replay state — the
+   `selectVariant()` seam is correctly placed. What remains is the N
+   semantics + flag sweep at each base end.
 3. **Click granularity**: advances per scene vs PC (PARSING.md assumption).
 4. **2019-764 frame**: confirm work/stay belongs to the opt1 path and
    2501-path Koharu/Setsuna/Normal split is flag-only (no missing choice).
@@ -43,16 +53,19 @@ is proven, what is assumed, and exactly how to close each gap.
    Provenance: exe sprintf/call-chain disassembly + zero-counterexample
    corpus census. Player timeline in data/bgm.json (242 scripts,
    1288 plays, 10 stops), test-pinned (play/stop/sustain/missing).
-   Residuals: 11 cued tracks (4, 5, 19-22, 28, 29, 32, 78, 79) have no
-   file in either BGM.PAK — player sustains previous BGM there; placement
-   is scene-exact, ±few lines within a scene (JP-counter vs EN-token drift).
-7. **SE triggers**: files recovered with real names (`SE_%04d`, 1962 clips;
-   pipeline bug fixed + one-shot migration tools/fix_audio_names.py);
-   player seam live (seUrl + confidence-gated triggers + volume element).
-   Trigger mapping stays open: the ascending-integer-run candidate shape
-   (1008_030.bnr offsets 5029-5485) is documented in docs/PARSING.md, but
-   corpus-wide filters catch JP token counters too (false positives
-   verified), so nothing is auto-played rather than guessing wrong.
+   Residuals: 2 cued tracks (78, 79) have no file in the installed game —
+   they ship on the bonus disc (WA2_EE_SC BGM.PAK, cued by bonus scenario
+   4009); player sustains previous BGM there; placement is scene-exact,
+   ±few lines within a scene (JP-counter vs EN-token drift).
+7. **SE triggers — SOLVED statically**: opcode (4,164), statement
+   `[SE,255]+(4,164)` (LSCR thunk 0x455720 → SE channel allocator
+   0x406450; handler-table base+40 = 164 with 6 corroborating sibling
+   slots; 12/12 corpus occurrences address real `SE_%04d` files).
+   tools/decode_bnr.py emits them conf="high" into data/bnr.json and the
+   player fires them (12 cues: 1002/1004/1005/3001/3002 + specials).
+   The old ascending-integer-run lead is positively identified as
+   dialogue staging-sync (embeds JP-tick ops, 1:1 with lines) — documented
+   in docs/PARSING.md, never emitted.
 8. **Dynamic sprites**: grp-layer event art displays with .bnr fade timing;
    standing sprites inventoried (ako face-variants 322×684 need no
    compositing; kaz/set/… full-height slot canvases; prefix table in
@@ -70,6 +83,8 @@ is proven, what is assumed, and exactly how to close each gap.
 13. **3016 → 3024 bare hint**: mid-tail either/or pair with the
     `CATCH3 → 3017` marker (same pattern as the 3015 switch). The port
     reads `3016→3017→…→3024` linearly (content-coherent); confirm.
+    (Note: FLG_第３部15条件２ in Global.vrb proves the 3015 switch is a
+    flag-gated condition, same family — engine evidence, not just pattern.)
 14. **3023:536 `CATCH3 → {3201, 3101}`** vs linear `3023→3024`: same
     question as 13, same default-plays-linear treatment.
 
@@ -88,6 +103,13 @@ is proven, what is assumed, and exactly how to close each gap.
     .bnr fade timing on overlays, se audio element, bgm/bnr data loading.
   - static-fix batch from the audit: .gitignore media patterns, QA
     numbering + test counts, BYOA voice paragraph, LEGAL label count.
+- 2026-10-06: second static-only RE wave: missing-BGM audit (9 of 11
+  "missing" tracks were a `track_set()` solo-file bug — fixed; 78/79 are
+  bonus-disc-only, verified in WA2_EE_SC BGM.PAK), flag-table extraction
+  (Global.vrb/GFLAG.dat/.fnc → tools/build_flags.py, 15/15 pick flags
+  mapped, (4,208)/(4,209) choice gate 31/31 in tools/check_bnr_choices.py),
+  SE-opcode-via-dispatcher (found (4,164) → allocator 0x406450, 12 high
+  cues now live), sprite/flag negatives with next-probe notes.
 
 - 2026-10-04: three research passes (MAO release survey, Leaf engine
   survey, local asset inventory) — findings integrated, specs corrected

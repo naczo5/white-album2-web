@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import struct
 import sys
 
@@ -60,10 +61,11 @@ def track_set(game_dir: str | None) -> set[int]:
                 for i in range(count):
                     raw = data[8 + i * 40:8 + i * 40 + 24]
                     s = bytes(b ^ 0xFF for b in raw.split(b"\x00")[0])
-                    try:
-                        have.add(int(s.decode().split("_")[1]))
-                    except (ValueError, IndexError):
-                        pass
+                    # Solo files are BGM_NNN.OGG (no _A/_B suffix), so match
+                    # the numeric prefix rather than splitting on "_".
+                    m = re.match(r"BGM_(\d+)", s.decode())
+                    if m:
+                        have.add(int(m.group(1)))
             except OSError:
                 pass
     return have
