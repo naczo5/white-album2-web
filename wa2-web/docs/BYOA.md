@@ -28,7 +28,33 @@ script-data is exactly v2.1.0 and audits wording (expect ~0.98).
 
 ## 2. Images / audio / movies (optional, text-first without)
 
-From your INSTALLED game dir (the one containing `WA2.exe`, `*.pak`):
+The extractor reads only `*.pak` files and accepts ANY subset — you do
+not need a full installed copy. Copy just the archives you want into a
+scratch dir and point the tool at it; missing paks simply leave those
+features as placeholders.
+
+| archives (game root, and `IC/` for the intro chapter) | size | unlocks |
+|---|---|---|
+| `script.pak` | 5M | JP coordinate spine for exact voice anchoring (`--game` builds) |
+| `bak.pak` + `fnt.pak` | 0.8G | backdrops, filters, fonts |
+| `char.pak` | 0.5G | character sprites |
+| `grp.pak` | 0.4G | event CGs, overlays |
+| `BGM.PAK` + `SE.PAK` | 1.1G | music + sound effects |
+| `VOICE.PAK` | 1.4G | voiced lines |
+| `mv*.pak` | 2.5G | movies (also needs ffmpeg) |
+
+Typical light setups:
+
+```sh
+# text-only play (no game files at all): stop after section 1
+mkdir -p ~/wa2-min && cp /path/to/game/{script,bak,fnt,char,grp}.pak ~/wa2-min/
+cp -r /path/to/game/IC ~/wa2-min/          # optional, intro chapter
+python3 tools/extract_assets.py ~/wa2-min build/assets \
+  --en-pak /tmp/wa2/main/en.pak --en-pak /tmp/wa2/special/en.pak
+cp -r build/assets web/public/assets
+```
+
+From your INSTALLED game dir it works the same, just slower to scan:
 
 ```sh
 python3 tools/extract_assets.py /path/to/game build/assets \
