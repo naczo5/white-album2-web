@@ -9,7 +9,7 @@ is proven, what is assumed, and exactly how to close each gap.
 |---|---|---|
 | unit (tools) | `pytest tests/` | 35 passed (bnr 7 + flags 7 + kcap 4 + parse_txt 11 + voice 6) |
 | corpus (BYOA) | `WA2_EN_PAK=... pytest tests/` | 205+49 files, census, routers, mega-choices, warnings allowlist |
-| web unit | `cd web && vitest run` | 50 passed (text/router/save/assets/bgm) |
+| web unit | `cd web && vitest run` | 58 passed (text/router/save/assets/bgm/flowgraph) |
 | types+build | `tsc --noEmit && npm run build` | clean |
 | flow parity | `check_flow.py IR flow.json` | 32/32 nodes, wording exact |
 | bnr choice gate | `check_bnr_choices.py IR script.pak` | 31/31 choices carry (4,208) markers |
@@ -68,13 +68,15 @@ is proven, what is assumed, and exactly how to close each gap.
    in docs/PARSING.md, never emitted.
 8. **Dynamic sprites**: grp-layer event art displays with .bnr fade timing;
    ~~standing sprites~~ **SOLVED (2026-10-07)**: sprite show/hide is
-   decoded — `(4,154)`/`(4,155) [prefix_id, face, base, …]` →
-   `char\{prefix}{base+face:06d}.tga`, hide = face sentinel 4000; corpus
-   proof 14315/14319 files exist (docs/PARSING.md "Character sprite
+   decoded — `(4,154)`/`(4,155) [char_id, face, base, pos, …]` →
+   `char\{prefix}{base+face:06d}.tga`, hide = ops `(4,156)/(4,157)` (+ the
+   4000 sentinel), backdrop shows wipe all sprites (`sprClear`); corpus
+   proof 14315/14319 files exist + position table 0x4be0bc + clear-all
+   chain 0x4167e0→0x402680 (docs/PARSING.md "Character sprite
    system"). The player renders the engine-faithful timeline
-   (`resolveSprites`, test-pinned). Remaining sub-item: per-slot screen
-   positions (the trailing 256/128 pushes are unconfirmed) — the player
-   spreads sprites evenly as a presentation choice.
+   (`resolveSprites` + `spriteLeftPct`, test-pinned). ~~Remaining
+   sub-item: per-slot screen positions~~ **SOLVED (2026-10-07)**: arg3 =
+   position index → x-offset table at .rdata 0x4be0bc.
 9. **Voice take semantics**: third filename field (04/98/00/…) unmapped;
    one clip per line assumed (6 multi-clip lines: first wins).
 10. **Coda 31xx/32xx identity** (epilogues vs route tails).
@@ -212,3 +214,35 @@ presentation choice — engine slot x/y not decoded). Data rebuilt
 (15,584 shows + 1 hide, 178 scripts), all gates green: pytest 35, tsc
 clean, vitest 50, check_flow 32/32, check_bnr_choices 31/31, simulate
 clean, MAO pin passed.
+
+### 2026-10-07 — sprite slot model COMPLETED + presentation/input pass
+User reports against the first sprite pass ("no scene shows many sprites;
+they cycle, max ~2 active") exposed the missing lifecycle in the v1 decode.
+Disassembly completed the model:
+- arg3 of (4,154)/(4,155) = screen position index (stored to slot record+8,
+  dedupe-compared at 0x416189); x-offsets from .rdata table 0x4be0bc =
+  [-288,0,+288,-384,+384,-480,+480,-480,-160,+160,+480] px on 1280 wide.
+  Slot records are keyed by character id (0x402220), so re-shows replace
+  pose/position in place.
+- Hides: (4,156) [pid,mode,param] + (4,157) [pid] -> shared clear 0x402610
+  (handlers 0x4555e0/0x455640); 831 corpus hides (was 1 via the 4000
+  sentinel only).
+- Backdrop shows wipe all sprites: image primitive 0x4167e0 reaches the
+  clear-all loop 0x402680; corpus-confirmed (per-script max simultaneous
+  drops from <=11 to <=5, matching play observation; sprite bursts always
+  re-show after bak changes). decode_bnr.py emits sprClear on bak recs;
+  resolveSprites applies recs in statement order (test-pinned).
+Data rebuilt (15,588 shows + 831 hides). Reader: sprites at engine x
+positions, bottom-anchored full-height art, entrance fade, stage is a
+proper 16:9 box (was full-width cover-cropped). Flowchart rebuilt as a
+tsukiweb-style SVG node graph (pure layout buildChartGraph, test-pinned;
+edges = decoded links + terminal chains + spine fillers; current script
+highlighted, auto-scrolled into view; click = choice/link detail). Input
+follows VN conventions: Enter/click advance (first press completes typing,
+repeat ignored), hold-Ctrl skip (read-only-skip setting in Settings),
+wheel-up opens backlog, Space no longer advances or skips. Cleared-stage
+state fix: resolveStageImageEx distinguishes engine clear-to-black (black
+stage, no placeholder) from missing assets (install hint); verified at
+closing 2313 (play-scene black stage + sprites). Gates: pytest
+35, tsc clean, vitest 58, check_flow 32/32 + check_bnr_choices 31/31
+(build), simulate clean walk (31 choices covered).

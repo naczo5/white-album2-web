@@ -45,15 +45,19 @@ code { font-size: 0.85em; }
 }
 
 .stage {
-  height: 38vh;
-  min-height: 220px;
+  aspect-ratio: 16 / 9;
+  width: min(100%, calc(64vh * 16 / 9));
+  margin: 0 auto;
   background: linear-gradient(#1b2740, #0d1420);
   background-size: cover;
   background-position: center;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-bottom: 1px solid #2c3a4f;
+  border: 1px solid #2c3a4f;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
 }
 .stage-ph { color: var(--dim); padding: 1rem; text-align: center; }
 .stage-ov {
@@ -64,19 +68,19 @@ code { font-size: 0.85em; }
   object-fit: cover;
   pointer-events: none;
 }
-.stage { position: relative; overflow: hidden; }
-/* EXPERIMENTAL speaker sprites: one default frame per speaker prefix
- * (docs/PARSING.md "Character sprite system"; per-line identity unmapped). */
+/* Standing sprites: char-id keyed slot records (exe 0x4160e0); art is
+ * exactly stage-height (720px) and bottom-anchored; x from engine table. */
 .stage-spr {
   position: absolute;
   bottom: 0;
-  left: 15%;
-  height: 92%;
+  height: 100%;
   width: auto;
-  max-width: 45%;
+  max-width: 55%;
+  transform: translateX(-50%);
   object-fit: contain;
   object-position: bottom;
   pointer-events: none;
+  transition: opacity 0.25s ease, translate 0.25s ease, left 0.35s ease;
   filter: drop-shadow(0 4px 10px rgb(0 0 0 / 0.45));
 }
 .hud {
@@ -135,6 +139,25 @@ code { font-size: 0.85em; }
 .chart-ch { text-transform: capitalize; margin-top: 1.5rem; }
 .save-row { display: flex; gap: 0.6rem; margin-bottom: 1rem; }
 .import { display: inline-block; }
+/* tsukiweb-style route graph */
+.fc-wrap {
+  overflow: auto;
+  border: 1px solid #2c3a4f;
+  border-radius: 8px;
+  background: #0a101a;
+  max-height: 62vh;
+  margin: 0.6rem 0;
+}
+.fc-svg { display: block; }
+.fc-node { cursor: pointer; }
+.fc-node:hover rect { stroke: var(--accent); }
+.fc-detail {
+  border: 1px solid #2c3a4f;
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  margin-bottom: 0.8rem;
+}
+.fc-detail-h { margin-bottom: 0.4rem; }
 #toast {
   position: fixed;
   bottom: 1.2rem;

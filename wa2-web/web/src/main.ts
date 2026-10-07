@@ -18,6 +18,7 @@ interface Settings {
   autoDelay: number; // ms, 0 = off
   voiceVol: number; // 0..1
   bgmVol: number; // 0..1
+  skipRead: boolean; // true: Ctrl skips only already-read lines
 }
 
 const settings: Settings = {
@@ -27,6 +28,7 @@ const settings: Settings = {
   autoDelay: Number(localStorage.getItem("wa2web.autoDelay") ?? 0),
   voiceVol: Number(localStorage.getItem("wa2web.voiceVol") ?? 0.9),
   bgmVol: Number(localStorage.getItem("wa2web.bgmVol") ?? 0.7),
+  skipRead: localStorage.getItem("wa2web.skipRead") === "1",
 };
 
 let skipping = false;
@@ -38,6 +40,7 @@ function persistSettings(): void {
   localStorage.setItem("wa2web.autoDelay", String(settings.autoDelay));
   localStorage.setItem("wa2web.voiceVol", String(settings.voiceVol));
   localStorage.setItem("wa2web.bgmVol", String(settings.bgmVol));
+  localStorage.setItem("wa2web.skipRead", settings.skipRead ? "1" : "0");
 }
 
 function clampFont(n: number): number {
@@ -94,16 +97,50 @@ async function boot(): Promise<void> {
   if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
   // Normalize boot position past any directive/latch runs so the first
   // paint shows text, then log the arrival line for the backlog.
+  // Debug/deep-link: ?pos=script:event jumps straight into the reader.
+  const q = new URLSearchParams(location.search);
+  const p = q.get("pos");
+  if (p) {
+    const [sc, ev] = p.split(":");
+    if (router.scripts.has(sc)) {
+      save = newSave("debug", { script: sc, event: Number(ev) || 0 });
+      screen = "read";
+    }
+  }
+  const scr = q.get("screen");
+  if (scr && ["flow", "guide", "settings", "saves", "special", "log"].includes(scr)) {
+    screen = scr as Screen;
+  }
   save.position = skipLatches(router, save.position, save.flags);
   pushLog(router, save);
   render();
+  // Enter/click = advance (first press completes typing instantly, next
+  // advances); hold Ctrl = skip (released on keyup / focus loss). Key
+  // repeat is ignored so holding Enter never fast-forwards. Mid-line Ctrl
+  // press completes the typewriter instantly; skip then advances via the
+  // reader's auto-advance (120ms/line).
   window.addEventListener("keydown", (e) => {
-    if (e.code === "Space" && screen === "read") {
-      const hint = document.getElementById("hint");
-      if (hint && hint.style.display !== "none") {
-        e.preventDefault();
-        (document.getElementById("reader") as HTMLElement).click();
-      }
+    if (screen !== "read") return;
+    if (e.key === "Control" && !skipping) {
+      skipping = true;
+      const box = document.querySelector("#textbox[data-typing]");
+      if (box) (document.getElementById("reader") as HTMLElement)?.click();
+    }
+    if (e.code === "Enter" && !e.repeat) {
+      e.preventDefault();
+      (document.getElementById("reader") as HTMLElement)?.click();
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Control" && skipping) {
+      skipping = false;
+      if (screen === "read") render();
+    }
+  });
+  window.addEventListener("blur", () => {
+    if (skipping) {
+      skipping = false;
+      if (screen === "read") render();
     }
   });
 }
@@ -133,15 +170,14 @@ const hooks = {
       render();
       return;
     }
-    if (s === "skip") {
-      skipping = !skipping;
-      render();
-      return;
-    }
     screen = s as Screen;
     render();
   },
   notify,
+  onSkipStop: () => {
+    skipping = false;
+    if (screen === "read") render();
+  },
 };
 
 function render(): void {
@@ -190,6 +226,7 @@ function render(): void {
         autoDelay: settings.autoDelay,
         voiceVol: settings.voiceVol,
         bgmVol: settings.bgmVol,
+        skipRead: settings.skipRead,
       },
       skipping,
       ...hooks,
@@ -201,6 +238,9 @@ function render(): void {
     const s = app.querySelector(".screen") as HTMLElement;
     renderFlowchart(s, {
       flow: data.flow, save, spoiler: settings.spoiler,
+      spine: router.spine,
+      links: data.links.links,
+      terminals: data.terminals.terminals,
       onBack: () => { screen = "read"; render(); },
     });
     return;
@@ -279,6 +319,7 @@ function render(): void {
   if (screen === "settings") {
     app.innerHTML = `<div class="screen"><div class="screen-head"><h2>Settings</h2></div>
       <label><input type="checkbox" id="sp" ${settings.spoiler ? "checked" : ""}> Spoilers in flowchart/guide (show unvisited options)</label>
+      <div><label><input type="checkbox" id="sr" ${settings.skipRead ? "checked" : ""}> Ctrl skips only already-read text (off = skip everything)</label></div>
       <div><label>Text size <input type="range" id="fs" min="14" max="26" value="${settings.fontSize}"></label></div>
       <div><label>Text speed <input type="range" id="ts" min="0" max="120" step="5" value="${settings.textSpeed}"> <span class="dim">${settings.textSpeed === 0 ? "instant" : settings.textSpeed + "/s"}</span></label></div>
       <div><label>Auto-play delay <input type="range" id="ad" min="0" max="8000" step="500" value="${settings.autoDelay}"> <span class="dim">${settings.autoDelay === 0 ? "off" : (settings.autoDelay / 1000) + "s"}</span></label></div>
@@ -289,6 +330,11 @@ function render(): void {
     sp.onchange = () => {
       settings.spoiler = sp.checked;
       localStorage.setItem("wa2web.spoiler", sp.checked ? "1" : "0");
+    };
+    const sr = app.querySelector("#sr") as HTMLInputElement;
+    sr.onchange = () => {
+      settings.skipRead = sr.checked;
+      persistSettings();
     };
     const fs = app.querySelector("#fs") as HTMLInputElement;
     fs.oninput = () => {

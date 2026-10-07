@@ -11,6 +11,8 @@ export interface ReaderSettings {
   autoDelay: number; // ms after line completes, 0 = off
   voiceVol: number; // 0..1
   bgmVol: number; // 0..1
+  /** Skip mode: "all" skips everything, "read" stops at unread lines. */
+  skipRead: boolean;
 }
 
 let autoTimer: number | null = null;
@@ -50,6 +52,39 @@ export interface ReaderHooks {
   onChange(): void;
   open(screen: string): void;
   notify(msg: string): void;
+  /** Called when read-mode skip halts on an unread line (main clears Ctrl). */
+  onSkipStop(): void;
+}
+
+// ---- Read-text tracking (for "skip read text only") -----------------------
+// Keys are "script:event" for every line that has ever been displayed.
+const READ_KEY = "wa2web.read";
+let readSet: Set<string> | null = null;
+
+function loadRead(): Set<string> {
+  if (readSet) return readSet;
+  try {
+    readSet = new Set(JSON.parse(localStorage.getItem(READ_KEY) ?? "[]") as string[]);
+  } catch {
+    readSet = new Set();
+  }
+  return readSet!;
+}
+
+function markRead(save: SaveData): void {
+  const key = `${save.position.script}:${save.position.event}`;
+  const set = loadRead();
+  if (set.has(key)) return;
+  set.add(key);
+  try {
+    localStorage.setItem(READ_KEY, JSON.stringify([...set]));
+  } catch {
+    /* quota: skip-read degrades to skip-all, harmless */
+  }
+}
+
+function isRead(save: SaveData): boolean {
+  return loadRead().has(`${save.position.script}:${save.position.event}`);
 }
 
 export function renderReader(el: HTMLElement, h: ReaderHooks): void {
@@ -73,7 +108,6 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       <span>${where}</span>
       <span class="hud-btns">
         <button data-act="auto">${h.settings.autoDelay > 0 ? "⏸ Auto" : "▶ Auto"}</button>
-        <button data-act="skip">${h.skipping ? "⏸ Skip" : "⏩ Skip"}</button>
         <button data-act="log">Log</button>
         <button data-act="saves">Save</button>
         <button data-act="flow">Chart</button>
@@ -83,7 +117,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     </div>
     <div class="textbox" id="textbox"></div>
     <div class="choices" id="choices"></div>
-    <div class="advance-hint" id="hint">click / space to continue</div>`;
+    <div class="advance-hint" id="hint">click / enter to continue · hold Ctrl to skip · wheel up for log</div>`;
 
   paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol);
   fireSe(save);
@@ -98,6 +132,13 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       h.open((b as HTMLElement).dataset.act as string);
     }),
   );
+  // Standard VN convention: wheel-up opens the backlog.
+  el.addEventListener("wheel", (e) => {
+    if (e.deltaY < 0) {
+      e.preventDefault();
+      h.open("log");
+    }
+  });
 
   if (!ev) {
     // Past the end of a script: try to keep going (heals stale saves),
@@ -158,6 +199,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
 
   if (ev.t === "say" || ev.t === "narrate") {
     playVoice(save, ev, h.settings.voiceVol);
+    markRead(save);
     const cls = ev.t === "say" ? "say" : "narrate";
     const who = ev.t === "say" && displaySpeaker(save, ev)
       ? `<div class="speaker">${escapeAttr(displaySpeaker(save, ev))}</div>` : "";
@@ -292,15 +334,26 @@ function completeTypewriter(box: HTMLElement, full: string): boolean {
   return true;
 }
 
-/** Auto-advance scheduling (auto mode + skip mode). */
+/** Auto-advance scheduling (auto mode + Ctrl-held skip mode).
+ * Read-mode skip halts on the first unread line (never advances past it). */
 function scheduleAuto(h: ReaderHooks): void {
   clearAuto();
   const delay = h.skipping ? 120 : h.settings.autoDelay;
   if (delay <= 0) return;
   const ev = h.router.at(h.save.position);
   if (!ev || ev.t === "choice") return; // never auto-pick
+  if (h.skipping && h.settings.skipRead && !isRead(h.save)) {
+    h.skipping = false;
+    h.onSkipStop();
+    return;
+  }
   autoTimer = window.setTimeout(() => {
     autoTimer = null;
+    if (h.skipping && h.settings.skipRead && !isRead(h.save)) {
+      h.skipping = false;
+      h.onSkipStop();
+      return;
+    }
     if (h.skipping) {
       const cur = h.router.at(h.save.position);
       if (cur && cur.t !== "choice") stepForward(h);
@@ -374,20 +427,30 @@ export function pushLog(router: Router, save: SaveData): void {
 }
 
 function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number): void {
-  const url = stageImageHint(save);
+  const st = stageImageState(save);
   const prevPh = stage.querySelector(":scope > .stage-ph");
-  if (url) {
-    stage.style.backgroundImage = `url("${url}")`;
+  if (st.url) {
+    stage.style.backgroundImage = `url("${st.url}")`;
+    stage.style.backgroundColor = "";
     prevPh?.remove();
   } else {
     stage.style.backgroundImage = "";
-    if (!prevPh) {
-      const div = document.createElement("div");
-      div.className = "stage-ph";
-      stage.prepend(div);
+    if (st.cleared) {
+      // Engine clear-to-black (e.g. stage-play spotlight scenes).
+      stage.style.backgroundColor = "#000";
+      prevPh?.remove();
+    } else {
+      stage.style.backgroundColor = "";
+      if (!prevPh) {
+        const div = document.createElement("div");
+        div.className = "stage-ph";
+        stage.prepend(div);
+      }
+      const ph = stage.querySelector(":scope > .stage-ph") as HTMLElement;
+      ph.textContent = st.missingFile
+        ? `🖼 ${st.missingFile} — install assets for visuals`
+        : "— no backdrop yet —";
     }
-    const ph = stage.querySelector(":scope > .stage-ph") as HTMLElement;
-    ph.textContent = stageImageHintLabel(save);
   }
   stage.style.filter = stageFilter(save);
   paintOverlay(stage, save);
@@ -408,8 +471,8 @@ function eventsBefore(save: SaveData): ScenarioEvent[] {
   return sc.events.slice(0, save.position.event);
 }
 
-function stageImageHint(save: SaveData): string | null {
-  return resolveStageImage(
+function stageImageState(save: SaveData): StageImageState {
+  return resolveStageImageEx(
     eventsBefore(save).map((e, i) => ({ e, i })),
     bnrLookup?.(save.position.script) ?? null,
     save.position.event,
@@ -421,13 +484,22 @@ function stageImageHint(save: SaveData): string | null {
  * Timeline = txt image events (exact indices) + .bnr bak records
  * (fractional indices). Latest resolvable cue at/before `event` wins;
  * a clear is a barrier (stage wiped — nothing older shows). Unresolvable
- * cues (assets not installed) fall through to older backdrops. */
-export function resolveStageImage(
+ * cues (assets not installed) fall through to older backdrops.
+ * resolveStageImageEx additionally reports WHY the stage is empty:
+ * cleared (engine clear-to-black) vs missing (asset not installed). */
+export type StageImageState = {
+  url: string | null;
+  cleared: boolean;
+  /** Last unresolvable cue's filename (install hint), if that's why. */
+  missingFile?: string;
+};
+
+export function resolveStageImageEx(
   txt: { e: ScenarioEvent; i: number }[],
   bnr: BnrData["recs"][string] | null | undefined,
   event: number,
   chapter: string,
-): string | null {
+): StageImageState {
   type Cue = { ev: number; file?: string; stems?: string[]; clear?: boolean };
   const cues: Cue[] = [];
   for (const { e, i } of txt) {
@@ -440,33 +512,36 @@ export function resolveStageImage(
     else if (r.stems?.length) cues.push({ ev: r.ev, stems: r.stems });
   }
   cues.sort((a, b) => b.ev - a.ev);
+  let missingFile: string | undefined;
   for (const c of cues) {
     if (c.ev > event) continue;
-    if (c.clear) return null;
+    if (c.clear) return { url: null, cleared: true };
     if (c.file) {
       const url = imageUrl(c.file, chapter);
-      if (url) return url;
+      if (url) return { url, cleared: false };
+      missingFile = c.file;
     } else if (c.stems) {
       // Bare stems: bx = backdrop, vx = event visual, tvx = TV frame.
       // Backdrops prefer b*, overlays (below) prefer v*/tv*.
       for (const stem of c.stems) {
         for (const cand of [`b${stem}.tga`, `v${stem}.tga`, `tv${stem}.tga`]) {
           const url = imageUrl(cand, chapter);
-          if (url) return url;
+          if (url) return { url, cleared: false };
         }
       }
+      missingFile = `b${c.stems[0]}.tga`;
     }
   }
-  return null;
+  return { url: null, cleared: false, missingFile };
 }
 
-function stageImageHintLabel(save: SaveData): string {
-  const evs = eventsBefore(save);
-  for (let i = evs.length - 1; i >= 0; i--) {
-    const e = evs[i];
-    if (e.t === "image") return `🖼 ${e.file} [${e.layer ?? "?"}] — install assets for visuals`;
-  }
-  return "— no backdrop yet —";
+export function resolveStageImage(
+  txt: { e: ScenarioEvent; i: number }[],
+  bnr: BnrData["recs"][string] | null | undefined,
+  event: number,
+  chapter: string,
+): string | null {
+  return resolveStageImageEx(txt, bnr, event, chapter).url;
 }
 
 /** Latest grp-layer overlay at/before position (event CGs, spotlights).
@@ -842,31 +917,44 @@ function displaySpeaker(save: SaveData, ev: ScenarioEvent): string {
     ev.speaker;
 }
 
-/** Engine-faithful standing sprites: (4,154)/(4,155) recs decoded by
- * tools/decode_bnr.py ([prefix_id, face, base] -> char\{prefix}{num}.tga;
- * face 4000 = hide; corpus proof 14315/14319, docs/PARSING.md). Sprite
- * state carries forward like the engine: latest show per prefix wins,
- * hide clears the slot; hypothesis-confidence recs are ignored.
- * DOM-free; test-pinned. */
+/** Engine-faithful standing sprites: (4,154)/(4,155) shows + (4,156)/(4,157)
+ * hides decoded by tools/decode_bnr.py. Slot records are keyed by character
+ * id (exe 0x402220 scans the 8 slot records by id): a show of the same char
+ * replaces its pose/position; a hide clears the char; face 4000 hides too.
+ * A backdrop show/clear wipes ALL standing sprites (exe: image primitive
+ * 0x4167e0 reaches the clear-all slot loop 0x402680) — recs carry
+ * sprClear on bak cues; recs are applied in statement order so same-event
+ * re-shows after the wipe survive. Draw order = show order (Map insertion
+ * order), matching the engine's slot-allocation draw order.
+ * Hypothesis-confidence recs are ignored. DOM-free; test-pinned. */
 export function resolveSprites(
   recs: BnrData["recs"][string] | null | undefined,
   event: number,
-): { id: number; stem: string }[] {
-  const active = new Map<number, string>();
+): { id: number; stem: string; pos: number | null }[] {
+  const active = new Map<number, { stem: string; pos: number | null }>();
   for (const r of recs ?? []) {
     if (r.conf !== "high" || r.ev > event) continue;
-    if (r.spr) active.set(r.spr.id, r.spr.stem);
+    if (r.sprClear) active.clear();
+    if (r.spr) active.set(r.spr.id, { stem: r.spr.stem, pos: r.spr.pos ?? null });
     else if (r.sprHide !== undefined) active.delete(r.sprHide);
   }
-  return [...active.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([id, stem]) => ({ id, stem }));
+  return [...active.entries()].map(([id, s]) => ({ id, stem: s.stem, pos: s.pos }));
 }
 
-/** Paint standing sprites below the grp overlay, reconciled per prefix
- * id so advance/rollback never flickers. Position: single sprite sits
- * left-of-centre, multiple sprites spread across the stage (exact engine
- * screen slots are not decoded — positions are a presentation choice). */
+/** Sprite screen-x table (exe 0x4be0bc): px offsets from centre on the
+ * 1280-wide stage, indexed by the statement's position arg (0..10). */
+export const SPRITE_POS_X = [-288, 0, 288, -384, 384, -480, 480, -480, -160, 160, 480];
+
+/** Pure position resolver (DOM-free; test-pinned): stage-% left coordinate
+ * for a sprite position index, null -> centred. */
+export function spriteLeftPct(pos: number | null): number {
+  if (pos === null || pos < 0 || pos >= SPRITE_POS_X.length) return 50;
+  return ((640 + SPRITE_POS_X[pos]) / 1280) * 100;
+}
+
+/** Paint standing sprites below the grp overlay, reconciled per character
+ * id so advance/rollback never flickers. Position: engine x-table; sprites
+ * are exactly stage-height and bottom-anchored (720px art on 720px stage). */
 function paintSprites(stage: HTMLElement, save: SaveData): void {
   const active = resolveSprites(
     bnrLookup?.(save.position.script),
@@ -882,6 +970,7 @@ function paintSprites(stage: HTMLElement, save: SaveData): void {
       img?.remove();
       return;
     }
+    const fresh = !img;
     if (!img) {
       img = document.createElement("img");
       img.className = "stage-spr";
@@ -892,8 +981,17 @@ function paintSprites(stage: HTMLElement, save: SaveData): void {
       else stage.appendChild(img);
     }
     if (img.getAttribute("src") !== url) img.setAttribute("src", url);
-    const n = active.length;
-    img.style.left = n <= 1 ? "30%" : `${8 + (i * 52) / (n - 1)}%`;
+    img.style.left = `${spriteLeftPct(s.pos)}%`;
+    img.style.zIndex = String(10 + i);
+    if (fresh) {
+      // Fade/rise in like the engine's sprite entrance.
+      img.style.opacity = "0";
+      img.style.translate = "0 2%";
+      requestAnimationFrame(() => {
+        img!.style.opacity = "";
+        img!.style.translate = "";
+      });
+    }
     seen.add(s.id);
   });
   stage.querySelectorAll(":scope > img.stage-spr").forEach((el) => {

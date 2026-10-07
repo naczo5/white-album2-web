@@ -125,7 +125,7 @@ docs/QA.md verification log):
   **handler index = opcode − 128** (validated: entry 36 = op 164 = SE
   thunk 0x455720, entry 37 = op 165 = channel-SE 0x40f400). Push values
   reach handlers from ctx `+0x18 + 0x14*i` (push[i] at 0x18, 0x2c, 0x40…).
-- **Sprite show = (4,154)/(4,155), pushes `[prefix_id, face, base, …]` →
+- **Sprite show = (4,154)/(4,155), pushes `[char_id, face, base, pos, …]` →
   file `char\{prefix}{base+face:06d}.tga`.** Proven end-to-end:
   handlers 0x4553f0/0x455590 call the sprite function 0x4160e0, which
   builds the filename via sprintf at 0x415cbf–0x415cdf with format
@@ -151,15 +151,40 @@ docs/QA.md verification log):
   pose/outfit groups.
 - `base` is what varies per route/state (e.g. Kazusa base 1000 early,
   101000 late-route 6-digit files); `face` is the expression index.
-- The player now renders this timeline (web/src/ui/reader.ts
-  resolveSprites, test-pinned): latest show per prefix id wins, hide
-  clears the slot, hypothesis recs ignored. Screen positions per slot
-  are NOT decoded (the trailing 256/128 pushes are unconfirmed) — the
-  player spreads sprites evenly as a presentation choice.
-- Corpus tests ruled ops 143/156/159/161/166/168/170/180/185 out as
+- **Slot records are keyed by character id, and arg3 = screen position.**
+  The slot-finder 0x402220 scans the 8 sprite slot records (stride 0x74,
+  base 0x5267f6) comparing the record's char-id word; 8 = not present.
+  The show call maps statement args → 0x4160e0(p1=arg0 char_id, p2=arg1
+  face, p3=arg2 base, p4=mode flag, p5=arg3 position, …); p5 is stored to
+  record+8 and dedupe-compared (0x416189). Position → x-offset table at
+  .rdata/**0x4be0bc**: `[-288, 0, +288, -384, +384, -480, +480, -480,
+  -160, +160, +480]` px from centre on the 1280-wide stage (indices 0..10;
+  corpus distribution 0/1/2 dominate, 3/4 next, 7-10 rare, one oddball
+  form with 100000 emits pos=null). The engine allows multiple chars at
+  the same position (they stack, draw order = slot allocation order =
+  show order).
+- **Hide = dedicated ops (4,156) `[char_id, mode, param]` and (4,157)
+  `[char_id]`** → shared sprite-clear routine 0x402610(pid, mode, param)
+  (handlers 0x4555e0/0x455640; mode 3 = the (4,157) constant form; corpus
+  553+175 = 831 hides, all pids valid char ids). Plus the face==4000
+  sentinel inside show ops (1 corpus occurrence, 1008_030 tail).
+- **A backdrop show/clear wipes ALL standing sprites**: the image
+  primitive 0x4167e0 (called by (4,146)/(4,147)/(4,148) handlers) reaches
+  the clear-all slot loop 0x402680. Corpus confirmation: every sprite
+  burst re-shows after a bak change; per-script max simultaneous sprites
+  drop from ≤11 to ≤5 (mostly ≤3) under this model, matching play
+  observation. decode_bnr.py therefore emits `sprClear: true` on bak
+  show/clear recs (not grp), and resolveSprites applies recs in statement
+  order so same-event re-shows survive.
+- The player renders this timeline (web/src/ui/reader.ts
+  resolveSprites, test-pinned): char-keyed state, hide/sprClear clear,
+  x from the 0x4be0bc table, hypothesis recs ignored.
+- Corpus tests ruled ops 143/159/161/166/168/170/180/185 out as
   sprite-SHOW opcodes (143 appears once with the 4000 sentinel but is
-  otherwise unrelated); op 176 is the txt-named image driver (MODE 14 =
-  .tga grp, already decoded for event art).
+  otherwise unrelated; 156/157 are the hide ops above); op 176 is the
+  txt-named image driver (MODE 14 =
+  .tga grp, already decoded for event art). (4,153) is a color-fade op
+  (args are color/intensity values), not sprite-related.
 
 ## Engine flag tables (script.pak, decoded statically)
 

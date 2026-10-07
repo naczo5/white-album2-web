@@ -93,16 +93,23 @@ def decode_script(data: bytes, script: str) -> list[dict]:
         elif has166 and len(s) >= 2 and s[1] <= 0:
             recs.append({"ev": ev, "ambStop": max(0, min(3, s[0])),
                          "conf": "high"})
-        # Standing sprites (4,154)/(4,155): [prefix_id, face, base, ...].
+        # Standing sprites (4,154)/(4,155): [pid, face, base, pos, ...].
         # WA2.exe: handlers 0x4553f0/0x455590 -> 0x4160e0 -> filename
         # sprintf("%s%06d.tga", table[prefix_id], file) under char\ ;
         # corpus proof: base+face hits a real char.pak file for
-        # 14315/14319 statements (docs/PARSING.md). face==4000 hides the
-        # slot (1008_030 tail hides kaz/set/koh this way). The 38-entry
-        # prefix table below is the exe's stack table (0x4a2904..0x4a2980,
-        # built at 0x415bf8); ids 6-9 are dud entries ('a'/uninit) and
-        # never occur in the corpus. Bases < 100 only occur in the LF3
-        # digital novel (3 statements) and are ignored as malformed.
+        # 14315/14319 statements (docs/PARSING.md). Slot records are keyed
+        # by character id (0x402220 scans the 8 slot records comparing the
+        # id), so a new show of the same char moves/changes it and the
+        # previous pose is replaced. arg3 is the screen position index:
+        # stored to record+8 (dedupe-compared at 0x416189) and resolved to
+        # an x-offset via exe table 0x4be0bc: [-288, 0, 288, -384, 384,
+        # -480, 480, -480, -160, 160, 480] px on the 1280-wide stage.
+        # face==4000 hides the slot (1008_030 tail hides kaz/set/koh this
+        # way). The 38-entry prefix table below is the exe's stack table
+        # (0x4a2904..0x4a2980, built at 0x415bf8); ids 6-9 are dud entries
+        # ('a'/uninit) and never occur in the corpus. Bases < 100 only
+        # occur in the LF3 digital novel (3 statements) and are ignored as
+        # malformed.
         has154 = any(o == 4 and a == 154 for o, a in ops)
         has155 = any(o == 4 and a == 155 for o, a in ops)
         if (has154 or has155) and len(s) >= 3:
@@ -112,11 +119,22 @@ def decode_script(data: bytes, script: str) -> list[dict]:
                 if face == 4000:
                     recs.append({"ev": ev, "sprHide": pid, "conf": "high"})
                 elif base >= 100:
+                    pos = s[3] if len(s) >= 4 and 0 <= s[3] <= 10 else None
                     recs.append({"ev": ev,
                                  "spr": {"id": pid,
                                          "stem": "%s%06d" % (prefix,
-                                                             base + face)},
+                                                             base + face),
+                                         "pos": pos},
                                  "conf": "high"})
+        # Sprite hides: (4,156) [pid, mode, param] and (4,157) [pid] both
+        # call the shared sprite-clear routine 0x402610(pid, mode, param)
+        # (handlers 0x4555e0/0x455640; 0x402220 finds the char's slot,
+        # 8 = absent -> no-op). 175+553 corpus occurrences; emitted with
+        # conf="high". This is how characters exit the stage.
+        has156 = any(o == 4 and a == 156 for o, a in ops)
+        has157 = any(o == 4 and a == 157 for o, a in ops)
+        if (has156 or has157) and s:
+            recs.append({"ev": ev, "sprHide": s[0], "conf": "high"})
         # Backdrops / event art: (4,146)/(4,147) [M,X,Y,F,...], (4,148).
         # X==0: bare fade (transition timing); X==-2: clear; else filename
         # stems (prefix resolved at lookup). 146/147 -> bak, 148 -> grp.
@@ -131,12 +149,20 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             elif x == -2:
                 recs.append({"ev": ev, "clear": True,
                              "layer": "grp" if has148 else "bak",
+                             "sprClear": not has148,
                              "conf": "high"})
             elif x > 0:
                 recs.append({"ev": ev,
                              "layer": "grp" if has148 else "bak",
                              "stems": stem_candidates(x, y),
-                             "fade": fade, "conf": "high"})
+                             "fade": fade,
+                             # A backdrop show wipes standing sprites: the
+                             # image primitive 0x4167e0 reaches the clear-all
+                             # sprite loop 0x402680 (corpus: every sprite
+                             # burst re-shows after a bak change; per-script
+                             # maxima drop from 11 to <=5 under this model).
+                             "sprClear": not has148,
+                             "conf": "high"})
         # fade: mode push + 1000ms + CMD(6,16)
         if (6, 16) in op_set and 1000 in s:
             recs.append({"ev": ev, "fadeMs": 1000, "conf": "high"})

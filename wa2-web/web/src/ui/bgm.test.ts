@@ -1,29 +1,71 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { resolveAmbCue, resolveAmbStop, resolveBgmTimeline, resolveFade, resolveSeRec, resolveSprites, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay } from "./reader";
+import { resolveAmbCue, resolveAmbStop, resolveBgmTimeline, resolveFade, resolveSeRec, resolveSprites, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay, spriteLeftPct } from "./reader";
 import { loadManifest } from "../engine/assets";
 import type { BnrRec } from "../engine/types";
 
-describe("sprite timeline (bnr (4,154)/(4,155) recs)", () => {
+describe("sprite timeline (bnr (4,154)/(4,155) shows + (4,156)/(4,157) hides)", () => {
   const recs: BnrRec[] = [
-    { ev: 3, spr: { id: 1, stem: "kaz001101" }, conf: "high" },
-    { ev: 7, spr: { id: 2, stem: "set001101" }, conf: "high" },
+    { ev: 3, spr: { id: 1, stem: "kaz001101", pos: 1 }, conf: "high" },
+    { ev: 7, spr: { id: 2, stem: "set001101", pos: 0 }, conf: "high" },
     { ev: 9, sprHide: 1, conf: "high" },
-    { ev: 11, spr: { id: 1, stem: "kaz001104" }, conf: "hypothesis" },
-    { ev: 12, spr: { id: 1, stem: "kaz001104" }, conf: "high" },
+    { ev: 11, spr: { id: 1, stem: "kaz001104", pos: 2 }, conf: "hypothesis" },
+    { ev: 12, spr: { id: 1, stem: "kaz001104", pos: 2 }, conf: "high" },
   ];
-  it("latest show per prefix at/before the event wins", () => {
+  it("latest show per character id at/before the event wins", () => {
     expect(resolveSprites(recs, 0)).toEqual([]);
-    expect(resolveSprites(recs, 3)).toEqual([{ id: 1, stem: "kaz001101" }]);
+    expect(resolveSprites(recs, 3)).toEqual([{ id: 1, stem: "kaz001101", pos: 1 }]);
     expect(resolveSprites(recs, 7)).toEqual([
-      { id: 1, stem: "kaz001101" }, { id: 2, stem: "set001101" },
+      { id: 1, stem: "kaz001101", pos: 1 },
+      { id: 2, stem: "set001101", pos: 0 },
     ]);
   });
-  it("hide clears the slot; hypothesis recs are ignored", () => {
-    expect(resolveSprites(recs, 9)).toEqual([{ id: 2, stem: "set001101" }]);
-    expect(resolveSprites(recs, 11)).toEqual([{ id: 2, stem: "set001101" }]);
+  it("hide clears the character; hypothesis recs are ignored; draw order kept", () => {
+    expect(resolveSprites(recs, 9)).toEqual([{ id: 2, stem: "set001101", pos: 0 }]);
+    expect(resolveSprites(recs, 11)).toEqual([{ id: 2, stem: "set001101", pos: 0 }]);
     expect(resolveSprites(recs, 12)).toEqual([
-      { id: 1, stem: "kaz001104" }, { id: 2, stem: "set001101" },
+      { id: 2, stem: "set001101", pos: 0 },
+      { id: 1, stem: "kaz001104", pos: 2 },
     ]);
+  });
+  it("a show of the same char replaces pose+position in place", () => {
+    const rs: BnrRec[] = [
+      { ev: 1, spr: { id: 10, stem: "tak001102", pos: 0 }, conf: "high" },
+      { ev: 2, spr: { id: 2, stem: "set001106", pos: 1 }, conf: "high" },
+      { ev: 3, spr: { id: 10, stem: "tak001104", pos: 2 }, conf: "high" },
+    ];
+    expect(resolveSprites(rs, 3)).toEqual([
+      { id: 10, stem: "tak001104", pos: 2 },
+      { id: 2, stem: "set001106", pos: 1 },
+    ]);
+  });
+  it("a backdrop show/clear wipes all sprites (sprClear), keeping same-ev re-shows", () => {
+    const rs: BnrRec[] = [
+      { ev: 1, spr: { id: 1, stem: "kaz001101", pos: 1 }, conf: "high" },
+      { ev: 5, layer: "bak", stems: ["100700"], sprClear: true, conf: "high" },
+      { ev: 6, spr: { id: 10, stem: "tak001106", pos: 1 }, conf: "high" },
+    ];
+    expect(resolveSprites(rs, 4)).toEqual([{ id: 1, stem: "kaz001101", pos: 1 }]);
+    expect(resolveSprites(rs, 6)).toEqual([{ id: 10, stem: "tak001106", pos: 1 }]);
+    // same-event re-show after the wipe survives (statement order)
+    const rs2: BnrRec[] = [
+      { ev: 1, spr: { id: 1, stem: "kaz001101", pos: 1 }, conf: "high" },
+      { ev: 5, layer: "bak", stems: ["100700"], sprClear: true, conf: "high" },
+      { ev: 5, spr: { id: 2, stem: "set001210", pos: 2 }, conf: "high" },
+    ];
+    expect(resolveSprites(rs2, 5)).toEqual([{ id: 2, stem: "set001210", pos: 2 }]);
+  });
+});
+
+describe("sprite screen positions (exe 0x4be0bc table)", () => {
+  it("maps position indices to stage-% left coordinates", () => {
+    expect(spriteLeftPct(null)).toBe(50);
+    expect(spriteLeftPct(1)).toBe(50); // 0 offset = centre
+    expect(spriteLeftPct(0)).toBeCloseTo((640 - 288) / 1280 * 100, 5);
+    expect(spriteLeftPct(2)).toBeCloseTo((640 + 288) / 1280 * 100, 5);
+    expect(spriteLeftPct(5)).toBeCloseTo((640 - 480) / 1280 * 100, 5);
+    expect(spriteLeftPct(9)).toBeCloseTo((640 + 160) / 1280 * 100, 5);
+    expect(spriteLeftPct(11)).toBe(50); // out of table -> centred
+    expect(spriteLeftPct(-1)).toBe(50);
   });
 });
 

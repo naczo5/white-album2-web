@@ -145,9 +145,14 @@ export interface BnrRec {
   fadeMs?: number;
   /** Standing sprite show (4,154)/(4,155): prefix id + full filename
    * stem ("kaz001101"), resolved char\{prefix}{base+face:06d}. */
-  spr?: { id: number; stem: string };
+  /** Standing sprite show (4,154)/(4,155): prefix id + full filename
+   * stem + screen position index (exe table 0x4be0bc; null = unknown
+   * form, render centred). Slot records are keyed by character id. */
+  spr?: { id: number; stem: string; pos?: number | null };
   /** Sprite slot hide (same ops, face sentinel 4000). */
   sprHide?: number;
+  /** Backdrop show/clear wipes all standing sprites (exe 0x4167e0 -> 0x402680). */
+  sprClear?: boolean;
   /** Backdrop/event-art cue: filename stems (prefix resolved at lookup). */
   layer?: "bak" | "grp";
   stems?: string[];

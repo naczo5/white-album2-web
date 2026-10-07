@@ -53,7 +53,7 @@ at build time.
 
 ```sh
 cd wa2-web && python3 -m pytest tests/ -q   # 35 passed + 7 BYOA-skipped
-cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 50 passed
+cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 58 passed
 python3 tools/build.py MAIN_EN_PAK [SPECIAL_EN_PAK] OUT [--game GAMEDIR] [--mao MAO_SCRIPT_DATA]
 ```
 
