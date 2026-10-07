@@ -143,6 +143,11 @@ export interface BnrRec {
   ambStop?: number;
   cam?: { zoom: number; dur: number };
   fadeMs?: number;
+  /** Standing sprite show (4,154)/(4,155): prefix id + full filename
+   * stem ("kaz001101"), resolved char\{prefix}{base+face:06d}. */
+  spr?: { id: number; stem: string };
+  /** Sprite slot hide (same ops, face sentinel 4000). */
+  sprHide?: number;
   /** Backdrop/event-art cue: filename stems (prefix resolved at lookup). */
   layer?: "bak" | "grp";
   stems?: string[];
@@ -158,10 +163,9 @@ export interface BnrData {
   recs: Record<string, BnrRec[]>;
 }
 
-/** Speaker -> standing-sprite filename prefix.
- * Prefixes are lowercase first-3 of the speaker name (Ako->aco, ...);
- * screen slots + variants/expressions per line await .bnr integer-slot
- * decode (data seam ready; nothing is guessed). */
+/** Speaker -> standing-sprite filename prefix (superseded: sprite
+ * identity is now decoded from .bnr (4,154)/(4,155) recs; data/sprites.json
+ * remains only as build-copied reference data). */
 export interface SpriteData {
   version: number;
   speakers: Record<string, { prefix: string }>;

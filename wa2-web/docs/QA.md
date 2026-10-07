@@ -67,23 +67,14 @@ is proven, what is assumed, and exactly how to close each gap.
    dialogue staging-sync (embeds JP-tick ops, 1:1 with lines) — documented
    in docs/PARSING.md, never emitted.
 8. **Dynamic sprites**: grp-layer event art displays with .bnr fade timing;
-   standing sprites inventoried (ako face-variants 322×684 need no
-   compositing; kaz/set/… full-height slot canvases; prefix table in
-   data/sprites.json). Per-line identity + screen slots still unmapped;
-   exe disassembly now localizes the machinery (dispatch entries 26/27 →
-   0x4160e0–0x416548, `%s%06d.tga` format, per-slot struct stride 0x74 at
-   0x5267f0, prefix string table 0x4a2904+) — see docs/PARSING.md
-   "Character sprite system". Nothing is guessed on stage.
-   **EXPERIMENTAL layer (user-requested, 2026-10-06)**: the player now
-   shows a fixed default frame per speaker (sprites.json prefix →
-   lowest-numbered manifest frame; narration keeps the last sprite).
-   Deliberately NOT engine-faithful — per-line identity remains open and
-   this layer must not gate or influence parity work.
-   **PARKED NEXT STEP (2026-10-06)**: decode per-line sprite identity —
-   instrument `(4,176)` statements whose `(3,X)` toks point at dialogue
-   toks (sprite changes likely coincide with speaker turns), and map
-   dispatch entries 26/27 ctx layout precisely; then derive file numbers
-   (`%s%06d.tga`) corpus-wide to replace the stand-in layer.
+   ~~standing sprites~~ **SOLVED (2026-10-07)**: sprite show/hide is
+   decoded — `(4,154)`/`(4,155) [prefix_id, face, base, …]` →
+   `char\{prefix}{base+face:06d}.tga`, hide = face sentinel 4000; corpus
+   proof 14315/14319 files exist (docs/PARSING.md "Character sprite
+   system"). The player renders the engine-faithful timeline
+   (`resolveSprites`, test-pinned). Remaining sub-item: per-slot screen
+   positions (the trailing 256/128 pushes are unconfirmed) — the player
+   spreads sprites evenly as a presentation choice.
 9. **Voice take semantics**: third filename field (04/98/00/…) unmapped;
    one clip per line assumed (6 multi-clip lines: first wins).
 10. **Coda 31xx/32xx identity** (epilogues vs route tails).
@@ -201,3 +192,23 @@ coverage 7–527 per prefix; alpha 45–73% so no blank canvases picked).
 Gates: pytest 35 (unchanged), tsc clean, vitest 50 passed (+2 picker
 tests). Per-line identity work (dispatch entries 26/27) remains the real
 solution; this layer must not influence parity tooling.
+
+### 2026-10-07 — sprite identity DECODED (replaces the experimental layer)
+Followed the parked next step: disassembled dispatch entries 26/27
+(ops 154/155, thunks 0x4553f0/0x455590) — both call the sprite function
+0x4160e0, which sprintfs `char\%s%06d.tga` at 0x415cbf from slot-state
+prefix WORD (+0xf6) + file number (+0xf8). Keyed the full 38-slot prefix
+table from .rdata 0x4a2904–0x4a2980 (ids 6–9 dud, never in corpus). Then
+the corpus proof: (4,154)/(4,155) push[0] = prefix id (distribution
+matches the valid-id set exactly), push[1] = face, push[2] = base, and
+base+face names a real char.pak/IC file for 14315/14319 statements
+(99.97%; residuals = one garbage-base hide + 3 LF3 digital-novel
+statements, excluded via base>=100 guard). Hide = face sentinel 4000
+(1008_030 tail hides kaz/set/koh; 143 carries it once but is otherwise
+unrelated). decode_bnr.py emits spr/sprHide recs (conf high); the
+player's experimental default-frame layer is REMOVED and replaced by the
+engine-faithful resolveSprites timeline (test-pinned; positions are a
+presentation choice — engine slot x/y not decoded). Data rebuilt
+(15,584 shows + 1 hide, 178 scripts), all gates green: pytest 35, tsc
+clean, vitest 50, check_flow 32/32, check_bnr_choices 31/31, simulate
+clean, MAO pin passed.

@@ -116,7 +116,7 @@ zero filenames (only ASCII run in any `.bnr` is `LSCR`) but address `.txt`
 by token index (verified: 1008_030 image anchors 44/46/65/67/90/92/107/109
 occur exactly 2× each).
 
-## Character sprite system (mapped, unproven — nothing displayed)
+## Character sprite system (DECODED — proven ops + corpus proof)
 
 Static findings from WA2.exe (.text 0x401000, .rdata 0x4a1000; see
 docs/QA.md verification log):
@@ -125,33 +125,41 @@ docs/QA.md verification log):
   **handler index = opcode − 128** (validated: entry 36 = op 164 = SE
   thunk 0x455720, entry 37 = op 165 = channel-SE 0x40f400). Push values
   reach handlers from ctx `+0x18 + 0x14*i` (push[i] at 0x18, 0x2c, 0x40…).
-- Sprite files are built as `'%s%06d.tga'` (VA 0x4a28f8) under
-  `char\%s`; a 17-entry prefix table (strings 0x4a2904–0x4a2940, built at
-  0x415bf8–0x415caf) matches the `data/sprites.json` prefixes (aco, kaz,
-  setsu…). A second format `'0@%s%05d%d.tga'` exists (5-digit + face
-  digit). Extracted char.pak sprites are single full-alpha canvases
-  (e.g. aco 322×684, koh 488×720) — no compositing needed.
-- Per-slot state: stride 0x74 at base 0x5267f0 — +f6 WORD prefix index,
-  +f8 DWORD file number, +f2/+f4 anim state, +810..812 BYTEs, +816 WORD;
-  setter at 0x416460; big sprite function 0x4160e0–0x416548 is reachable
-  from dispatch entries 26 AND 27 (candidate ops (4,154)/(4,155)) but the
-  statement shapes (`p=[10,111,1000,1,0,256,128]`) do not confirm sprite
-  identity — possibly slot-anim/mouth ops instead.
+- **Sprite show = (4,154)/(4,155), pushes `[prefix_id, face, base, …]` →
+  file `char\{prefix}{base+face:06d}.tga`.** Proven end-to-end:
+  handlers 0x4553f0/0x455590 call the sprite function 0x4160e0, which
+  builds the filename via sprintf at 0x415cbf–0x415cdf with format
+  `%s%06d.tga` (0x4a28f8) under `char\%s` (0x4a28f0), taking the prefix
+  string from a 38-slot table indexed by the slot-state WORD at
+  +0xf6 and the number from DWORD +0xf8. Corpus proof: base+face
+  addresses a real char.pak/IC file for **14315/14319** statements
+  (99.97%; the 4 residuals are one hide-with-garbage-base and 3
+  statements in the LF3 digital novel, excluded as malformed — bases
+  < 100 never occur as real bases). A second format `'0@%s%05d%d.tga'`
+  exists (5-digit + face digit); not needed for decode.
+- **Prefix table** (exe .rdata 0x4a2904–0x4a2980 as a stack array built
+  at 0x415bf8; ids 6–9 are dud 'a'/uninitialized slots that never occur
+  in the corpus): 0 har, 1 kaz, 2 set, 3 koh, 4 izu, 5 mar, 10 tak,
+  11 ioo, 12 chi, 13 pap, 14 mam, 15 oto, 16 you, 17 tan, 18 shi,
+  19 tom, 20 sat, 21 hon, 22 nak, 23 say, 24 aco, 25 mih, 26 mhh,
+  27 ueh, 28 yos, 29 tan, 30 ham, 31 mat, 32 kiz, 33 suz, 34 saw,
+  35 miy, 36 yan. (29 and 17 both reference the 'tan' string — exactly
+  as written in the exe; id 17's two statements use tan-range files.)
+- **Hide = same ops with face sentinel 4000** (e.g. 1008_030 tail hides
+  kaz/set/koh slots with bases 2/1/-1 = don't-care). face==0 is a real
+  face (files X000 exist); base values seen 1000..31000 = per-character
+  pose/outfit groups.
+- `base` is what varies per route/state (e.g. Kazusa base 1000 early,
+  101000 late-route 6-digit files); `face` is the expression index.
+- The player now renders this timeline (web/src/ui/reader.ts
+  resolveSprites, test-pinned): latest show per prefix id wins, hide
+  clears the slot, hypothesis recs ignored. Screen positions per slot
+  are NOT decoded (the trailing 256/128 pushes are unconfirmed) — the
+  player spreads sprites evenly as a presentation choice.
 - Corpus tests ruled ops 143/156/159/161/166/168/170/180/185 out as
-  sprite-show opcodes; op 176 is the txt-named image driver (MODE 14 =
+  sprite-SHOW opcodes (143 appears once with the 4000 sentinel but is
+  otherwise unrelated); op 176 is the txt-named image driver (MODE 14 =
   .tga grp, already decoded for event art).
-
-**Per-line sprite identity is unresolved, so nothing engine-faithful is
-guessed.** At the user's explicit request (2026-10-06), the player shows an
-EXPERIMENTAL stand-in layer: on say-lines, `data/sprites.json` maps the EN
-display speaker to its 3-letter prefix and `defaultSpriteUrl()`
-(web/src/engine/assets.ts) picks the lowest-numbered `NNNNNN.tga` frame
-from the manifest as a fixed default (narration keeps the last sprite).
-This is a test feature only — never treat its frame choice as engine data.
-Next leads: map ctx layout of dispatch
-entries 26/27 precisely, or instrument (4,176) statements whose `(3,X)`
-toks point at dialogue toks (the sprite change likely coincides with
-speaker turns).
 
 ## Engine flag tables (script.pak, decoded statically)
 

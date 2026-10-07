@@ -1,22 +1,29 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { resolveAmbCue, resolveAmbStop, resolveBgmTimeline, resolveFade, resolveSeRec, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay } from "./reader";
-import { loadManifest, pickDefaultSpriteKey } from "../engine/assets";
+import { resolveAmbCue, resolveAmbStop, resolveBgmTimeline, resolveFade, resolveSeRec, resolveSprites, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay } from "./reader";
+import { loadManifest } from "../engine/assets";
+import type { BnrRec } from "../engine/types";
 
-describe("default sprite picker (EXPERIMENTAL speaker sprites)", () => {
-  const keys = [
-    "kaz101307.tga", "kaz001101.tga", "kaz001204.tga",
-    "ic/cg/kaz001101.tga", "set001101.tga", "v105300.tga", "chi001107.tga",
+describe("sprite timeline (bnr (4,154)/(4,155) recs)", () => {
+  const recs: BnrRec[] = [
+    { ev: 3, spr: { id: 1, stem: "kaz001101" }, conf: "high" },
+    { ev: 7, spr: { id: 2, stem: "set001101" }, conf: "high" },
+    { ev: 9, sprHide: 1, conf: "high" },
+    { ev: 11, spr: { id: 1, stem: "kaz001104" }, conf: "hypothesis" },
+    { ev: 12, spr: { id: 1, stem: "kaz001104" }, conf: "high" },
   ];
-  it("picks the lowest-numbered frame for the prefix", () => {
-    expect(pickDefaultSpriteKey(keys, "kaz")).toBe("kaz001101.tga");
-    expect(pickDefaultSpriteKey(keys, "chi")).toBe("chi001107.tga");
-    expect(pickDefaultSpriteKey(["chi001107.tga"], "chi")).toBe("chi001107.tga");
+  it("latest show per prefix at/before the event wins", () => {
+    expect(resolveSprites(recs, 0)).toEqual([]);
+    expect(resolveSprites(recs, 3)).toEqual([{ id: 1, stem: "kaz001101" }]);
+    expect(resolveSprites(recs, 7)).toEqual([
+      { id: 1, stem: "kaz001101" }, { id: 2, stem: "set001101" },
+    ]);
   });
-  it("ignores other prefixes, overlay stems, ic/ keys; empty prefix -> null", () => {
-    expect(pickDefaultSpriteKey(keys, "set")).toBe("set001101.tga");
-    expect(pickDefaultSpriteKey(keys, "v")).toBeNull(); // 1-letter stems never match
-    expect(pickDefaultSpriteKey(keys, "")).toBeNull();
-    expect(pickDefaultSpriteKey([], "kaz")).toBeNull();
+  it("hide clears the slot; hypothesis recs are ignored", () => {
+    expect(resolveSprites(recs, 9)).toEqual([{ id: 2, stem: "set001101" }]);
+    expect(resolveSprites(recs, 11)).toEqual([{ id: 2, stem: "set001101" }]);
+    expect(resolveSprites(recs, 12)).toEqual([
+      { id: 1, stem: "kaz001104" }, { id: 2, stem: "set001101" },
+    ]);
   });
 });
 

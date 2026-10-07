@@ -21,6 +21,10 @@ address real SE.PAK numbers) and IS emitted below with conf="high".
 Ambient channel playback is (4,165) [ch, se, fade_ms, loop, vol, ?]
 (0x40f400; 99% of ids are SE.PAK numbers), stopped by (4,166) [ch,0];
 both emitted with conf="high" (see docs/PARSING.md).
+Standing sprites are (4,154)/(4,155) [prefix_id, face, base, ...] ->
+char\{prefix}{base+face:06d}.tga; face 4000 hides the slot. Proven by
+exe disassembly + corpus file-existence check (14315/14319); emitted as
+spr/sprHide recs with conf="high" (docs/PARSING.md).
 
 Output: {version: 1, recs: {script: [{ev, se?, amb?, ambStop?, cam?,
 fadeMs?, conf}]}}
@@ -89,6 +93,30 @@ def decode_script(data: bytes, script: str) -> list[dict]:
         elif has166 and len(s) >= 2 and s[1] <= 0:
             recs.append({"ev": ev, "ambStop": max(0, min(3, s[0])),
                          "conf": "high"})
+        # Standing sprites (4,154)/(4,155): [prefix_id, face, base, ...].
+        # WA2.exe: handlers 0x4553f0/0x455590 -> 0x4160e0 -> filename
+        # sprintf("%s%06d.tga", table[prefix_id], file) under char\ ;
+        # corpus proof: base+face hits a real char.pak file for
+        # 14315/14319 statements (docs/PARSING.md). face==4000 hides the
+        # slot (1008_030 tail hides kaz/set/koh this way). The 38-entry
+        # prefix table below is the exe's stack table (0x4a2904..0x4a2980,
+        # built at 0x415bf8); ids 6-9 are dud entries ('a'/uninit) and
+        # never occur in the corpus. Bases < 100 only occur in the LF3
+        # digital novel (3 statements) and are ignored as malformed.
+        has154 = any(o == 4 and a == 154 for o, a in ops)
+        has155 = any(o == 4 and a == 155 for o, a in ops)
+        if (has154 or has155) and len(s) >= 3:
+            pid, face, base = s[0], s[1], s[2]
+            prefix = SPRITE_PREFIXES.get(pid)
+            if prefix:
+                if face == 4000:
+                    recs.append({"ev": ev, "sprHide": pid, "conf": "high"})
+                elif base >= 100:
+                    recs.append({"ev": ev,
+                                 "spr": {"id": pid,
+                                         "stem": "%s%06d" % (prefix,
+                                                             base + face)},
+                                 "conf": "high"})
         # Backdrops / event art: (4,146)/(4,147) [M,X,Y,F,...], (4,148).
         # X==0: bare fade (transition timing); X==-2: clear; else filename
         # stems (prefix resolved at lookup). 146/147 -> bak, 148 -> grp.
@@ -130,6 +158,20 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             seen.add(k)
             out.append(r)
     return out
+
+
+# Standing-sprite prefix table, proven from WA2.exe .rdata strings
+# (0x4a2904..0x4a2980) + the stack array built at 0x415bf8 (slot i holds
+# string ptr 0x4a2980-4*i; ids 6-9 are 'a'/uninitialized dud slots and
+# never appear as (4,154)/(4,155) push values corpus-wide).
+SPRITE_PREFIXES = {
+    0: "har", 1: "kaz", 2: "set", 3: "koh", 4: "izu", 5: "mar",
+    10: "tak", 11: "ioo", 12: "chi", 13: "pap", 14: "mam", 15: "oto",
+    16: "you", 17: "tan", 18: "shi", 19: "tom", 20: "sat", 21: "hon",
+    22: "nak", 23: "say", 24: "aco", 25: "mih", 26: "mhh", 27: "ueh",
+    28: "yos", 29: "tan", 30: "ham", 31: "mat", 32: "kiz", 33: "suz",
+    34: "saw", 35: "miy", 36: "yan",
+}
 
 
 def stem_candidates(x: int, y: int) -> list[str]:

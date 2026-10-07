@@ -154,50 +154,6 @@ export function voiceUrlByKey(key: string): string | null {
   return lookup(manifest?.voice, key);
 }
 
-/** Pure: pick a default standing-sprite manifest key for a speaker
- * prefix. EXPERIMENTAL — the engine's per-line sprite identity is not yet
- * decoded (docs/PARSING.md "Character sprite system"), so this picks the
- * lowest-numbered frame as a stand-in. Manifest keys are
- * "{prefix}{6-digit}.tga"; intro-chapter (ic/) keys are ignored so the
- * main-chapter default is used everywhere. Test-pinned. */
-export function pickDefaultSpriteKey(
-  keys: string[],
-  prefix: string,
-): string | null {
-  if (!prefix) return null;
-  let best: string | null = null;
-  let bestNum = Infinity;
-  const re = /^([a-z]{3})(\d{6})\.tga$/i;
-  const pre = prefix.toLowerCase();
-  for (const key of keys) {
-    const m = re.exec(key);
-    if (!m || m[1].toLowerCase() !== pre) continue;
-    const n = parseInt(m[2], 10);
-    if (n < bestNum) {
-      bestNum = n;
-      best = key;
-    }
-  }
-  return best;
-}
-
-// Default-sprite resolution is per prefix; cache it so say-events don't
-// rescan the manifest keys every line.
-const spriteCache = new Map<string, string | null>();
-
-/** EXPERIMENTAL: URL for a speaker's standing sprite (default frame).
- * Returns null when no sprite assets are installed for the prefix. */
-export function defaultSpriteUrl(prefix: string): string | null {
-  if (!spriteCache.has(prefix)) {
-    const key = pickDefaultSpriteKey(
-      Object.keys(manifest?.images ?? {}),
-      prefix,
-    );
-    spriteCache.set(prefix, key ? imageUrl(key) : null);
-  }
-  return spriteCache.get(prefix) ?? null;
-}
-
 export function hasAssets(): boolean {
   return manifest !== null;
 }

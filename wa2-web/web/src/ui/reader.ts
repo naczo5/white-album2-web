@@ -1,6 +1,6 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
-import { bgmTrackUrl, defaultSpriteUrl, imageUrl, movieUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
+import { bgmTrackUrl, imageUrl, movieUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
 import { Router, chapterOfScript } from "../engine/router";
 import { plainText, renderText, spanize } from "../engine/text";
 import type { BgmData, BnrData, Position, SaveData, ScenarioEvent } from "../engine/types";
@@ -86,7 +86,6 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     <div class="advance-hint" id="hint">click / space to continue</div>`;
 
   paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol);
-  paintSprite(el.querySelector("#stage") as HTMLElement, save, ev);
   fireSe(save);
   updateAmbient(save);
   const box = el.querySelector("#textbox") as HTMLElement;
@@ -392,6 +391,7 @@ function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number): void {
   }
   stage.style.filter = stageFilter(save);
   paintOverlay(stage, save);
+  paintSprites(stage, save);
   paintBgm(save, bgmVol);
   paintFade(stage, save);
 }
@@ -836,45 +836,70 @@ export function setSpeakerLookup(fn: SpeakerLookup | null): void {
   speakerLookup = fn;
 }
 
-/** EXPERIMENTAL sprite layer (user-requested test feature): speaker
- * display name -> sprite file prefix from data/speakers.json. The engine's
- * per-line sprite identity is NOT decoded yet — each speaker shows one
- * fixed default frame (see docs/QA.md verification log). */
-type SpriteLookup = (speaker: string) => string | null | undefined;
-let spriteLookup: SpriteLookup | null = null;
-export function setSpriteLookup(fn: SpriteLookup | null): void {
-  spriteLookup = fn;
-}
-
 function displaySpeaker(save: SaveData, ev: ScenarioEvent): string {
   if (ev.t !== "say" || !ev.speaker) return "";
   return speakerLookup?.(save.position.script, save.position.event) ??
     ev.speaker;
 }
 
-/** EXPERIMENTAL: paint the speaker sprite on the stage. Only say-events
- * with a known prefix re-evaluate it; everything else (narration,
- * choices, directives) keeps the last sprite, standard VN behaviour.
- * Inserted below the grp overlay so CGs still draw on top. */
-function paintSprite(stage: HTMLElement, save: SaveData, ev: ScenarioEvent | null): void {
-  if (!ev || ev.t !== "say" || !ev.speaker) return;
-  let img = stage.querySelector(":scope > img.stage-spr") as
-    HTMLImageElement | null;
-  const prefix = spriteLookup?.(displaySpeaker(save, ev)) ?? null;
-  const url = prefix ? defaultSpriteUrl(prefix) : null;
-  if (!url) {
-    img?.remove();
-    return;
+/** Engine-faithful standing sprites: (4,154)/(4,155) recs decoded by
+ * tools/decode_bnr.py ([prefix_id, face, base] -> char\{prefix}{num}.tga;
+ * face 4000 = hide; corpus proof 14315/14319, docs/PARSING.md). Sprite
+ * state carries forward like the engine: latest show per prefix wins,
+ * hide clears the slot; hypothesis-confidence recs are ignored.
+ * DOM-free; test-pinned. */
+export function resolveSprites(
+  recs: BnrData["recs"][string] | null | undefined,
+  event: number,
+): { id: number; stem: string }[] {
+  const active = new Map<number, string>();
+  for (const r of recs ?? []) {
+    if (r.conf !== "high" || r.ev > event) continue;
+    if (r.spr) active.set(r.spr.id, r.spr.stem);
+    else if (r.sprHide !== undefined) active.delete(r.sprHide);
   }
-  if (!img) {
-    img = document.createElement("img");
-    img.className = "stage-spr";
-    img.alt = "";
-    const ov = stage.querySelector(":scope > img.stage-ov");
-    if (ov) stage.insertBefore(img, ov);
-    else stage.appendChild(img);
-  }
-  if (img.getAttribute("src") !== url) img.setAttribute("src", url);
+  return [...active.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([id, stem]) => ({ id, stem }));
+}
+
+/** Paint standing sprites below the grp overlay, reconciled per prefix
+ * id so advance/rollback never flickers. Position: single sprite sits
+ * left-of-centre, multiple sprites spread across the stage (exact engine
+ * screen slots are not decoded — positions are a presentation choice). */
+function paintSprites(stage: HTMLElement, save: SaveData): void {
+  const active = resolveSprites(
+    bnrLookup?.(save.position.script),
+    save.position.event,
+  );
+  const seen = new Set<number>();
+  active.forEach((s, i) => {
+    const url = imageUrl(`${s.stem}.tga`);
+    let img = stage.querySelector(
+      `:scope > img.stage-spr[data-id="${s.id}"]`,
+    ) as HTMLImageElement | null;
+    if (!url) {
+      img?.remove();
+      return;
+    }
+    if (!img) {
+      img = document.createElement("img");
+      img.className = "stage-spr";
+      img.alt = "";
+      img.dataset.id = String(s.id);
+      const ov = stage.querySelector(":scope > img.stage-ov");
+      if (ov) stage.insertBefore(img, ov);
+      else stage.appendChild(img);
+    }
+    if (img.getAttribute("src") !== url) img.setAttribute("src", url);
+    const n = active.length;
+    img.style.left = n <= 1 ? "30%" : `${8 + (i * 52) / (n - 1)}%`;
+    seen.add(s.id);
+  });
+  stage.querySelectorAll(":scope > img.stage-spr").forEach((el) => {
+    const id = Number((el as HTMLElement).dataset.id);
+    if (!seen.has(id)) el.remove();
+  });
 }
 
 /** Play the voice clip for a displayed line, if the archive has it. */
