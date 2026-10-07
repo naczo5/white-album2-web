@@ -150,9 +150,10 @@ A: dict = {
                  "s_flag OFF -> Normal. 'I can't lie to Kazusa' needs "
                  "kazusa aff=6 -> Kazusa True."),
         "status": "EXPERT_SOURCED"},
-    ("3904_2","Remove her glasses.","Kiss her with her glasses on."): {"walk": "coda-c15", "date": "2/14 (cheating only)",
+    ("3904","Remove her glasses.","Kiss her with her glasses on."): {"walk": "coda-c15", "date": "2/14 (cheating only)",
         "effects": {},
-        "note": "CG-only choice; both options converge. Save + take both.",
+        "note": ("CG-only choice; both options converge. Save + take both. "
+                 "JP spine 3904 (old EN toolchain split 3904_2)."),
         "status": "EXPERT_SOURCED"},
     # ---- recovered from mega-tokens by the resplit parser (2004/2013/
     # 2014/2503/3003); these close the walkthrough-vs-engine gaps ----

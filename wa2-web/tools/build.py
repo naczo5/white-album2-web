@@ -101,20 +101,32 @@ def main() -> None:
     data_dir = os.path.join(out, "data")
     os.makedirs(ir_dir, exist_ok=True)
 
-    print("[1/4] extracting scenario sources")
-    for i, pak in enumerate(paks):
-        stem = os.path.splitext(os.path.basename(pak))[0] or "pak"
-        txt_dir = os.path.join(out, f"txt_{i}_{stem}")
-        os.makedirs(txt_dir, exist_ok=True)
-        m = extract(pak, txt_dir, {"txt"})
-        files = [f for f in m["files"] if not f.get("folder")]
-        print(f"      {pak}: {len(files)} scenario files")
-        txt_dirs.append(txt_dir)
+    spak = os.path.join(game, "script.pak") if game else None
+    print("[1/4] parsing scenario IR")
+    if spak and os.path.isfile(spak):
+        # JP-spine IR (build_ir): JP script.pak structure + MAO en.pak
+        # payload + manuscript text. Requires --mao for full EN text.
+        ir_cmd = [sys.executable, os.path.join(HERE, "build_ir.py"), spak,
+                  *paks, mao or "", ir_dir]
+        if not mao:
+            print("      WARNING: no --mao; display text falls back to "
+                  "truncated MAO en.pak tokens")
+        subprocess.run(ir_cmd, check=True)
+    else:
+        # legacy EN-only IR (degraded: MAO en.pak tail-fragment layout)
+        print("[1/4] extracting scenario sources")
+        for i, pak in enumerate(paks):
+            stem = os.path.splitext(os.path.basename(pak))[0] or "pak"
+            txt_dir = os.path.join(out, f"txt_{i}_{stem}")
+            os.makedirs(txt_dir, exist_ok=True)
+            m = extract(pak, txt_dir, {"txt"})
+            files = [f for f in m["files"] if not f.get("folder")]
+            print(f"      {pak}: {len(files)} scenario files")
+            txt_dirs.append(txt_dir)
+        print("[1/4] parsing scenario IR (two-pass)")
+        parse_corpus(txt_dirs, ir_dir)
 
-    print("[2/4] parsing scenario IR (two-pass)")
-    index = parse_corpus(txt_dirs, ir_dir)
-
-    print("[3/4] deriving flow + links (into build/data; data/ keeps only"
+    print("[2/4] deriving flow + links (into build/data; data/ keeps only"
           " hand-authored sources + annotation rules)")
     subprocess.run([sys.executable, os.path.join(HERE, "build_flow.py"),
                     ir_dir, os.path.join(out, "flow.skel.json")], check=True)
@@ -126,9 +138,11 @@ def main() -> None:
     subprocess.run([sys.executable, os.path.join(HERE, "build_links.py"),
                     ir_dir, links_out], check=True)
 
-    print("[4/4] staging web data + parity gates")
+    print("[3/4] staging web data + parity gates")
     scripts_out = os.path.join(data_dir, "scripts")
     os.makedirs(scripts_out, exist_ok=True)
+    with open(os.path.join(ir_dir, "index.json"), encoding="utf-8") as f:
+        index = json.load(f)
     for s in index:
         shutil.copy(os.path.join(ir_dir, s + ".json"),
                     os.path.join(scripts_out, s + ".json"))
@@ -142,9 +156,14 @@ def main() -> None:
                os.path.join(data_dir, "bgm.json")]
     if game:
         bgm_cmd += ["--game", game]
+    if spak and os.path.isfile(spak):
+        bgm_cmd += ["--jp", spak]
     subprocess.run(bgm_cmd, check=True)
-    subprocess.run([sys.executable, os.path.join(HERE, "decode_bnr.py"),
-                    *paks, os.path.join(data_dir, "bnr.json")], check=True)
+    bnr_cmd = [sys.executable, os.path.join(HERE, "decode_bnr.py"),
+               *paks, os.path.join(data_dir, "bnr.json")]
+    if spak and os.path.isfile(spak):
+        bnr_cmd += ["--jp", spak]
+    subprocess.run(bnr_cmd, check=True)
     # Per-line voice map from .bnr (4,138). With --mao (MAO script-data
     # clone, e.g. the fetch_mao.py upstream checkout) + --voice-dir, the
     # exact anchor chain resolves each (4,138) NNN to a real archive key;

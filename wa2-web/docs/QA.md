@@ -246,3 +246,48 @@ stage, no placeholder) from missing assets (install hint); verified at
 closing 2313 (play-scene black stage + sprites). Gates: pytest
 35, tsc clean, vitest 58, check_flow 32/32 + check_bnr_choices 31/31
 (build), simulate clean walk (31 choices covered).
+
+### 2026-10-07 — MAO en.pak two-stream layout DECODED; JP-spine IR + exact .bnr/.bgm anchors
+User reported the scenario read incoherently ("dialogue all over the
+place, teleporting between rooms") with sprites/staging from a different
+story. Root cause proven at the data level, not the renderer:
+- The patched exe runs TWO script streams (exe evidence: 4× `script`
+  pushes at 0x4177f5/0x417819/0x417945/0x417977 vs JP's single
+  0x41cfe1; `en.pak` string at RVA 0x4a4294). JP `script.pak` is the
+  structural spine; MAO `en.pak` overlays payload per token: EN token
+  *i* == JP token *i* (naive comma split, corpus-verified 1:1). Old
+  EN-standalone parsing produced truncated lines + orphan tail
+  fragments = scrambled dialogue/speakers/backdrops.
+- Long EN tokens truncate; overflow fragments append at file end in
+  source-line order (1002: 35 extras). The exe re-joins them via the
+  `.bnr` sync labels: `(3,X)` with label ops `(4,131)` [21577×] /
+  `(4,144)` [15288×] / `(131,131)` double form [941×], X = JP
+  comma-token index.
+- tools/build_ir.py (NEW): JP-spine IR builder — JP tokens, EN
+  shape-preserving substitution with classify_bare guard + name_guard,
+  spine-classified replay, MAO manuscript text for say/narrate
+  (ruby-aware JP containment, 69208 lines) + choice options
+  (manuscript `N．text` rows, fullwidth/ASCII digit forms), EN-token
+  fallback for untranslated lines (7775). Emit rule: all JP scripts +
+  standalone EN-only omake (5200/5400/7000-class, terminals.json
+  pins) — NOT MAO's `NNNN_N` splits (2031_2 etc., corpus-verified
+  unreachable toolchain splits). Zero event drift corpus-wide.
+- tools/bnr_anchor.py (NEW): exact record anchoring from `(3,X)` labels
+  (first event with tok >= X); replaces fractional `idx/n_stmts ×
+  m_events` in decode_bnr.py (sprites/backdrops/fades/SE/amb) and
+  build_bgm.py (`--jp`). Verified 41464/41464 voice anchors exact
+  against build_voice's chain; 1002 sprite/backdrop staging matches
+  the narrative at every checked cue (184 Chikashi, 218 train Kazusa,
+  229 photo set+chi+bak 100700).
+- data/endings.json remapped to new flow node ids (option-text match
+  old→new); annotate_flow `3904_2` key → `3904` (choice is inline in
+  the JP spine; option text now comes from the manuscript pass).
+- voicemap: 36241/39133 exact string keys (92.7%), rest legacy numeric
+  bnr refs for special-disc variants.
+- Gates all green: pytest 43 (+8: bnr_anchor pins, tok on
+  latch/jump/choice events, fullwidth OPTION), tsc clean, vitest 58,
+  check_flow 34/34, check_bnr_choices 34/34, simulate clean walk
+  (32 choices), MAO pin drift audit passed. Headless verification:
+  1002 train/photo scenes, 2013 classroom choice, 3904 coda choice
+  (EN options + walkthrough date) all coherent; backdrop/sprite/audio
+  staging from the same decoded timeline (was: fractional mismatch).

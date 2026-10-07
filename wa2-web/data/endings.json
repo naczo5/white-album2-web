@@ -28,7 +28,7 @@
    "files": [
     "25xx line"
    ],
-   "unlock": "Avoid all heroine flags; 2019-1488 opt3, then stay-alone path without Setsuna affinity",
+   "unlock": "Avoid all heroine flags; 2019-1484 opt3, then stay-alone path without Setsuna affinity",
    "status": "NEEDS_PLAYTEST"
   },
   {
@@ -38,7 +38,7 @@
    "files": [
     "25xx line"
    ],
-   "unlock": "Koharu-favoring chain (2005/2009 accompany, 2018 opt2) + 2019-1488 opt3",
+   "unlock": "Koharu-favoring chain (2005/2009 accompany, 2018 opt2) + 2019-1484 opt3",
    "epilogue": true,
    "status": "EXPERT_SOURCED"
   },
@@ -49,7 +49,7 @@
    "files": [
     "2401-2413"
    ],
-   "unlock": "Mari chain (2011/2017 opt2) + 2019-1488 opt2 (gated mari aff>=3) + 2503-126 opt2 (Stay here)",
+   "unlock": "Mari chain (2011/2017 opt2) + 2019-1484 opt2 (gated mari aff>=3) + 2503-126 opt2 (Stay here)",
    "epilogue": true,
    "status": "EXPERT_SOURCED"
   },
@@ -60,7 +60,7 @@
    "files": [
     "23xx line?"
    ],
-   "unlock": "Chiaki chain (2007 opt1) + 2019-1488 opt1 (gated chiaki aff>=3). UNLOCKS 12/1 opt1 + IC extra scene.",
+   "unlock": "Chiaki chain (2007 opt1) + 2019-1484 opt1 (gated chiaki aff>=3). UNLOCKS 12/1 opt1 + IC extra scene.",
    "gates": "cc_chiaki_true_option",
    "status": "NEEDS_PLAYTEST"
   },
@@ -71,7 +71,7 @@
    "files": [
     "23xx line?"
    ],
-   "unlock": "PREREQ cc-chiaki-normal. Restart CC; 2003-241 opt1, same chain, 2019-1488 opt1.",
+   "unlock": "PREREQ cc-chiaki-normal. Restart CC; 2003-242 opt1, same chain, 2019-1484 opt1.",
    "status": "NEEDS_PLAYTEST"
   },
   {
@@ -81,7 +81,7 @@
    "files": [
     "25xx line"
    ],
-   "unlock": "Avoid Koharu/Mari/Chiaki flags, keep Setsuna affinity; 2019-1488 opt3 + shrine visit. Auto-transitions into Coda.",
+   "unlock": "Avoid Koharu/Mari/Chiaki flags, keep Setsuna affinity; 2019-1484 opt3 + shrine visit. Auto-transitions into Coda.",
    "gates": "coda",
    "status": "NEEDS_PLAYTEST"
   },
@@ -89,14 +89,14 @@
    "id": "coda-normal",
    "chapter": "coda",
    "name": "Coda Normal End",
-   "unlock": "Fail Kazusa and Setsuna-True flag sets; typical: 3016-863 opt1 without s_flag.",
+   "unlock": "Fail Kazusa and Setsuna-True flag sets; typical: 3016-859 opt1 without s_flag.",
    "status": "EXPERT_SOURCED"
   },
   {
    "id": "coda-cheating",
    "chapter": "coda",
    "name": "Cheating End (Kazusa Normal)",
-   "unlock": "Kazusa-leaning chain + 3016-826 opt1 (skips final choice). UNLOCKS Extra Episode.",
+   "unlock": "Kazusa-leaning chain + 3016-822 opt1 (skips final choice). UNLOCKS Extra Episode.",
    "gates": "extra_fugutaiten",
    "status": "EXPERT_SOURCED"
   },
@@ -104,14 +104,14 @@
    "id": "coda-kazusa-true",
    "chapter": "coda",
    "name": "Touma Kazusa True End",
-   "unlock": "Kazusa chain (kazusa aff=6) + 3016-826 opt2 -> 3901 + 3016-863 opt2.",
+   "unlock": "Kazusa chain (kazusa aff=6) + 3016-822 opt2 -> 3901 + 3016-859 opt2.",
    "status": "EXPERT_SOURCED"
   },
   {
    "id": "coda-setsuna-true",
    "chapter": "coda",
    "name": "Ogiso Setsuna True End (finale)",
-   "unlock": "Setsuna-honest chain (3014-377 opt2) + 3016-826 opt2 + 3016-863 opt1 with s_flag.",
+   "unlock": "Setsuna-honest chain (3014-376 opt2) + 3016-822 opt2 + 3016-859 opt1 with s_flag.",
    "status": "EXPERT_SOURCED"
   },
   {

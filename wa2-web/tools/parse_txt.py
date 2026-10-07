@@ -49,7 +49,10 @@ import os
 import re
 
 SCRIPT_ID = re.compile(r"^[0-9]{4}(_[0-9]+)?$")
-OPTION = re.compile(r"^([0-9]+)\.\s?(.*)$", re.DOTALL)
+# Options: ASCII `1. text` (MAO EN normalizes) and fullwidth `１．text`
+# (JP originals; the JP spine stores its own choice labels fullwidth).
+OPTION = re.compile(r"^([0-9０-９]+)[.．]\s?(.*)$", re.DOTALL)
+_FW_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
 MOVIE = re.compile(r"^mv([0-9]+)$")
 IMAGE = re.compile(r"^(.*)\.tga$", re.IGNORECASE)
 BGM = re.compile(r"^(.*)\.amp$", re.IGNORECASE)
@@ -236,11 +239,11 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
             continue
         kind = classify_bare(tok)
         if kind == "movie":
-            events.append({"t": "movie", "id": tok})
+            events.append({"t": "movie", "id": tok, "tok": i})
         elif kind == "filter":
             # .AMP files are image color-grade LUTs (sepia/nega/night/...),
             # NOT music: fullscreen filter applied from this point on.
-            events.append({"t": "filter", "file": tok})
+            events.append({"t": "filter", "file": tok, "tok": i})
         elif kind == "anim":
             layer = None
             j = i + 1
@@ -249,7 +252,8 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
             if j < n and toks[j] in ("bak", "grp"):
                 layer = toks[j]
                 i = j  # consume layer token; loop's i+=1 moves past
-            events.append({"t": "anim", "file": tok, "layer": layer})
+            events.append({"t": "anim", "file": tok, "layer": layer,
+                           "tok": i})
         elif kind == "image":
             layer = None
             j = i + 1
@@ -260,13 +264,16 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
                 i = j  # consume layer token; loop's i+=1 moves past
             else:
                 warnings.append(f"token {i}: image {tok} without layer token")
-            events.append({"t": "image", "file": tok, "layer": layer})
+            events.append({"t": "image", "file": tok, "layer": layer,
+                           "tok": i})
         elif kind == "option":
             opts: list[dict] = []
+            opt_tok = i
             while i < n and classify_bare(toks[i]) == "option":
                 m = OPTION.match(toks[i])
                 assert m is not None
-                opts.append({"n": int(m.group(1)), "text": m.group(2), "goto": None})
+                opts.append({"n": int(m.group(1).translate(_FW_DIGITS)),
+                             "text": m.group(2), "goto": None})
                 i += 1
             # lookahead: bare script ids = option destinations (opt1 falls through)
             ids: list[str] = []
@@ -278,10 +285,11 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
                     opts[k + 1]["goto"] = sid
                 else:
                     warnings.append(f"token {i}: excess jump target {sid}")
-                    events.append({"t": "jump", "kind": "fallthrough", "targets": [sid]})
+                    events.append({"t": "jump", "kind": "fallthrough",
+                                   "targets": [sid], "tok": i})
             if len(opts) != len({o["n"] for o in opts}):
                 warnings.append(f"token {i}: duplicate option numbers")
-            events.append({"t": "choice", "options": opts})
+            events.append({"t": "choice", "options": opts, "tok": opt_tok})
             continue  # i already advanced
         elif kind == "catch":
             targets: list[str] = []
@@ -299,19 +307,21 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
                     and j + 1 < n and is_spoken(toks[j + 1])):
                 targets.append(toks[j])
                 j += 1
-            events.append({"t": "jump", "kind": tok, "targets": targets})
+            events.append({"t": "jump", "kind": tok, "targets": targets,
+                           "tok": i})
             i = j
             continue
         elif kind == "script_id":
-            events.append({"t": "jump", "kind": "bare", "targets": [tok]})
+            events.append({"t": "jump", "kind": "bare", "targets": [tok],
+                           "tok": i})
         elif kind == "layer":
             warnings.append(f"token {i}: stray layer token {tok}")
-            events.append({"t": "layer", "layer": tok})
+            events.append({"t": "layer", "layer": tok, "tok": i})
         else:  # text: speaker latch or narration
             if i + 1 < n and is_spoken(toks[i + 1]):
                 if valid_name(tok):
                     latch = tok
-                    events.append({"t": "latch", "name": tok})
+                    events.append({"t": "latch", "name": tok, "tok": i})
                 else:
                     # audit B1: narration masquerading as a speaker (long /
                     # markup-debris tokens). Keep the text, drop the claim.

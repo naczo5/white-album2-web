@@ -37,6 +37,44 @@ This recovered 5 walkthrough-documented choices invisible to naive
 parsing (2004 accept/decline, 2013 today/tomorrow, 2014 talk/leave,
 2503 concert/stay, 3003 propose/together).
 
+## MAO en.pak layout (two-stream overlay — proven)
+
+**The patched WA2.exe runs two script streams: JP `script.pak` is the
+spine, MAO `en.pak` is overlaid per line.** Exe evidence: 4× `script`
+string pushes at 0x4177f5/0x417819/0x417945/0x417977 (JP exe: one at
+0x41cfe1); `en.pak` string at RVA 0x4a4294. Consequences (all
+corpus-verified):
+
+- **EN token *i* == JP token *i* (naive comma split, 1:1).** The exe
+  displays EN payload over JP structure — EN tokens only ever replace
+  the *text* of the JP token at the same ordinal. Parsing the EN txt
+  standalone (old pipeline) produced truncated lines + orphan
+  fragments = scrambled dialogue/speakers/staging.
+- **Long EN tokens are truncated to the engine token budget; overflow
+  fragments are appended at file end in source-line order** (1002:
+  35 extras; 143/174 scripts differ by >5 tokens). The exe joins them
+  via the `.bnr` sync labels: e.g. `(3,204),(4,131),(3,858),(4,131)`
+  = "the line at JP token 204 continues at tail token 858".
+- **Line-sync labels in `.bnr`/`.bgm` streams carry `(3,X)` where X is
+  the JP naive comma-token index.** Label ops: `(4,131)` [21577×],
+  `(4,144)` [15288×], `(131,131)` double form [941×] (source+fragment
+  pairs). A record executes at the next label at-or-after it →
+  **exact anchors** (tools/bnr_anchor.py), replacing the old
+  fractional `idx/n_stmts × m_events` guess everywhere
+  (decode_bnr.py, build_bgm.py, build_voice.py).
+- **MAO replaced in-text commas with `~`** (the comma is the token
+  delimiter); JP options use fullwidth digits (`１．`), MAO EN uses
+  ASCII — the OPTION regex accepts both (parse_txt.py).
+- **tools/build_ir.py** (JP-spine IR builder): JP tokens →
+  shape-preserving EN substitution → spine-classified events → MAO
+  manuscript text for say/narrate (ruby-aware JP containment) and
+  choice options (manuscript `N．text` rows). Emit rule: all JP pak
+  scripts + standalone EN-only omake ids (5200/5400/7000-class, pinned
+  by terminals.json) but NOT MAO's `NNNN_N` EN-only splits (2031_2
+  etc. — unreachable toolchain splits of inline JP content).
+  Event stream is 1:1 with the JP spine (zero drift corpus-wide),
+  so `.bnr` `(3,X)` anchors resolve exactly.
+
 ## Voice addressing
 
 Voice clips are addressed by the `.bnr` voice index NNN from `(4,138)`

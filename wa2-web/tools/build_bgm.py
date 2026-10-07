@@ -34,6 +34,7 @@ sys.path.insert(0, HERE)
 import kcap  # noqa: E402
 import lzss  # noqa: E402
 import parse_txt  # noqa: E402
+import bnr_anchor  # noqa: E402
 from proto_bgm import code_off, find_bgm, load_bnr  # noqa: E402
 
 
@@ -71,7 +72,8 @@ def track_set(game_dir: str | None) -> set[int]:
     return have
 
 
-def build(paks: list[str], game_dir: str | None = None) -> dict:
+def build(paks: list[str], game_dir: str | None = None,
+          jp_path: str | None = None) -> dict:
     with open(paks[0], "rb") as f:
         main = f.read()
     # script -> (pak_data, wins): later paks override (mirrors build.py)
@@ -85,6 +87,11 @@ def build(paks: list[str], game_dir: str | None = None) -> dict:
             src[e.name[:-4]] = data
     _ = main
     have = track_set(game_dir)
+    JPDATA: bytes | None = None
+    if jp_path and os.path.isfile(jp_path):
+        with open(jp_path, "rb") as f:
+            JPDATA = f.read()
+        print(f"bgm: exact anchors via {jp_path}")
     cues: dict[str, list[dict]] = {}
     n_play = n_stop = 0
     missing_tracks: set[int] = set()
@@ -95,23 +102,44 @@ def build(paks: list[str], game_dir: str | None = None) -> dict:
         except KeyError:
             continue
         plays, stops, n = find_bgm(payload)
-        # EN events for fractional snapping
-        try:
-            entries = {e.name: e for e in kcap.read_index(data)
-                       if not e.is_folder}
-            tentry = entries[script + ".txt"]
-            txt = data[tentry.offset:tentry.offset + tentry.length]
-            if tentry.is_compressed:
-                orig, lz = lzss.split_datahdr(txt)
-                txt = lzss.decompress(lz, orig)
-            events = scene_events(txt)
-        except KeyError:
-            events = []
+        # Exact anchors via the JP token spine (bnr_anchor); fractional
+        # fallback without --jp.
+        anchors: list[int] | None = None
+        events: list[dict] = []
+        if jp_path:
+            try:
+                e = {x.name: x for x in kcap.read_index(JPDATA)
+                     if not x.is_folder}[script + ".txt"]
+                txt = JPDATA[e.offset:e.offset + e.length]
+                if e.is_compressed:
+                    orig, lz = lzss.split_datahdr(txt)
+                    txt = lzss.decompress(lz, orig)
+                events = bnr_anchor.jp_spine_events(txt)
+            except KeyError:
+                events = []
+            if events and bnr_anchor.has_sync(payload):
+                anchors = bnr_anchor.anchor_stmts(
+                    payload, bnr_anchor.next_event_map(events))
+        if anchors is None:
+            try:
+                entries = {e.name: e for e in kcap.read_index(data)
+                           if not e.is_folder}
+                tentry = entries[script + ".txt"]
+                txt = data[tentry.offset:tentry.offset + tentry.length]
+                if tentry.is_compressed:
+                    orig, lz = lzss.split_datahdr(txt)
+                    txt = lzss.decompress(lz, orig)
+                events = scene_events(txt)
+            except KeyError:
+                events = []
         m = len(events)
         rows: list[dict] = []
         for p in plays:
-            frac = p["stmt"] / max(1, n)
-            ev = min(m - 1, int(frac * m)) if m else 0
+            if anchors is not None:
+                ev = anchors[p["stmt"]]
+            else:
+                frac = p["stmt"] / max(1, n)
+                ev = min(m - 1, int(frac * m)) if m else 0
             if p["track"] == 0:
                 # Track 0 = silence/pause (cf. exe "BGM-PAUSE"): normalize
                 # to an explicit stop so the player never looks for a file.
@@ -126,8 +154,11 @@ def build(paks: list[str], game_dir: str | None = None) -> dict:
             rows.append(row)
             n_play += 1
         for s in stops:
-            frac = s["stmt"] / max(1, n)
-            ev = min(m - 1, int(frac * m)) if m else 0
+            if anchors is not None:
+                ev = anchors[s["stmt"]]
+            else:
+                frac = s["stmt"] / max(1, n)
+                ev = min(m - 1, int(frac * m)) if m else 0
             rows.append({"ev": ev, "stop": True})
             n_stop += 1
         rows.sort(key=lambda r: r["ev"])
@@ -169,9 +200,11 @@ def main() -> None:
                     help="MAIN_EN_PAK [SPECIAL_EN_PAK] OUT_JSON")
     ap.add_argument("--game", default=None,
                     help="installed game dir (for BGM.PAK availability flags)")
+    ap.add_argument("--jp", default=None,
+                    help="script.pak (JP spine) for exact (4,158) anchors")
     args = ap.parse_args()
     *paks, out = args.paks
-    table = build(paks, args.game)
+    table = build(paks, args.game, args.jp)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(table, f)
     print(f"wrote {out}")

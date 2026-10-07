@@ -1,4 +1,4 @@
-"""Decode .bnr presentation records to per-event data (static, no game run).
+r"""Decode .bnr presentation records to per-event data (static, no game run).
 
 Complements tools/build_bgm.py (which owns the proven (4,158) BGM opcode).
 This module decodes the remaining LSCR idioms identified by static analysis
@@ -46,34 +46,61 @@ sys.path.insert(0, HERE)
 import kcap  # noqa: E402
 import lzss  # noqa: E402
 import parse_txt  # noqa: E402
+import bnr_anchor  # noqa: E402
 from proto_bgm import find_se, iter_statements, load_bnr, s32  # noqa: E402
+
+JPGAME: bytes | None = None
 
 
 def decode_script(data: bytes, script: str) -> list[dict]:
     payload, _ = load_bnr(data, script)
-    try:
-        entries = {e.name: e for e in kcap.read_index(data)
-                   if not e.is_folder}
-        tentry = entries[script + ".txt"]
-        txt = data[tentry.offset:tentry.offset + tentry.length]
-        if tentry.is_compressed:
-            orig, lz = lzss.split_datahdr(txt)
-            txt = lzss.decompress(lz, orig)
-        toks = parse_txt.split_tokens(txt)
-        events, _ = parse_txt.parse_tokens(toks)
-    except KeyError:
-        events = []
+    # Exact anchors via the JP token spine (bnr_anchor): the stream's
+    # (4,131)/(4,144) line labels carry JP token coordinates; a record
+    # belongs to the next label at-or-after it. Falls back to fractional
+    # placement when no --jp spine is available.
+    events: list[dict] = []
+    anchors: list[int] | None = None
+    if JPGAME is not None:
+        try:
+            e = {x.name: x for x in kcap.read_index(JPGAME)
+                 if not x.is_folder}[script + ".txt"]
+            txt = JPGAME[e.offset:e.offset + e.length]
+            if e.is_compressed:
+                orig, lz = lzss.split_datahdr(txt)
+                txt = lzss.decompress(lz, orig)
+            events = bnr_anchor.jp_spine_events(txt)
+        except KeyError:
+            events = []
+        if events and bnr_anchor.has_sync(payload):
+            anchors = bnr_anchor.anchor_stmts(
+                payload, bnr_anchor.next_event_map(events))
+    if anchors is None:
+        try:
+            entries = {e.name: e for e in kcap.read_index(data)
+                       if not e.is_folder}
+            tentry = entries[script + ".txt"]
+            txt = data[tentry.offset:tentry.offset + tentry.length]
+            if tentry.is_compressed:
+                orig, lz = lzss.split_datahdr(txt)
+                txt = lzss.decompress(lz, orig)
+            toks = parse_txt.split_tokens(txt)
+            events, _ = parse_txt.parse_tokens(toks)
+        except KeyError:
+            events = []
     m = len(events)
     recs: list[dict] = []
     n = 0
     for idx, _off, _pushes, _ops, _raw, _floats in iter_statements(payload):
         n = idx + 1
-    # SE plays (opcode (4,164), conf high) mapped fractionally like BGM.
+    # SE plays (opcode (4,164), conf high) mapped like BGM.
     se_by_stmt = {r["stmt"]: r["se"] for r in find_se(payload)}
     for idx, off, pushes, ops, _raw, fl in iter_statements(payload):
         op_set = set(ops)
-        frac = idx / max(1, n)
-        ev = min(m - 1, int(frac * m)) if m else 0
+        if anchors is not None:
+            ev = anchors[idx]
+        else:
+            frac = idx / max(1, n)
+            ev = min(m - 1, int(frac * m)) if m else 0
         s = [s32(x) for x in pushes]
         if idx in se_by_stmt:
             recs.append({"ev": ev, "se": [se_by_stmt[idx]],
@@ -218,10 +245,21 @@ def stem_candidates(x: int, y: int) -> list[str]:
 
 
 def main() -> None:
-    if len(sys.argv) < 3:
-        print(__doc__)
-        sys.exit(2)
-    *paks, out_path = sys.argv[1:]
+    argv = sys.argv[1:]
+    jp_path = None
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--jp":
+            jp_path = argv[i + 1]
+            del argv[i:i + 2]
+        else:
+            i += 1
+    *paks, out_path = argv
+    global JPGAME
+    if jp_path:
+        with open(jp_path, "rb") as f:
+            JPGAME = f.read()
+        print(f"bnr: exact anchors via {jp_path}")
     src: dict[str, bytes] = {}
     for pak_path in paks:
         with open(pak_path, "rb") as f:

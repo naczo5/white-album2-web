@@ -37,7 +37,7 @@ def test_choice_with_marker_after():
     assert [o["text"] for o in ch["options"]] == ["Go", "Stay"]
     assert [o["goto"] for o in ch["options"]] == [None, None]
     jumps = [e for e in events if e["t"] == "jump"]
-    assert jumps == [{"t": "jump", "kind": "CATCH2", "targets": ["2301"]}]
+    assert jumps == [{"t": "jump", "kind": "CATCH2", "targets": ["2301"], "tok": 3}]
 
 
 def test_router_choice_bare_ids():
@@ -50,7 +50,7 @@ def test_router_choice_bare_ids():
 def test_catch_does_not_swallow_narration():
     toks = P.split_tokens(enc('CATCH2,2020,Prose resumes here.,More prose.'))
     events, _ = P.parse_tokens(toks)
-    assert events[0] == {"t": "jump", "kind": "CATCH2", "targets": ["2020"]}
+    assert events[0] == {"t": "jump", "kind": "CATCH2", "targets": ["2020"], "tok": 0}
     assert events[1]["text"] == "Prose resumes here."
 
 
@@ -80,7 +80,7 @@ def test_narration_does_not_latch():
     toks = P.split_tokens(enc('And then~ she declared:,Haruki,"No."'))
     events, _ = P.parse_tokens(toks)
     assert events[0]["t"] == "narrate" and events[0]["tok"] == 0
-    assert events[1] == {"t": "latch", "name": "Haruki"}
+    assert events[1] == {"t": "latch", "name": "Haruki", "tok": 1}
     assert events[2]["speaker"] == "Haruki"
     toks = P.split_tokens(enc('And then~ she declared:,"No."'))
     events, _ = P.parse_tokens(toks)
@@ -107,7 +107,7 @@ def test_latch_validation():
 def test_jp_brackets_dialogue():
     toks = P.split_tokens(enc('武也,「行くぞ」'))
     events, _ = P.parse_tokens(toks)
-    assert events[0] == {"t": "latch", "name": "武也"}
+    assert events[0] == {"t": "latch", "name": "武也", "tok": 0}
     assert events[1]["t"] == "say" and events[1]["speaker"] == "武也" \
         and events[1]["text"] == "行くぞ"
     # unbalanced opener (F16 tail): still dialogue, never narration
