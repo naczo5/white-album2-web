@@ -45,27 +45,40 @@ code { font-size: 0.85em; }
 }
 
 .stage {
-  aspect-ratio: 16 / 9;
+  /* 16:9 stage box built with a padding-top spacer rather than
+   * aspect-ratio: a box whose real ratio drifts from the art's makes
+   * `cover` crop the art (user-visible as cut-off heads). The spacer is
+   * ratio-exact in every browser; `contain` below guarantees no crop
+   * even if the box is stretched by unusual viewports. */
+  position: relative;
   width: min(100%, calc(64vh * 16 / 9));
   margin: 0 auto;
-  background: linear-gradient(#1b2740, #0d1420);
-  background-size: cover;
-  background-position: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: #000 linear-gradient(#1b2740, #0d1420) center / contain no-repeat;
   border: 1px solid #2c3a4f;
   border-radius: 4px;
   overflow: hidden;
-  position: relative;
 }
-.stage-ph { color: var(--dim); padding: 1rem; text-align: center; }
+.stage::before {
+  content: "";
+  display: block;
+  padding-top: 56.25%; /* 16:9 */
+}
+.stage-ph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dim);
+  padding: 1rem;
+  text-align: center;
+}
 .stage-ov {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   pointer-events: none;
 }
 /* Standing sprites: char-id keyed slot records (exe 0x4160e0); art is

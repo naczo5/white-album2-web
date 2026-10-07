@@ -48,7 +48,11 @@ export interface ReaderHooks {
   router: Router;
   save: SaveData;
   settings: ReaderSettings;
-  skipping: boolean;
+  /** Shared mutable skip state: main.ts flips `active` on Ctrl down/up and
+   * the reader reads it live — a snapshot boolean went stale between
+   * renders and made Ctrl-skip a no-op (and forced re-renders that
+   * restarted the typewriter mid-line = the "flicker"). */
+  skip: { active: boolean };
   onChange(): void;
   open(screen: string): void;
   notify(msg: string): void;
@@ -89,6 +93,7 @@ function isRead(save: SaveData): boolean {
 
 export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   clearTimers();
+  curHooks = h;
   const { router, save } = h;
   const pos = save.position;
   const ev = router.at(pos);
@@ -205,7 +210,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       ? `<div class="speaker">${escapeAttr(displaySpeaker(save, ev))}</div>` : "";
     const outer = `${cls}${ev.style === "whisper" ? " whisper" : ""}`;
     const full = `${who}<div class="${outer}">${renderText(ev.text)}</div>`;
-    const speed = h.skipping ? 0 : h.settings.textSpeed;
+    const speed = h.skip.active ? 0 : h.settings.textSpeed;
     if (speed > 0) {
       startTypewriter(box, full, ev.text, who, outer, speed, () => scheduleAuto(h));
       el.onclick = () => {
@@ -280,9 +285,16 @@ function startTypewriter(box: HTMLElement, full: string, raw: string, who: strin
   const tick = () => {
     const shown = Math.floor(((performance.now() - t0) / 1000) * cps);
     if (shown >= total) {
+      // STOP THE INTERVAL before onDone: leaving it running re-fired
+      // onDone -> scheduleAuto every 30 ms, which perpetually cleared the
+      // pending auto-advance/skip timer (Ctrl-skip and auto mode never
+      // fired) and re-rendered the finished box 30x/s (visible flicker).
+      if (typeTimer !== null) {
+        clearInterval(typeTimer);
+        typeTimer = null;
+      }
       box.innerHTML = full;
       delete box.dataset.typing;
-      typeTimer = null;
       onDone();
       return;
     }
@@ -338,29 +350,40 @@ function completeTypewriter(box: HTMLElement, full: string): boolean {
  * Read-mode skip halts on the first unread line (never advances past it). */
 function scheduleAuto(h: ReaderHooks): void {
   clearAuto();
-  const delay = h.skipping ? 120 : h.settings.autoDelay;
+  const delay = h.skip.active ? 120 : h.settings.autoDelay;
   if (delay <= 0) return;
   const ev = h.router.at(h.save.position);
   if (!ev || ev.t === "choice") return; // never auto-pick
-  if (h.skipping && h.settings.skipRead && !isRead(h.save)) {
-    h.skipping = false;
+  if (h.skip.active && h.settings.skipRead && !isRead(h.save)) {
+    h.skip.active = false;
     h.onSkipStop();
     return;
   }
   autoTimer = window.setTimeout(() => {
     autoTimer = null;
-    if (h.skipping && h.settings.skipRead && !isRead(h.save)) {
-      h.skipping = false;
+    if (h.skip.active && h.settings.skipRead && !isRead(h.save)) {
+      h.skip.active = false;
       h.onSkipStop();
       return;
     }
-    if (h.skipping) {
+    if (h.skip.active) {
       const cur = h.router.at(h.save.position);
       if (cur && cur.t !== "choice") stepForward(h);
       return;
     }
     stepForward(h);
   }, delay);
+}
+
+/** Live skip control from main.ts (Ctrl down/up, window blur). Mutates the
+ * shared state and (re)starts the 120 ms advance loop without re-rendering
+ * — a re-render would restart the typewriter mid-line (the flicker bug). */
+let curHooks: ReaderHooks | null = null;
+export function setSkipping(active: boolean): void {
+  if (!curHooks) return;
+  curHooks.skip.active = active;
+  if (active) scheduleAuto(curHooks);
+  else clearAuto();
 }
 
 function clearAuto(): void {

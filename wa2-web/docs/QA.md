@@ -101,9 +101,46 @@ is proven, what is assumed, and exactly how to close each gap.
     flag-gated condition, same family — engine evidence, not just pattern.)
 14. **3023:536 `CATCH3 → {3201, 3101}`** vs linear `3023→3024`: same
     question as 13, same default-plays-linear treatment.
+15. **IC-chapter backdrop mismatch (TODO, user-reported)**: intro 1002
+    ev~103 shows CG `ic/cg/v100100.png` (Setsuna at desk) as the stage
+    *backdrop* where a classroom background is expected. Cause: the main
+    `script.pak` `.bnr` bak cue statement 9 pushes `[1, 1001, 0, 60]` →
+    `stem_candidates(1001, 0)` → `"100100"` — but `bak.pak` has no
+    `b100100.tga`; only `IC/bak.pak` has `b100101.tga`. Hypothesis: IC
+    chapters load art from `IC/bak.pak` paired with `IC/script.pak`'s own
+    `.bnr` (which likely cues `[1,1001,1,60]` → 100101). The asset
+    resolver's b→v→tv fall-through then picks the CG `v100100.tga`, so
+    CGs leak through as backdrops. Decode `IC/script.pak`'s bnr and
+    prefer IC-pak stems for IC scripts (or gate the v-fall-through for
+    bak cues).
+16. **bak-cue resolver fall-through (TODO)**: `stem_candidates` order
+    b→v→tv is right for missing-file tolerance but wrong when the b-stem
+    exists only as a different-layer asset: a missing `bNNNNNN.tga`
+    silently shows the identically-numbered CG as backdrop. Consider
+    per-layer manifest checks instead of stem-suffix probing.
 
 ## Subagent verification log
 
+- 2026-10-07 (input/skip + stage fixes, headless Chromium against vite):
+  - **Ctrl-skip root cause**: `startTypewriter`'s `tick` completion branch
+    set `typeTimer = null` without `clearInterval` — the 30 ms interval
+    kept firing after the line finished, each tick re-running
+    `onDone → scheduleAuto` and thereby perpetually clearing the pending
+    120 ms auto/skip timer (skip and auto-mode never advanced) and
+    re-rendering the finished box 30×/s (user-visible flicker). Fixed by
+    clearing the interval before `onDone`. Separately, `skipping` was
+    snapshotted into reader hooks at render time (stale by value); hooks
+    now carry a shared mutable `skip: { active }` object mutated by
+    `setSkipping()` without re-render.
+  - Playwright verification (`?pos=1002:120`, autosave-position probe):
+    click advances idle line, click during typing completes, Enter
+    advances, Ctrl held 2 s advances 123→155 (≈120 ms/line, repeatable);
+    skip-stop returns to normal pacing.
+  - **Stage scaling**: user-reported cover-crop (head cut) on 1280×720
+    art; `.stage` now uses a `::before` 56.25 % padding spacer and all
+    art layers use `contain` (never crop). Verified ratio 1.775 at
+    1280×640 and 1280×800 viewports.
+  - Backdrop mismatch at 1002 logged as Open item 15 (todo).
 - 2026-10-06 (third wave, static-only): voice/speaker/ambience overhaul.
   - **Voice anchor proven exact**: every (4,138) NNN record is followed by
     a (4,131) statement carrying (3,X) = the JP comma-token of the voiced

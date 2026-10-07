@@ -5,7 +5,7 @@ import type { SaveData } from "./engine/types";
 import { loadGameData, type GameData } from "./ui/data";
 import { renderFlowchart } from "./ui/flowchart";
 import { renderGuide, type GuideData } from "./ui/guide";
-import { installLutFilters, pushLog, renderReader, setBgmLookup, setBnrLookup, setScenarioLookup, setSpeakerLookup, setVoiceLookup, skipLatches } from "./ui/reader";
+import { installLutFilters, pushLog, renderReader, setBgmLookup, setBnrLookup, setScenarioLookup, setSpeakerLookup, setSkipping, setVoiceLookup, skipLatches } from "./ui/reader";
 import { renderSaves } from "./ui/saves";
 import "./style.css";
 
@@ -31,7 +31,7 @@ const settings: Settings = {
   skipRead: localStorage.getItem("wa2web.skipRead") === "1",
 };
 
-let skipping = false;
+let skipState = { active: false };
 
 function persistSettings(): void {
   localStorage.setItem("wa2web.spoiler", settings.spoiler ? "1" : "0");
@@ -116,32 +116,23 @@ async function boot(): Promise<void> {
   render();
   // Enter/click = advance (first press completes typing instantly, next
   // advances); hold Ctrl = skip (released on keyup / focus loss). Key
-  // repeat is ignored so holding Enter never fast-forwards. Mid-line Ctrl
-  // press completes the typewriter instantly; skip then advances via the
-  // reader's auto-advance (120ms/line).
+  // repeat is ignored so holding Enter never fast-forwards. Skip state is
+  // a shared mutable object read live by the reader hooks — setSkipping
+  // starts/stops the reader's 120 ms advance loop WITHOUT re-rendering
+  // (a re-render restarted the typewriter mid-line = the flicker bug).
   window.addEventListener("keydown", (e) => {
     if (screen !== "read") return;
-    if (e.key === "Control" && !skipping) {
-      skipping = true;
-      const box = document.querySelector("#textbox[data-typing]");
-      if (box) (document.getElementById("reader") as HTMLElement)?.click();
-    }
+    if (e.key === "Control" && !skipState.active) setSkipping(true);
     if (e.code === "Enter" && !e.repeat) {
       e.preventDefault();
       (document.getElementById("reader") as HTMLElement)?.click();
     }
   });
   window.addEventListener("keyup", (e) => {
-    if (e.key === "Control" && skipping) {
-      skipping = false;
-      if (screen === "read") render();
-    }
+    if (e.key === "Control" && skipState.active) setSkipping(false);
   });
   window.addEventListener("blur", () => {
-    if (skipping) {
-      skipping = false;
-      if (screen === "read") render();
-    }
+    if (skipState.active) setSkipping(false);
   });
 }
 
@@ -175,8 +166,7 @@ const hooks = {
   },
   notify,
   onSkipStop: () => {
-    skipping = false;
-    if (screen === "read") render();
+    skipState.active = false;
   },
 };
 
@@ -228,7 +218,7 @@ function render(): void {
         bgmVol: settings.bgmVol,
         skipRead: settings.skipRead,
       },
-      skipping,
+      skip: skipState,
       ...hooks,
     });
     return;
