@@ -9,6 +9,13 @@
 }
 
 * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+/* Thin theme-matched scrollbars (Chromium + Firefox) */
+* { scrollbar-width: thin; scrollbar-color: #2c3a4f transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2c3a4f; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #3d5273; }
+::-webkit-scrollbar-corner { background: transparent; }
 body {
   margin: 0;
   background: var(--bg);
