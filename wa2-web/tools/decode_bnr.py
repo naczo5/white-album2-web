@@ -164,23 +164,36 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             recs.append({"ev": ev, "sprHide": s[0], "conf": "high"})
         # Backdrops / event art: (4,146)/(4,147) [M,X,Y,F,...], (4,148).
         # X==0: bare fade (transition timing); X==-2: clear; else filename
-        # stems (prefix resolved at lookup). 146/147 -> bak, 148 -> grp.
+        # stems (prefix resolved at lookup). Handlers 0x454f30 (146) and
+        # 0x454fc0 (147) are byte-identical except ONE push: 146 passes
+        # mode 0, 147 passes mode 1 to the image primitive 0x4167e0,
+        # which selects the filename format (exe .rdata 0x4a2a00/0x4a2a1c):
+        # mode 0 -> "B%04d%1d%1d.tga" (backdrop, b* files), mode 1 ->
+        # "v%06d.tga" (event visual, v* files). So 147 is a CG show
+        # (grp layer), not a backdrop; op 148 (0x455050) also passes
+        # mode 1 (push $1 at 0x455122/0x45515a) -> grp as decoded.
         has146 = any(o == 4 and a == 146 for o, a in ops)
         has147 = any(o == 4 and a == 147 for o, a in ops)
         has148 = any(o == 4 and a == 148 for o, a in ops)
         if (has146 or has147 or has148) and len(s) >= 4:
             _m, x, y, fade = s[0], s[1], s[2], s[3]
+            # 146 -> bak (mode 0, B%04d%1d%1d.tga); 147/148 -> grp (mode 1,
+            # v%06d.tga event visuals). Handlers differ only in that push.
+            layer = "bak" if (has146 and not has147 and not has148) else "grp"
             if x == 0:
                 if fade:
                     recs.append({"ev": ev, "fadeMs": fade, "conf": "high"})
             elif x == -2:
                 recs.append({"ev": ev, "clear": True,
-                             "layer": "grp" if has148 else "bak",
+                             "layer": layer,
+                             # sprite-wipe model unchanged: bak-layer shows/
+                             # clears wipe slots (corpus-verified), grp
+                             # overlay (4,148) shows do not.
                              "sprClear": not has148,
                              "conf": "high"})
             elif x > 0:
                 recs.append({"ev": ev,
-                             "layer": "grp" if has148 else "bak",
+                             "layer": layer,
                              "stems": stem_candidates(x, y),
                              "fade": fade,
                              # A backdrop show wipes standing sprites: the

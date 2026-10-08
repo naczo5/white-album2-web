@@ -205,6 +205,35 @@ describe("merged stage timeline (txt images + bnr backdrops)", () => {
     expect(resolveStageImage(txt, cleared, 600, "closing")).toBeNull();
   });
 
+  it("same-event bak cues apply in statement order: last wins (1002 ev0)", () => {
+    // Real 1002 start: cue 100100 (b* missing on disc) then 100400
+    // (classroom). The engine executes statements in order — the later
+    // cue wins even though the earlier one resolves.
+    const bnr = [
+      { ev: 0, layer: "bak" as const, stems: ["100100"], fade: 60, conf: "high" as const },
+      { ev: 0, layer: "bak" as const, stems: ["100400"], fade: 60, conf: "high" as const },
+    ];
+    expect(resolveStageImage([], bnr, 8, "intro")).toBe("assets/ic/bg/b100400.png");
+  });
+
+  it("bak stems never fall through to v* CGs (op 146 = B%04d%1d%1d.tga)", () => {
+    // Only the CG v100100 exists; the bak cue must NOT show it. The
+    // previous backdrop (older cue) stays, matching the engine's failed
+    // image load.
+    const bnr = [
+      { ev: 0, layer: "bak" as const, stems: ["100400"], conf: "high" as const },
+      { ev: 5, layer: "bak" as const, stems: ["100100"], conf: "high" as const },
+    ];
+    expect(resolveStageImage([], bnr, 8, "intro")).toBe("assets/ic/bg/b100400.png");
+  });
+
+  it("grp stems never fall through to b* backdrops (ops 147/148 = v%06d.tga)", () => {
+    const bnr = [{ ev: 460, layer: "grp" as const, stems: ["200101"], conf: "high" as const }];
+    const txt = [txtEv({ t: "image", file: "g.tga", layer: "grp" }, 432)];
+    // b200101 exists but a grp cue must not load it: older overlay wins.
+    expect(resolveStageOverlay(txt, bnr, 470, "intro")).toBe("assets/cg/g.png");
+  });
+
   it("overlays show grp art and reset on backdrops", () => {
     const txt = [
       txtEv({ t: "image", file: "g.tga", layer: "grp" }, 432),

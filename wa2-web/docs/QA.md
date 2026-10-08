@@ -101,26 +101,54 @@ is proven, what is assumed, and exactly how to close each gap.
     flag-gated condition, same family — engine evidence, not just pattern.)
 14. **3023:536 `CATCH3 → {3201, 3101}`** vs linear `3023→3024`: same
     question as 13, same default-plays-linear treatment.
-15. **IC-chapter backdrop mismatch (TODO, user-reported)**: intro 1002
-    ev~103 shows CG `ic/cg/v100100.png` (Setsuna at desk) as the stage
-    *backdrop* where a classroom background is expected. Cause: the main
-    `script.pak` `.bnr` bak cue statement 9 pushes `[1, 1001, 0, 60]` →
-    `stem_candidates(1001, 0)` → `"100100"` — but `bak.pak` has no
-    `b100100.tga`; only `IC/bak.pak` has `b100101.tga`. Hypothesis: IC
-    chapters load art from `IC/bak.pak` paired with `IC/script.pak`'s own
-    `.bnr` (which likely cues `[1,1001,1,60]` → 100101). The asset
-    resolver's b→v→tv fall-through then picks the CG `v100100.tga`, so
-    CGs leak through as backdrops. Decode `IC/script.pak`'s bnr and
-    prefer IC-pak stems for IC scripts (or gate the v-fall-through for
-    bak cues).
-16. **bak-cue resolver fall-through (TODO)**: `stem_candidates` order
-    b→v→tv is right for missing-file tolerance but wrong when the b-stem
-    exists only as a different-layer asset: a missing `bNNNNNN.tga`
-    silently shows the identically-numbered CG as backdrop. Consider
-    per-layer manifest checks instead of stem-suffix probing.
+15. **IC-chapter backdrop mismatch — ROOT-CAUSED (2026-10-08), fix staged**:
+    the "CG shown as backdrop" (e.g. 1002 ev 0 `100100` → CG v100100) was
+    two port bugs, not an IC-pak mystery: (a) ops (4,146) and (4,147)
+    decode identically but the engine builds `B%04d%1d%1d.tga` for 146
+    (backdrop) and `v%06d.tga` for 147 (full-screen CG event visual) —
+    the handlers differ by exactly one mode push to primitive 0x4167e0
+    (.rdata 0x4a2a00 / 0x4a2a1c). decode_bnr.py now emits 147 as grp.
+    (b) the port's b→v→tv stem fall-through let missing backdrops leak
+    CGs; the engine's failed image load keeps the previous backdrop.
+    Reader resolvers now resolve bak stems b-only, grp stems v-only, and
+    apply same-event cues in statement order (last statement wins —
+    1002's ev-0 cue 100400 classroom correctly supersedes 100100).
+    **Deployment note**: the corrected decode (147→grp, CGs as
+    full-screen overlays) lands in web data only with the JP-spine IR
+    rewiring — the currently deployed bnr.json uses older fractional
+    coordinates that no longer reproduce from HEAD tools, so it ships
+    unchanged; the resolver fix alone already kills the CG leak against
+    it (147-cued stems with both b and v files still show the b-variant
+    as backdrop until then).
+16. **bak-cue resolver fall-through — RESOLVED (2026-10-08)**: replaced by
+    the engine-proven per-layer prefixes above; see item 15.
 
 ## Subagent verification log
 
+- 2026-10-08 (static RE: image-op layer split, user-reported backdrop bug):
+  - **Ops (4,146)/(4,147) separated by disassembly**: handlers 0x454f30
+    (146) and 0x454fc0 (147) are byte-identical except one push — 146
+    passes mode 0, 147 passes mode 1, to image primitive 0x4167e0, which
+    selects the filename format: mode 0 → `B%04d%1d%1d.tga` (.rdata
+    0x4a2a00, backdrop), mode 1 → `v%06d.tga` (0x4a2a1c, event visual);
+    op 148 (0x455050) also passes mode 1 (0x455122/0x45515a). So 147 was
+    mis-decoded as bak: CGs (v-files) leaked through the b→v→tv stem
+    fall-through as stage backdrops, with sprites drawn over them —
+    exactly the user's "sprites over CGs" report. decode_bnr.py now
+    emits 147 as grp; reader resolvers resolve bak stems b-only, grp
+    stems v-only, and apply same-event cues in statement order (last
+    wins — engine executes statements sequentially).
+  - Dispatcher: VM handler table at .data 0x4c2610, entry i → op 128+i
+    (sprite ops 154/155 = entries 26/27 = 0x4553f0/0x455590 ✓ matches
+    prior evidence; 146/147/148 = entries 18/19/20).
+  - Census corpus-wide (en.pak .bnr): 146 stems hit b 1708 / v 135 /
+    missing 132; 147 hit b 911 (both-prefix cases) / v 121 / missing 64;
+    148 hit v 185 / b 160 / missing 2 — consistent with per-op prefixes.
+  - **Deployment**: rebuilt bnr.json (spine + fractional) does NOT
+    reproduce the deployed file's event coordinates (deployed data was
+    built by an older toolchain state); shipping data unchanged until the
+    JP-spine IR rewiring (Open item on pipeline wiring). The resolver fix
+    alone eliminates CG-as-backdrop against the deployed data.
 - 2026-10-07 (input/skip + stage fixes, headless Chromium against vite):
   - **Ctrl-skip root cause**: `startTypewriter`'s `tick` completion branch
     set `typeTimer = null` without `clearInterval` — the 30 ms interval

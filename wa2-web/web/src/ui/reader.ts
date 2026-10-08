@@ -507,7 +507,11 @@ function stageImageState(save: SaveData): StageImageState {
  * Timeline = txt image events (exact indices) + .bnr bak records
  * (fractional indices). Latest resolvable cue at/before `event` wins;
  * a clear is a barrier (stage wiped — nothing older shows). Unresolvable
- * cues (assets not installed) fall through to older backdrops.
+ * cues (assets not installed) fall through to older backdrops — that is
+ * engine-true: op (4,146) builds "B%04d%1d%1d.tga" (mode 0 in primitive
+ * 0x4167e0, exe .rdata 0x4a2a00), so a missing b*-file leaves the
+ * previous backdrop standing. Same-event cues apply in statement order:
+ * the LAST statement at an event wins (handlers run sequentially).
  * resolveStageImageEx additionally reports WHY the stage is empty:
  * cleared (engine clear-to-black) vs missing (asset not installed). */
 export type StageImageState = {
@@ -523,18 +527,21 @@ export function resolveStageImageEx(
   event: number,
   chapter: string,
 ): StageImageState {
-  type Cue = { ev: number; file?: string; stems?: string[]; clear?: boolean };
+  type Cue = { ev: number; file?: string; stems?: string[]; clear?: boolean; rank: number; seq: number };
   const cues: Cue[] = [];
+  let seq = 0;
   for (const { e, i } of txt) {
-    if (e.t === "image") cues.push({ ev: i, file: e.file });
+    if (e.t === "image") cues.push({ ev: i, file: e.file, rank: 0, seq: seq++ });
   }
   for (const r of bnr ?? []) {
     if (r.conf !== "high" || r.ev > event) continue;
     if (r.layer !== "bak") continue;
-    if (r.clear) cues.push({ ev: r.ev, clear: true });
-    else if (r.stems?.length) cues.push({ ev: r.ev, stems: r.stems });
+    if (r.clear) cues.push({ ev: r.ev, clear: true, rank: 1, seq: seq++ });
+    else if (r.stems?.length) cues.push({ ev: r.ev, stems: r.stems, rank: 1, seq: seq++ });
   }
-  cues.sort((a, b) => b.ev - a.ev);
+  // Newest ev first; same-event bnr cues in reverse statement order (last
+  // statement wins); txt events keep priority over bnr at the same event.
+  cues.sort((a, b) => b.ev - a.ev || a.rank - b.rank || b.seq - a.seq);
   let missingFile: string | undefined;
   for (const c of cues) {
     if (c.ev > event) continue;
@@ -544,13 +551,13 @@ export function resolveStageImageEx(
       if (url) return { url, cleared: false };
       missingFile = c.file;
     } else if (c.stems) {
-      // Bare stems: bx = backdrop, vx = event visual, tvx = TV frame.
-      // Backdrops prefer b*, overlays (below) prefer v*/tv*.
+      // Backdrop stems resolve to b* files ONLY: op (4,146) passes mode 0
+      // to primitive 0x4167e0 which builds "B%04d%1d%1d.tga" (0x4a2a00).
+      // No cross-prefix fall-through — the engine never loads a v* CG
+      // here (that is op (4,147), decoded into the grp layer).
       for (const stem of c.stems) {
-        for (const cand of [`b${stem}.tga`, `v${stem}.tga`, `tv${stem}.tga`]) {
-          const url = imageUrl(cand, chapter);
-          if (url) return { url, cleared: false };
-        }
+        const url = imageUrl(`b${stem}.tga`, chapter);
+        if (url) return { url, cleared: false };
       }
       missingFile = `b${c.stems[0]}.tga`;
     }
@@ -585,28 +592,34 @@ export function resolveStageOverlay(
   event: number,
   chapter: string,
 ): string | null {
-  type Cue = { ev: number; file?: string; stems?: string[]; reset?: boolean };
+  type Cue = { ev: number; file?: string; stems?: string[]; reset?: boolean; rank: number; seq: number };
   const cues: Cue[] = [];
+  let seq = 0;
   for (const { e, i } of txt) {
     if (e.t !== "image") continue;
-    if (e.layer === "bak") cues.push({ ev: i, reset: true });
-    else if (e.layer === "grp") cues.push({ ev: i, file: e.file });
+    if (e.layer === "bak") cues.push({ ev: i, reset: true, rank: 0, seq: seq++ });
+    else if (e.layer === "grp") cues.push({ ev: i, file: e.file, rank: 0, seq: seq++ });
   }
   for (const r of bnr ?? []) {
     if (r.conf !== "high" || r.ev > event) continue;
-    if (r.layer === "bak") cues.push({ ev: r.ev, reset: true });
+    if (r.layer === "bak") cues.push({ ev: r.ev, reset: true, rank: 1, seq: seq++ });
     else if (r.layer === "grp") {
-      if (r.clear) cues.push({ ev: r.ev, reset: true });
-      else if (r.stems?.length) cues.push({ ev: r.ev, stems: r.stems });
+      if (r.clear) cues.push({ ev: r.ev, reset: true, rank: 1, seq: seq++ });
+      else if (r.stems?.length) cues.push({ ev: r.ev, stems: r.stems, rank: 1, seq: seq++ });
     }
   }
-  cues.sort((a, b) => b.ev - a.ev);
+  // Same ordering as the backdrop resolver (newest ev; last statement
+  // wins within an event; txt keeps priority over bnr at one event).
+  cues.sort((a, b) => b.ev - a.ev || a.rank - b.rank || b.seq - a.seq);
   for (const c of cues) {
     if (c.ev > event) continue;
     if (c.reset) return null;
     const files = c.file
       ? [c.file]
-      : (c.stems ?? []).flatMap((s) => [`v${s}.tga`, `tv${s}.tga`, `b${s}.tga`]);
+      // Overlay stems: ops (4,147)/(4,148) pass mode 1 to primitive
+      // 0x4167e0 -> "v%06d.tga" (0x4a2a1c). No b* fall-through — the
+      // engine never loads a backdrop file into the overlay layer.
+      : (c.stems ?? []).flatMap((s) => [`v${s}.tga`, `tv${s}.tga`]);
     for (const f of files) {
       const url = imageUrl(f, chapter);
       if (url) return url;
