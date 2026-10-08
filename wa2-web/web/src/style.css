@@ -132,7 +132,8 @@ code { font-size: 0.85em; }
 .movie { width: 100%; margin-top: 0.6rem; }
 
 .screen { padding: 1rem; }
-.screen-head h2 { margin-bottom: 0.2rem; }
+.screen-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.4rem; }
+.screen-head h2 { margin-bottom: 0; }
 .chart, .endings, .rec, .slots, .log { list-style: none; padding: 0; }
 .node, .ending, .slots li, .log li {
   background: var(--panel);

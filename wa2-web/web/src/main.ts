@@ -121,6 +121,13 @@ async function boot(): Promise<void> {
   // starts/stops the reader's 120 ms advance loop WITHOUT re-rendering
   // (a re-render restarted the typewriter mid-line = the flicker bug).
   window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && screen !== "title" && screen !== "read") {
+      // Esc leaves any overlay screen (log/chart/guide/saves/settings)
+      // back to the reader.
+      screen = "read";
+      render();
+      return;
+    }
     if (screen !== "read") return;
     if (e.key === "Control" && !skipState.active) setSkipping(true);
     if (e.code === "Enter" && !e.repeat) {
@@ -299,11 +306,12 @@ function render(): void {
     return;
   }
   if (screen === "log") {
-    app.innerHTML = `<div class="screen"><div class="screen-head"><h2>Backlog</h2></div>
+    app.innerHTML = `<div class="screen"><div class="screen-head"><h2>Backlog</h2><button class="back" id="back-top">← Back</button></div>
       <ol class="log">${save.log.map((l) =>
         `<li>${l.speaker ? `<b>${escapeHtml(l.speaker)}</b> ` : ""}${escapeHtml(l.text)}</li>`).join("")}
       </ol><button class="back" id="back">← Back</button></div>`;
     app.querySelector("#back")?.addEventListener("click", () => { screen = "read"; render(); });
+    app.querySelector("#back-top")?.addEventListener("click", () => { screen = "read"; render(); });
     return;
   }
   if (screen === "settings") {
