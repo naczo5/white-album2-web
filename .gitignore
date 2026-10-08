@@ -39,3 +39,7 @@ __pycache__/
 .vscode/
 .idea/
 /wa2-web/web/public/assets/
+
+# Ghidra (static analysis tooling, never commit)
+ghidra_*.zip
+ghidra_*/
