@@ -63,25 +63,39 @@ def anchor_stmts(payload, next_ev: list[int]) -> list[int]:
     corpus label forms (21577 + 15288 occurrences). The (131,131) double
     form (941x) syncs an EN tail-overflow fragment right after its source
     line; the FIRST (3,X) is the display line. Statements before the
-    first label anchor to event 0.
+    first label anchor to event 0; statements after the LAST label
+    anchor to that last label's event (they execute at/after the final
+    labeled line in stream order — anchoring them to 0 made event numbers
+    non-monotonic and let a trailing sprClear/bak wipe scenes corpus-wide,
+    e.g. 1004 showed no sprites at any event).
     """
     stmts = list(iter_statements(payload))
     n = len(stmts)
-    anchors: list[int] = [0] * n
+    anchors: list[int | None] = [None] * n
     carry: int | None = None
+    last_label_i: int | None = None
     for i in range(n - 1, -1, -1):
         ops = stmts[i][3]
         xs = [a for o, a in ops if o == 3]
         if xs and any(a in _LABEL_OPS for o, a in ops if o == 4):
             x = xs[0]
+            if last_label_i is None:
+                last_label_i = i
             if x < 0:
                 carry = 0
             elif x < len(next_ev):
                 carry = next_ev[x]
             else:
                 carry = next_ev[-1] if next_ev else 0
-        anchors[i] = carry if carry is not None else 0
-    return anchors
+        anchors[i] = carry
+    if last_label_i is None:
+        return [0] * n
+    tail_ev = anchors[last_label_i]
+    return [
+        a if a is not None
+        else (tail_ev if i > last_label_i else 0)
+        for i, a in enumerate(anchors)
+    ]
 
 
 def has_sync(payload) -> bool:

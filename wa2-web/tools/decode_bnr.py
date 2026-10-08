@@ -90,6 +90,7 @@ def decode_script(data: bytes, script: str) -> list[dict]:
     m = len(events)
     recs: list[dict] = []
     n = 0
+    last_ev = 0
     for idx, _off, _pushes, _ops, _raw, _floats in iter_statements(payload):
         n = idx + 1
     # SE plays (opcode (4,164), conf high) mapped like BGM.
@@ -101,6 +102,13 @@ def decode_script(data: bytes, script: str) -> list[dict]:
         else:
             frac = idx / max(1, n)
             ev = min(m - 1, int(frac * m)) if m else 0
+        # Stream order => event order (engine invariant: statements execute
+        # sequentially and event numbers are assigned in order). Clamp so a
+        # mis-anchored statement can never retroactively wipe sprites or
+        # swap the backdrop at an earlier event.
+        if ev < last_ev:
+            ev = last_ev
+        last_ev = ev
         s = [s32(x) for x in pushes]
         if idx in se_by_stmt:
             recs.append({"ev": ev, "se": [se_by_stmt[idx]],

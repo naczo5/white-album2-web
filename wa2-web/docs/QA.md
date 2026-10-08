@@ -356,3 +356,44 @@ story. Root cause proven at the data level, not the renderer:
   1002 train/photo scenes, 2013 classroom choice, 3904 coda choice
   (EN options + walkthrough date) all coherent; backdrop/sprite/audio
   staging from the same decoded timeline (was: fractional mismatch).
+
+### 2026-10-08 — browser selection, grp-CG z-order, tail-anchor ev clamp, dev scene-jump
+
+User reports (screenshots): (1) spam-clicking selected page elements
+(blue highlight) — native browser text/image selection, not an engine
+effect; (2) a standing sprite rendered on top of a full-screen grp CG;
+(3) script 1004 showed no sprites at any event; request: dev-mode scene
+jump from the flowchart.
+
+- web/style.css: `user-select: none` on `*` — click-to-advance must never
+  drag-select the page (engine windows aren't selectable either).
+- web/style.css `.stage-ov { z-index: 20 }`: sprites carry inline
+  `z-index: 10+i` (slot order); without an explicit overlay z-index the
+  sprites painted ABOVE the grp CG regardless of DOM order. Engine draws
+  event visuals over the sprite scene. Verified headless at 1013:333:
+  overlay v100100 covers the kaz sprite (z 10).
+- tools/bnr_anchor.py `anchor_stmts`: statements after the LAST label
+  carried `carry = None → 0`, pinning trailing terminator statements
+  (bak 990000 + sprClear) to ev 0 at the END of the rec list —
+  non-monotonic evs. resolveSprites applies recs in list order, so the
+  tail sprClear wiped sprites at EVERY event (1004: 0 sprites at all
+  evs; 103 scripts affected). Tail statements now anchor to the last
+  label's event (stream order ⇒ event order, monotonic).
+- tools/decode_bnr.py: belt-and-braces monotonic ev clamp after anchor
+  assignment.
+- web/ui/reader.ts `resolveSprites`: stable ev sort before applying —
+  list position can no longer reorder time for any unsorted input.
+- Deployed `web/public/data/bnr.json` patched with the same clamp
+  (119 recs across 103 scripts; rebuild not bit-reproducible from HEAD
+  toolchain — data/flow.json pairing drift is the pending re-anchor/
+  rewire work). 1004 now resolves sprites at every ev (50: tak001109,
+  300: kaz001205).
+- web/main.ts + ui/flowchart.ts: `dev` setting (localStorage
+  `wa2web.dev`); when on, the flowchart node detail panel shows
+  "▶ Jump to <script>" → fresh save at script ev 0 (debug origin).
+- Gates: pytest 43, tsc clean, vitest 62, check_bnr_choices 34/34.
+  check_flow/simulate currently fail with a PRE-EXISTING IR↔flow.json
+  choice-coordinate drift (off-by-one, 58 errors; both inputs untouched
+  by this diff — bnr.json is not a gate input) — queued for the
+  re-anchor/rewire todos. Playwright: selection suppressed, 1004 sprites
+  render, dev jump lands in reader at 1004, overlay covers sprites.

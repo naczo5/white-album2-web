@@ -968,7 +968,11 @@ export function resolveSprites(
   event: number,
 ): { id: number; stem: string; pos: number | null }[] {
   const active = new Map<number, { stem: string; pos: number | null }>();
-  for (const r of recs ?? []) {
+  // Event numbers are non-decreasing in statement order (engine invariant,
+  // enforced by decode_bnr's stream clamp); stable-sort guards against any
+  // out-of-order input so a late-listed sprClear can't wipe every scene.
+  const ordered = [...(recs ?? [])].sort((a, b) => a.ev - b.ev);
+  for (const r of ordered) {
     if (r.conf !== "high" || r.ev > event) continue;
     if (r.sprClear) active.clear();
     if (r.spr) active.set(r.spr.id, { stem: r.spr.stem, pos: r.spr.pos ?? null });

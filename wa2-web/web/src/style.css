@@ -8,7 +8,7 @@
   --whisper: #b9c7e4;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
 body {
   margin: 0;
   background: var(--bg);
@@ -80,6 +80,10 @@ code { font-size: 0.85em; }
   height: 100%;
   object-fit: contain;
   pointer-events: none;
+  /* grp CG layer sits above the standing-sprite layer (z 10+i) — engine
+   * draws event visuals over the sprite scene; DOM order alone loses to
+   * the sprites' explicit z-index. */
+  z-index: 20;
 }
 /* Standing sprites: char-id keyed slot records (exe 0x4160e0); art is
  * exactly stage-height (720px) and bottom-anchored; x from engine table. */

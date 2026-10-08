@@ -138,6 +138,9 @@ export interface FlowHooks {
   links: LinkSite[];
   terminals: TerminalsData["terminals"];
   spoiler: boolean;
+  /** Dev mode: show a scene-jump button in the node detail panel. */
+  dev?: boolean;
+  onJump?(script: string): void;
   onBack(): void;
 }
 
@@ -246,7 +249,11 @@ function showDetail(box: HTMLElement, script: string, h: FlowHooks, g: ChartGrap
     for (const e of outs) parts.push(`<div class="opt dim">→ ${e.to}${e.kind !== "link" ? ` (${e.kind})` : ""}</div>`);
   }
   if (!nodes.length && !outs.length && !term) parts.push(`<div class="dim note">No decoded choices or links.</div>`);
+  if (h.dev && h.onJump) {
+    parts.push(`<button class="choice-btn" id="fc-jump">▶ Jump to <code>${script}</code></button>`);
+  }
   box.innerHTML = parts.join("");
+  box.querySelector("#fc-jump")?.addEventListener("click", () => h.onJump!(script));
   box.classList.remove("dim");
 }
 

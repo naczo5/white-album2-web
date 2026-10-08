@@ -54,6 +54,20 @@ describe("sprite timeline (bnr (4,154)/(4,155) shows + (4,156)/(4,157) hides)", 
     ];
     expect(resolveSprites(rs2, 5)).toEqual([{ id: 2, stem: "set001210", pos: 2 }]);
   });
+  it("an out-of-order (late-listed) sprClear is applied at its event, not list position", () => {
+    // decode regression: tail statements were anchored to ev 0 at the END of
+    // the rec list, wiping sprites at every event (1004 showed none). The
+    // resolver stable-sorts by ev so list position can't reorder time.
+    const rs: BnrRec[] = [
+      { ev: 0, spr: { id: 10, stem: "tak001111", pos: 0 }, conf: "high" },
+      { ev: 6, spr: { id: 2, stem: "set001113", pos: 2 }, conf: "high" },
+      // buggy decode shape: tail statement anchored to ev 0, listed at the end
+      { ev: 0, layer: "bak", stems: ["990000"], sprClear: true, conf: "high" },
+      { ev: 0, fadeMs: 180, conf: "high" },
+    ];
+    expect(resolveSprites(rs, 6)).toEqual([{ id: 2, stem: "set001113", pos: 2 }]);
+    expect(resolveSprites(rs, 540)).toEqual([{ id: 2, stem: "set001113", pos: 2 }]);
+  });
 });
 
 describe("sprite screen positions (exe 0x4be0bc table)", () => {

@@ -55,8 +55,10 @@ def test_anchor_stmts_label_pairs_records_to_line_event():
     anchors = anchor_stmts(payload, m)
     # records before the label ride the label's event (say at tok 2)
     assert anchors[:3] == [2, 2, 2]
-    # the record after the last label has no following sync -> default 0
-    assert anchors[3] == 0
+    # the record after the last label executes at/after it -> rides the
+    # last label's event (NOT 0: a 0 tail made evs non-monotonic and let
+    # trailing sprClear/bak statements wipe scenes corpus-wide)
+    assert anchors[3] == 2
 
 
 def test_anchor_stmts_before_first_label_is_zero():
@@ -81,8 +83,9 @@ def test_anchor_stmts_label_144_and_double_131_form():
     anchors = anchor_stmts(payload, m)
     assert anchors[0] == 1
     assert anchors[1] == 2
-    # trailing record after the last label -> no sync, default 0
-    assert anchors[2] == 0
+    # trailing record after the last label rides the last label's event
+    # (monotonic stream order; never 0)
+    assert anchors[2] == 2
 
 
 def test_anchor_stmts_out_of_range_x_clamps():

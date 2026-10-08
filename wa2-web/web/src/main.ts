@@ -19,6 +19,7 @@ interface Settings {
   voiceVol: number; // 0..1
   bgmVol: number; // 0..1
   skipRead: boolean; // true: Ctrl skips only already-read lines
+  dev: boolean; // dev mode: scene-jump buttons in the flowchart
 }
 
 const settings: Settings = {
@@ -29,6 +30,7 @@ const settings: Settings = {
   voiceVol: Number(localStorage.getItem("wa2web.voiceVol") ?? 0.9),
   bgmVol: Number(localStorage.getItem("wa2web.bgmVol") ?? 0.7),
   skipRead: localStorage.getItem("wa2web.skipRead") === "1",
+  dev: localStorage.getItem("wa2web.dev") === "1",
 };
 
 let skipState = { active: false };
@@ -41,6 +43,7 @@ function persistSettings(): void {
   localStorage.setItem("wa2web.voiceVol", String(settings.voiceVol));
   localStorage.setItem("wa2web.bgmVol", String(settings.bgmVol));
   localStorage.setItem("wa2web.skipRead", settings.skipRead ? "1" : "0");
+  localStorage.setItem("wa2web.dev", settings.dev ? "1" : "0");
 }
 
 function clampFont(n: number): number {
@@ -238,6 +241,13 @@ function render(): void {
       spine: router.spine,
       links: data.links.links,
       terminals: data.terminals.terminals,
+      dev: settings.dev,
+      onJump: (script) => {
+        save = newSave("debug", { script, event: 0 });
+        writeAutosave(localStorage, save);
+        screen = "read";
+        render();
+      },
       onBack: () => { screen = "read"; render(); },
     });
     return;
@@ -317,6 +327,7 @@ function render(): void {
   if (screen === "settings") {
     app.innerHTML = `<div class="screen"><div class="screen-head"><h2>Settings</h2></div>
       <label><input type="checkbox" id="sp" ${settings.spoiler ? "checked" : ""}> Spoilers in flowchart/guide (show unvisited options)</label>
+      <div><label><input type="checkbox" id="dv" ${settings.dev ? "checked" : ""}> Dev mode (scene-jump buttons in the flowchart)</label></div>
       <div><label><input type="checkbox" id="sr" ${settings.skipRead ? "checked" : ""}> Ctrl skips only already-read text (off = skip everything)</label></div>
       <div><label>Text size <input type="range" id="fs" min="14" max="26" value="${settings.fontSize}"></label></div>
       <div><label>Text speed <input type="range" id="ts" min="0" max="120" step="5" value="${settings.textSpeed}"> <span class="dim">${settings.textSpeed === 0 ? "instant" : settings.textSpeed + "/s"}</span></label></div>
@@ -328,6 +339,11 @@ function render(): void {
     sp.onchange = () => {
       settings.spoiler = sp.checked;
       localStorage.setItem("wa2web.spoiler", sp.checked ? "1" : "0");
+    };
+    const dv = app.querySelector("#dv") as HTMLInputElement;
+    dv.onchange = () => {
+      settings.dev = dv.checked;
+      persistSettings();
     };
     const sr = app.querySelector("#sr") as HTMLInputElement;
     sr.onchange = () => {
