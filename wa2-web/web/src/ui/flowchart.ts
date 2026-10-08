@@ -24,8 +24,10 @@ const GAP_X = 46;
 const GAP_Y = 14;
 const ROOT = "1002";
 
-/** Build the route graph: reachable scripts from the IC root via decoded
- * links + terminal chains; spine edges fill scripts with no decoded exit. */
+/** Build the route graph: reachable scripts from the IC root. Branch
+ * structure comes from decoded links + terminal chains; spine successors
+ * carry the linear chapter flow (and cross into the next chapter at the
+ * chapter seam, where spine.next is null and a chain/link takes over). */
 export function buildChartGraph(
   scripts: string[],
   spine: Spine,
@@ -49,37 +51,28 @@ export function buildChartGraph(
     if (nxt) add(sc, nxt, "spine");
   }
 
-  // BFS from the root over link/chain edges only (spine edges are fillers
-  // that would pull every same-chapter script into depth order, wrong for
-  // branch columns — but scripts reached ONLY via spine still belong).
+  // Reachability closure: one worklist over link/chain edges AND spine
+  // successors. A single spine-fill pass is not enough — scripts reached
+  // late (e.g. 2001 via 1013's cross-chapter link) must still propagate
+  // their spine successors (2002 -> 2003 -> ...), or whole chapters drop
+  // out of the chart. Branch depth: every edge gives child = parent + 1;
+  // link edges run before the spine successor so decoded branches win.
   const depth: Record<string, number> = { [ROOT]: 0 };
   const queue = [ROOT];
   const reached = new Set([ROOT]);
   while (queue.length) {
     const cur = queue.shift()!;
     for (const e of out.get(cur) ?? []) {
-      if (e.kind === "spine") continue;
       if (reached.has(e.to)) continue;
       reached.add(e.to);
       depth[e.to] = depth[cur]! + 1;
       queue.push(e.to);
     }
-  }
-  // Spine-only scripts: attach at the depth that makes their incoming
-  // spine edge drawable (parent depth + 1 if parent known, else skip).
-  for (const [sc, nxt] of Object.entries(spine.next)) {
-    if (!nxt || reached.has(nxt) || !reached.has(sc)) continue;
-    reached.add(nxt);
-    depth[nxt] = (depth[sc] ?? 0) + 1;
-  }
-  // terminals-only targets missed above (chain treated as link already).
-  for (const l of links) {
-    if (!reached.has(l.engine.script)) continue;
-    for (const t of l.targets) {
-      if (!reached.has(t)) {
-        reached.add(t);
-        depth[t] = (depth[l.engine.script] ?? 0) + 1;
-      }
+    const sp = spine.next[cur];
+    if (sp && !reached.has(sp)) {
+      reached.add(sp);
+      depth[sp] = depth[cur]! + 1;
+      queue.push(sp);
     }
   }
 
@@ -93,7 +86,7 @@ export function buildChartGraph(
     }
   }
 
-  // Columns: group by depth; order within column by first-parent barycenter.
+  // Rows: group by depth; order within row by first-parent barycenter.
   const cols = new Map<number, string[]>();
   for (const n of nodes) {
     const d = depth[n.id] ?? 0;
@@ -114,20 +107,23 @@ export function buildChartGraph(
     });
     col.forEach((id, i) => colIndex.set(id, i));
   }
+  // Vertical flow: depth -> row (the route is a long linear chain — a
+  // horizontal strip would be tens of thousands of px wide); branch
+  // siblings spread across the row horizontally.
   const pos: ChartGraph["pos"] = {};
-  let height = 0;
+  let width = 0;
   for (const d of orderedDepths) {
     const col = cols.get(d)!;
     col.forEach((id, i) => {
-      pos[id] = { x: d * (NODE_W + GAP_X), y: i * (NODE_H + GAP_Y) };
+      pos[id] = { x: i * (NODE_W + GAP_X), y: d * (NODE_H + GAP_Y) };
     });
-    height = Math.max(height, col.length * (NODE_H + GAP_Y) - GAP_Y);
+    width = Math.max(width, col.length * (NODE_W + GAP_X) - GAP_X);
   }
   const maxDepth = orderedDepths[orderedDepths.length - 1] ?? 0;
   return {
     nodes, edges, depth, pos,
-    width: (maxDepth + 1) * (NODE_W + GAP_X) - GAP_X,
-    height,
+    width,
+    height: (maxDepth + 1) * (NODE_H + GAP_Y) - GAP_Y,
   };
 }
 
@@ -161,11 +157,11 @@ export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
     const a = g.pos[e.from];
     const b = g.pos[e.to];
     if (!a || !b) return "";
-    const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2;
-    const x2 = b.x, y2 = b.y + NODE_H / 2;
+    const x1 = a.x + NODE_W / 2, y1 = a.y + NODE_H;
+    const x2 = b.x + NODE_W / 2, y2 = b.y;
     const lit = visited.has(e.to) && visited.has(e.from);
-    const mx = (x1 + x2) / 2;
-    const d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+    const my = (y1 + y2) / 2;
+    const d = `M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`;
     return `<path d="${d}" fill="none" stroke="${lit ? "var(--accent)" : "#26334a"}"
       stroke-width="${lit ? 2 : 1}" opacity="${lit ? 0.8 : 0.7}" ${
       e.kind === "chain" ? 'stroke-dasharray="4 3"' : ""

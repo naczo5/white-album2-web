@@ -397,3 +397,31 @@ jump from the flowchart.
   by this diff — bnr.json is not a gate input) — queued for the
   re-anchor/rewire todos. Playwright: selection suppressed, 1004 sprites
   render, dev jump lands in reader at 1004, overlay covers sprites.
+
+### 2026-10-08 — flowchart showed only 2 closing-chapter nodes (reachability + layout)
+
+User report: "why is there only 2 closing chapter nodes in the
+flowchart?" Chart had 20 nodes: intro web + 2001 + 2002, then nothing.
+
+Root causes, two compounding:
+1. `buildChartGraph` ran the spine-fill as a SINGLE pass after the
+   link-only BFS. 2001 is reached late (via 1013's cross-chapter link,
+   processed after the fill), so 2001→2002 (link) got added by the
+   trailing loop but 2002's spine successor (2003) never propagated —
+   the whole closing/coda chapters dropped out.
+2. Deployed `web/public/data/links.json` is stale (74 sites vs 134
+   authored in `data/links.json` — missing most closing/coda branch
+   edges; the data rebuild is the pending re-anchor/rewire work).
+
+Fixes (web/ui/flowchart.ts):
+- Reachability is now a proper closure: one worklist over link/chain
+  edges AND spine successors. Chapter seams work because spine.next is
+  null there by design and a link/chain takes over (1013→2001 chain,
+  2033→3001 chain).
+- Layout transposed to vertical flow (depth = row, branch siblings =
+  columns): the full route is a ~4700px-tall scrollable chart; the old
+  horizontal strip would be ~17000px wide with 160 nodes. Edge beziers
+  rotated to match. Chart now renders 160 nodes: intro + all of closing
+  (2001-2517 + 23xx/24xx routes) + coda (3001-3211, 3901-3909).
+- flowgraph.test.ts axes updated (branch siblings share a row, not a
+  column). Gates: tsc clean, vitest 62.

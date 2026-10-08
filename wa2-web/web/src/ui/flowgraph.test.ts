@@ -21,9 +21,9 @@ describe("buildChartGraph", () => {
     expect(g.depth["1003"]).toBe(1);
     expect(g.depth["1004"]).toBe(2);
     expect(g.depth["2001"]).toBe(2);
-    // branch siblings share a column but never overlap
-    expect(g.pos["1004"]!.x).toBe(g.pos["2001"]!.x);
-    expect(g.pos["1004"]!.y).not.toBe(g.pos["2001"]!.y);
+    // branch siblings share a row but never overlap
+    expect(g.pos["1004"]!.y).toBe(g.pos["2001"]!.y);
+    expect(g.pos["1004"]!.x).not.toBe(g.pos["2001"]!.x);
   });
 
   it("spine edges fill gaps left by decoded links (no duplicates)", () => {
@@ -46,14 +46,14 @@ describe("buildChartGraph", () => {
     expect(g.nodes.length).toBe(2);
   });
 
-  it("layout boxes never overlap within a column", () => {
+  it("layout boxes never overlap within a row", () => {
     const many = ["1002", "1003", "1004", "2001", "2002", "2003"];
     const sp = buildSpine(many);
     const g = buildChartGraph(many, sp, [link("1003", ["1004", "2001", "2002", "2003"])], {});
-    const col = Object.entries(g.pos).filter(([, p]) => p.x === g.pos["1004"]!.x);
-    const ys = col.map(([, p]) => p.y);
-    expect(new Set(ys).size).toBe(ys.length);
-    for (const y of ys) expect(y).toBeGreaterThanOrEqual(0);
+    const row = Object.entries(g.pos).filter(([, p]) => p.y === g.pos["1004"]!.y);
+    const xs = row.map(([, p]) => p.x);
+    expect(new Set(xs).size).toBe(xs.length);
+    for (const x of xs) expect(x).toBeGreaterThanOrEqual(0);
     expect(g.width).toBeGreaterThan(NODE_W);
     expect(g.height).toBeGreaterThan(NODE_H);
   });
