@@ -10,11 +10,7 @@ top priority.
 ## Source build
 
 The reference install this port is built and tested against is the
-Extended Edition + tokuten disc image available at:
-<https://archive.org/details/white-album-2-extended-edition-tokuten>
-
-You must supply your own legally-owned copy (BYOA — bring your own
-assets); see `wa2-web/docs/BYOA.md` and `wa2-web/docs/LEGAL.md`.
+Extended Edition + tokuten disc image.
 
 ## Translation
 
