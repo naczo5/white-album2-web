@@ -29,3 +29,9 @@ Experimental. Voices, BGM/SE, backdrops, event art, LUT color grades,
 flowchart/guide/saves work; per-line character sprite identity is still
 undecoded (an explicitly experimental stand-in layer exists). Full gate
 matrix: `wa2-web/docs/QA.md`.
+
+## Hosting
+
+I am currently not able to host it to the public.
+If you are interested in doing it yourself it would be welcome. 
+But if you still want to discuss anything before that, write to me at naczo5@proton.me
