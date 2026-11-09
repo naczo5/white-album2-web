@@ -60,3 +60,21 @@ def test_audio_pass_skips_without_ffmpeg(tmp_path):
     src = tmp_path / "a.wav"
     src.write_bytes(b"RIFF" + b"\x00" * 64)
     assert not optimize_assets.convert_audio(str(src), str(tmp_path / "a.ogg"), 32)
+
+
+def test_audio_one_shot_marker(tmp_path):
+    """Run twice: the second run must skip the previously encoded entry."""
+    import json
+    assets = tmp_path
+    src = assets / "voice" / "a.wav"
+    src.parent.mkdir()
+    src.write_bytes(b"RIFF" + b"\x00" * 32)
+    (assets / "manifest.json").write_text(json.dumps({
+        "version": 1, "images": {}, "bgm": {}, "sfx": {},
+        "voice": {"a_0001": "voice/a.wav"}, "movies": {}}), encoding="utf-8")
+    stats = optimize_assets.optimize(str(assets), 0, 0, 32, 0, 0, True, True)
+    assert stats["changed"] == 0  # dry run only prints
+    # simulate a recorded entry, then verify the pass skips it
+    (assets / ".opus-done.json").write_text(json.dumps(["voice/a_0001"]))
+    stats2 = optimize_assets.optimize(str(assets), 0, 0, 32, 0, 0, True, False)
+    assert stats2["changed"] == 0

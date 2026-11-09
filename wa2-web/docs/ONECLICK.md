@@ -25,12 +25,9 @@ cd wa2-web
 ./play.sh --game-dir /path/to/game
 ```
 
-The current machine can use:
-
-```sh
-./play.sh --game-dir /home/debian/white-album2-web/.cache/game
-# or simply ./play.sh: it uses ../.cache/game when present
-```
+The script also auto-uses `../.cache/game` when it exists (see the README of
+your checkout), so a plain `./play.sh` can be enough after a previous
+`--game-dir` run.
 
 It auto-detects the MAO release under `../.cache/mao_v210` and the manuscript
 clone under `../.cache/upstream/mao-white-album-2`. If they are missing, pass
@@ -97,7 +94,7 @@ still requires `--i-own-the-game`. Verify-only mode never needs network.
 ```
 
 This is the minimum playable package: full scenario/flow/voice-map data, but
-missing art/audio render as placeholders. Data is ~16 MB; zip ~3.2 MB.
+missing art/audio render as placeholders. Data is ~16.4 MB (12.8 MB with --compact-json); zip ~3.0 MB.
 
 ## Configuration file
 

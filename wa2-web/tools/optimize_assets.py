@@ -123,8 +123,16 @@ def optimize(assets: str, webp_quality: int, avif_quality: int,
         if src in img_map:
             manifest["images"][key] = img_map[src]
             changed += 1
-    # audio pass: per-table bitrate (already-compressed voice allowed but
-    # reported as a second generation).
+    # audio pass: per-table bitrate. Running twice would re-encode an
+    # already-Opus `.ogg` (generation loss), so skip entries recorded in
+    # `.opus-done.json` and record successes there.
+    done_path = os.path.join(assets, ".opus-done.json")
+    done_set = set()
+    if os.path.isfile(done_path):
+        try:
+            done_set = set(json.load(open(done_path, encoding="utf-8")))
+        except (OSError, ValueError):
+            done_set = set()
     for table, kbps in (("voice", voice_kbps), ("bgm", bgm_kbps),
                         ("sfx", se_kbps)):
         if kbps <= 0:
@@ -134,6 +142,9 @@ def optimize(assets: str, webp_quality: int, avif_quality: int,
                 continue
             src = os.path.join(assets, rel)
             if not os.path.isfile(src):
+                continue
+            if f"{table}/{key}" in done_set or rel in done_set:
+                after += os.path.getsize(src)
                 continue
             before += os.path.getsize(src)
             dst_rel = os.path.splitext(rel)[0] + ".ogg"
@@ -147,6 +158,7 @@ def optimize(assets: str, webp_quality: int, avif_quality: int,
             if convert_audio(src, out, kbps):
                 manifest[table][key] = dst_rel
                 changed += 1
+                done_set.add(f"{table}/{key}")
                 if same:
                     os.replace(out, dst)
                 after += os.path.getsize(dst)
@@ -157,6 +169,8 @@ def optimize(assets: str, webp_quality: int, avif_quality: int,
     if not dry_run:
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=1)
+        with open(done_path, "w", encoding="utf-8") as f:
+            json.dump(sorted(done_set), f, indent=1)
     return {"changed": changed, "bytesBefore": before, "bytesAfter": after}
 
 

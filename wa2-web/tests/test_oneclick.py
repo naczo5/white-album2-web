@@ -169,11 +169,11 @@ def make_sheet(tmp_path, files):
 
 
 def test_verify_sheet_ok_advisory_and_strict(tmp_path):
+    from types import SimpleNamespace
     sheet = make_sheet(tmp_path, [
         {"name": "disc1.rar", "size": 11, "md5": "5eb63bbbe01eeed093cb22bb8f5acdc3"},
         {"name": "cover.png", "size": 5, "md5": "c410987cdea585256a19e903905182f2"},
     ])
-    from types import SimpleNamespace
     (tmp_path / "disc1.rar").write_bytes(b"hello world")  # md5 41011…
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "cover.png").write_bytes(b"heya!")  # md5 1017…

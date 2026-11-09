@@ -52,6 +52,18 @@ def read_index(data: bytes) -> list[tuple[str, int]]:
     return out
 
 
+def _validate_lac(lac_path: str, entries: list[tuple[str, int]],
+                  pos: int) -> None:
+    """Payloads must fit inside the file back-to-back; names stay in-tree."""
+    total = sum(s for _, s in entries)
+    if pos > os.path.getsize(lac_path):
+        raise ValueError(f"{lac_path}: directory exceeds file size")
+    if pos + total > os.path.getsize(lac_path):
+        raise ValueError(
+            f"{lac_path}: payloads ({total:,}) overrun the file "
+            f"({os.path.getsize(lac_path) - pos:,} bytes available)")
+
+
 def read_index_stream(lac_path: str) -> tuple[list[tuple[str, int]], int]:
     """Read the LAC directory without buffering the whole archive.
 
@@ -80,12 +92,15 @@ def extract_stream(lac_path: str, out_dir: str, chunk: int = 1 << 22
                    ) -> list[tuple[str, int]]:
     """Stream a LAC's payloads to disk in chunks (large archives)."""
     entries, pos = read_index_stream(lac_path)
+    _validate_lac(lac_path, entries, pos)
     os.makedirs(out_dir, exist_ok=True)
     done = []
     with open(lac_path, "rb") as f:
         f.seek(pos)
         for name, size in entries:
-            target = os.path.join(out_dir, *name.split("\\"))
+            parts = name.split("\\")
+            safe = [p for p in parts if p not in ("", ".", "..")] or ["unnamed"]
+            target = os.path.join(out_dir, *safe)
             os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
             left = size
             with open(target, "wb") as fh:

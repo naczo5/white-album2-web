@@ -54,7 +54,7 @@ A: dict = {
         "effects": {1: {"aff": {"setsuna": 1, "koharu": 1}}, 2: {}},
         "note": "Koharu/shop-staff scene. Date mapping approximate.",
         "status": "EXPERT_SOURCED"},
-    ('2016', 'On second thought~ come here.', "I'll come to you now."): {"walk": "cc-c11", "date": "12/20",
+    ("2016", "Just come here.", "I'll come to you now."): {"walk": "cc-c11", "date": "12/20",
         "effects": {1: {"aff": {"setsuna": 1}, "clear": "chiaki"},
                     2: {"aff": {"chiaki": 1}}},
         "gated": {2: "unselectable if chiaki flag OFF"},

@@ -464,6 +464,8 @@ def main() -> None:
         s for s in en_txts
         if s not in jp_scripts and not re.fullmatch(r"\d{4}_\d+", s)
     }
+    # EN paks can carry copies of the engine-internal names too.
+    emit -= ENGINE_INTERNAL
     index: list[str] = []
     tot_man = tot_fb = 0
     for script in sorted(emit):

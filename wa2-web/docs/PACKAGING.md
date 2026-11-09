@@ -122,6 +122,8 @@ Exact ratios vary with source resolution and clip length; the packer's
   needs a usage audit across every route (including variants). Treat it as
   an optional post-pass, not a default: a missing file is worse than a
   large package.
-- **Text-only is the true minimum** and keeps full path parity: run
-  `build.py` without `--game` and skip `extract_assets.py`; missing assets
-  render placeholders. That package is ~5–15 MB.
+- **Text-only is the true minimum**, but `build.py` **without `--game`**
+  emits the legacy EN-only IR (weaker parity: the JP spine, exact .bnr
+  anchors and the JP option joins need `--game`). Text-only *with* `--game`
+  keeps full path parity while missing assets render as placeholders; that
+  package is ~16.4 MB (12.8 compacted, ~3.0 MB zipped).

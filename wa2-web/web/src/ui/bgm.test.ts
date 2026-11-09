@@ -187,7 +187,8 @@ describe("read-only skip gate", () => {
   });
 });
 
-describe("voice resolver (archive-key/NNN map + tok fallback)", () => {  it("prefers the map; null map entry means unvoiced", () => {
+describe("voice resolver (archive-key/NNN map + tok fallback)", () => {
+  it("prefers the map; null map entry means unvoiced", () => {
     expect(resolveVoiceRef(12, 99)).toBe(12);
     expect(resolveVoiceRef(null, 99)).toBeNull();
   });

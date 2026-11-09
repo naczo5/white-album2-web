@@ -113,7 +113,10 @@ def config_args(cfg: dict) -> list[str]:
         out += ["--hashes", ""]
     if cfg.get("strict_hashes"):
         out.append("--strict-hashes")
-    for v in cfg.get("source_dir") or cfg.get("source_dirs") or []:
+    src = cfg.get("source_dirs") or cfg.get("source_dir")
+    if isinstance(src, str):
+        src = [src]
+    for v in src or []:
         out += ["--source-dir", v]
     if cfg.get("download_missing"):
         out.append("--download-missing")
@@ -209,6 +212,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         else ROOT / "build"
     if args.movie_height < 0 or args.port < 1 or args.port > 65535:
         raise SystemExit("bad --movie-height/--port")
+    if args.build_dir in (Path("/"), Path.home(), ROOT, REPO,
+                          Path(os.getcwd()).resolve()):
+        raise SystemExit(
+            f"--build-dir cannot be your project/source root: {args.build_dir} "
+            "(its ir/, data/, assets/ may be wiped by rebuilds).")
     return args
 
 
@@ -318,12 +326,21 @@ def ensure_ffmpeg(args: argparse.Namespace) -> None:
 # Download helpers
 # --------------------------------------------------------------------------
 
-def file_md5(path: Path) -> str:
+_MD5_CACHE: dict[str, str] = {}
+
+
+def file_md5(path: Path, cache: bool = False) -> str:
+    key = str(path.resolve()) if cache else str(path)
+    if cache and key in _MD5_CACHE:
+        return _MD5_CACHE[key]
     h = hashlib.md5()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
-    return h.hexdigest()
+    digest = h.hexdigest()
+    if cache:
+        _MD5_CACHE[key] = digest
+    return digest
 
 
 def download_url(url: str, dest: Path, md5: str | None = None,
@@ -495,8 +512,8 @@ def verify_sheet(args: argparse.Namespace) -> str:
     """Optional: do you have the archive.org copy? (advisory by default).
 
     Loads the repo hash sheet (or --hashes FILE) and looks for matching
-    files among user dirs + --game-dir. Returns "ok:<n>/<m>",
-    "skipped", or "mismatch"; --strict-hashes makes mismatch fatal.
+    files among user dirs + --game-dir. Fresh archiving/corrupt variants
+    stay advisory unless --strict-hashes is set; --verify-only is API-free.
     """
     if not args.hashes:
         return "skipped"
@@ -514,11 +531,12 @@ def verify_sheet(args: argparse.Namespace) -> str:
         md5 = (e.get("md5") or "")
         if not md5 or not size:
             continue  # hash sheets carry only MD5-able entries
-        hit = find_local_match(name, size, md5, roots) if roots else None
+        hit, got0 = (find_local_match(name, size, md5, roots)
+                     if roots else (None, None))
         if hit is None:
             missing += 1
             continue
-        if verify_entry(hit, size, md5) == "OK":
+        if verify_entry(hit, size, md5, got0) == "OK":
             ok += 1
         else:
             mismatch += 1
@@ -570,6 +588,9 @@ def extract_7z(path: Path, dest: Path) -> bool:
     if shutil.which("bsdtar"):
         dest.mkdir(parents=True, exist_ok=True)
         run(["bsdtar", "-xf", str(path), "-C", str(dest)])
+        return True
+    if shutil.which("unrar"):
+        run(["unrar", "x", "-o+", str(path), str(dest) + os.sep])
         return True
     if path.suffix.lower() == ".7z" and have_module("py7zr"):
         import py7zr  # type: ignore
@@ -654,6 +675,22 @@ CANON_GAME = {
 }
 
 
+def normalize_game_tree(root: Path) -> None:
+    """Case-normalize a user-owned game tree via symlinks (no renames)."""
+    for d in [p for p in root.rglob("*") if p.is_dir()
+              and p.name.lower() == "ic" and p.name != "IC"]:
+        target = d.with_name("IC")
+        if not target.exists():
+            os.symlink(d.resolve(), target, target_is_directory=True)
+    for p in [p for p in root.rglob("*")
+              if p.is_file() and p.name != p.name.lower()]:
+        canon = CANON_GAME.get(p.name.lower())
+        if p.name.lower() == "mv" + p.name[2:].lower():
+            canon = p.name.lower()
+        if canon and p.name != canon and not p.with_name(canon).exists():
+            os.symlink(p.resolve(), p.with_name(canon))
+
+
 def canonicalize_tree(root: Path) -> None:
     """Normalize extracted disc case (ISO9660 is uppercase; 7z keeps it)."""
     # Directory first: build.py asks for IC/BGM.PAK explicitly.
@@ -726,6 +763,12 @@ def locate_game_root(root: Path) -> Path | None:
         if "script.pak" not in names:
             continue
         score = sum(1 for n in PK_NAMES if n in names)
+        # Bonus for movie paks (main tree), penalty for an IC-only tree:
+        if any(re.fullmatch(r"mv\d+\.pak", n) for n in names):
+            score += 1
+        if re.fullmatch(r"(?i)(.*[\\/])?IC$", str(d)) \
+                or d.name.upper() == "IC":
+            score -= 8
         if score > best_score:
             best, best_score = d, score
     return best
@@ -833,7 +876,11 @@ def resolve_mao(args: argparse.Namespace) -> tuple[Path, Path | None, Path | Non
     if not script:
         script = locate_script_data(CACHE / "upstream" / "mao-white-album-2")
     if not script:
-        script = clone_mao_script(args.workdir)
+        if args.dry_run:
+            log("script-data: would clone MAO script-data (pending --mao-dir/clone)")
+            script = None
+        else:
+            script = clone_mao_script(args.workdir)
     return main, special, script
 
 
@@ -863,8 +910,13 @@ def candidate_roots(args: argparse.Namespace) -> list[Path]:
 
 
 def find_local_match(name: str, size: int, md5: str | None,
-                     roots: list[Path]) -> Path | None:
-    """Locate a downloaded file by basename; size/md5 verify the match."""
+                     roots: list[Path]) -> tuple[Path | None, str | None]:
+    """Locate a downloaded file by basename; MD5 is hashed at most once.
+
+    Returns (path, computed_md5). Size picks the candidate; md5 verifies it
+    but is NOT used to reject — callers report MISMATCH for a corrupted file
+    separately from a truly missing one, and reuses the computed digest.
+    """
     base = Path(name).name.lower()
     cands: list[Path] = []
     for root in roots:
@@ -874,26 +926,27 @@ def find_local_match(name: str, size: int, md5: str | None,
             if p.is_file() and p.name.lower() == base:
                 cands.append(p)
     if not cands:
-        return None
+        return None, None
+    best = cands[0]
     if size:
-        sized = [p for p in cands if p.stat().st_size == size]
-        if sized:
-            cands = sized
-    if md5:
         for p in cands:
-            if file_md5(p).lower() == md5.lower():
-                return p
-        return None
-    return cands[0]
+            if p.stat().st_size == size:
+                best = p
+                break
+    if not md5:
+        return best, None
+    return best, file_md5(best, cache=True)
 
 
-def verify_entry(hit: Path, size: int, md5: str) -> str:
-    """OK / MISMATCH for a size+md5 pair."""
+def verify_entry(hit: Path, size: int, md5: str,
+                 computed: str | None = None) -> str:
+    """OK / MISMATCH for a size+md5 pair (single hash pass)."""
     if size and hit.stat().st_size != size:
         return "MISMATCH"
-    if not md5 or file_md5(hit).lower() == md5.lower():
+    if not md5:
         return "OK"
-    return "MISMATCH"
+    digest = computed if computed is not None else file_md5(hit, cache=True)
+    return "OK" if digest.lower() == md5.lower() else "MISMATCH"
 
 
 def builtin_hash_sheet(args: argparse.Namespace
@@ -942,14 +995,14 @@ def run_item_verification(args: argparse.Namespace) -> None:
     rows: list[str] = []
     import time as _t
     for f in want:
-        hit = find_local_match(f["name"], f["size"], f["md5"], roots)
+        hit, got0 = find_local_match(f["name"], f["size"], f["md5"], roots)
         if hit is None:
             missing += 1
             rows.append(f"MI  {f['name']}  (size {f['size']})")
             log(f"MISSING {f['name']} ({human(f['size'])})")
             continue
         t0 = _t.time()
-        got = file_md5(hit)
+        got = got0 if got0 is not None else file_md5(hit, cache=True)
         if got.lower() == f["md5"].lower():
             ok += 1
             rows.append(f"OK  {f['name']}  {got}")
@@ -965,6 +1018,17 @@ def run_item_verification(args: argparse.Namespace) -> None:
         f"-> {out}")
     if mismatch or missing:
         raise SystemExit(1)
+
+
+def guarded_rmtree(p: Path, why: str) -> None:
+    """Delete only real build dirs; refuse repo/source/content roots."""
+    if p in (Path("/"), Path.home(), ROOT, REPO,
+             Path(os.getcwd()).resolve()):
+        raise SystemExit(f"{why}: refusing to delete protected root {p}")
+    if (p / ".git").exists() or (p / "package.json").exists() \
+            or (p / "play.sh").exists():
+        raise SystemExit(f"{why}: refusing to delete project directory {p}")
+    shutil.rmtree(p)
 
 
 def extract_dir_input(src: Path, discs: Path, name: str) -> None:
@@ -995,6 +1059,7 @@ def extract_dir_input(src: Path, discs: Path, name: str) -> None:
         g = Path(args.game_dir).expanduser().resolve()
         if not g.exists():
             raise SystemExit(f"--game-dir does not exist: {g}")
+        normalize_game_tree(g)
         root = locate_game_root(g)
         if not root:
             raise SystemExit(f"no script.pak/bak.pak found under {g}")
@@ -1004,6 +1069,7 @@ def prepare_game(args: argparse.Namespace) -> tuple[Path, Path]:
         g = Path(args.game_dir).expanduser().resolve()
         if not g.exists():
             raise SystemExit(f"--game-dir does not exist: {g}")
+        normalize_game_tree(g)
         root = locate_game_root(g)
         if not root:
             raise SystemExit(f"no script.pak/bak.pak found under {g}")
@@ -1033,11 +1099,13 @@ def prepare_game(args: argparse.Namespace) -> tuple[Path, Path]:
             f"{len(missing)} archive item file(s) are not present locally "
             f"({hint}). Download them yourself into one of: "
             + ", ".join(str(r) for r in candidate_roots(args)) +
-            " — then rerun. (Or pass --download-missing to fetch from the item.)")
-    if not image_args and not local_matches:
+            " — then rerun (pass --download-missing to fetch instead).")
+    if not image_args and not local_matches and not (
+            missing and args.download_missing):
         raise SystemExit(
             "no game input. Use --game-dir, --image disc.iso, --source-dir DIR "
-            "with the user-downloaded files, or --archive-item URL.")
+            "with user-downloaded files, or --archive-item URL with "
+            "--download-missing.")
     if args.dry_run:
         for raw in image_args:
             log(f"image: {raw}")
@@ -1061,15 +1129,13 @@ def prepare_game(args: argparse.Namespace) -> tuple[Path, Path]:
                 raise SystemExit(f"image not found: {p}")
             inputs.append(p)
     inputs += local_matches
-    for f in missing:
-        name, size = f
-        url = None
-        for n, u, sz, _m in net_files:
-            if n == name:
-                url, size = u, sz
-        assert url
-        inputs.append(download_url(url, args.workdir / "downloads"
-                                   / Path(name).name, size=size))
+    if missing and not args.i_own_the_game:
+        raise SystemExit("network image download requires --i-own-the-game")
+    for name, size in missing:
+        entry = next(e for e in net_files if e[0] == name)
+        inputs.append(download_url(entry[1],
+                                   args.workdir / "downloads" / Path(name).name,
+                                   md5=entry[3], size=size or None))
     local_size = sum(p.stat().st_size for p in inputs if p.is_file())
     if local_size and not args.skip_space_check:
         require_free(local_size * 2 + 8 * (1 << 30), "image extraction + assets")
@@ -1100,11 +1166,9 @@ def build_data(args: argparse.Namespace, game: Path,
                main_pak: Path, special_pak: Path | None,
                script_data: Path | None, py: Path) -> None:
     if not args.skip_space_check:
-        require_free(4 * (1 << 30), "data build")
-    for sub in ("ir", "data"):
-        p = args.build_dir / sub
-        if p.exists():
-            shutil.rmtree(p)
+        require_free((4 if args.assets else 1) * (1 << 30), "data build")
+    guarded_rmtree(args.build_dir / "ir", "build.py input")
+    guarded_rmtree(args.build_dir / "data", "build.py output")
     if special_pak:
         cmd = [py, TOOLS / "build.py", main_pak, special_pak, args.build_dir]
     else:
@@ -1123,8 +1187,7 @@ def build_assets(args: argparse.Namespace, asset_source: Path,
         return True
     if not args.skip_space_check:
         require_free(12 * (1 << 30), "asset extraction + web staging")
-    if assets.exists():
-        shutil.rmtree(assets)
+    guarded_rmtree(assets, "asset extraction")
     cmd = [py, TOOLS / "extract_assets.py", asset_source, assets,
            "--en-pak", main_pak, "--jobs", str(args.jobs)]
     if special_pak:
@@ -1254,7 +1317,8 @@ def main(argv: list[str]) -> int:
     if not args.dry_run:
         ensure_ffmpeg(args)
     game, asset_source = prepare_game(args)
-    verify_sheet(args)
+    if not args.dry_run:
+        verify_sheet(args)
     main_pak, special_pak, script_data = resolve_mao(args)
     log(f"translation: {main_pak}" + (f" + {special_pak}" if special_pak else ""))
     log(f"script-data: {script_data or '(none; en-token text fallback)'}")
@@ -1266,7 +1330,8 @@ def main(argv: list[str]) -> int:
         log(f"port: {args.port}")
         return 0
     if not args.skip_space_check:
-        require_free(12 * (1 << 30), "build + web assets")
+        require_free((12 if args.assets else 2) * (1 << 30),
+                     "build + web assets")
     novels = preserve_novels(args)
     build_data(args, game, main_pak, special_pak, script_data, py)
     inject_novels(novels, args.build_dir)

@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import time
 import zipfile
+from pathlib import Path
 
 # Media formats are already entropy-coded: deflating them burns CPU for <1%.
 STORE_EXT = {
@@ -227,6 +228,9 @@ def compact_json(root: str) -> int:
     return n
 
 
+REPO = Path(__file__).resolve().parents[2]
+
+
 def pack(web: str, data: str, assets: str, out: str, zip_out: str | None,
          do_build: bool, force: bool = False, compact: bool = False) -> dict:
     if do_build:
@@ -244,7 +248,7 @@ def pack(web: str, data: str, assets: str, out: str, zip_out: str | None,
             raise SystemExit(
                 f"{out} is a non-empty directory that does not look like a "
                 "package; pass --force to replace it")
-        shutil.rmtree(out)
+        guarded_rmtree(out, "pack output")
     os.makedirs(out, exist_ok=True)
     skipped = copy_engine(os.path.join(web, "dist"), out)
     if skipped:
@@ -387,6 +391,18 @@ def main() -> None:
     print_report(info)
     print(f"\npackage: {out}")
     print("personal use only; do not redistribute game assets.")
+
+
+def guarded_rmtree(p: Path | str, why: str) -> None:
+    """Delete only real package output dirs; never repo/source/content dirs."""
+    p = Path(p)
+    if p in (Path("/"), Path.home(), Path(os.getcwd()).resolve(),
+             Path(__file__).resolve().parents[2], REPO):
+        raise SystemExit(f"{why}: refusing to delete protected root {p}")
+    if ((p / ".git").exists() or (p / "package.json").exists()
+            or (p / "play.sh").exists() or (p / "tools").exists()):
+        raise SystemExit(f"{why}: refusing to delete project directory {p}")
+    shutil.rmtree(p)
 
 
 if __name__ == "__main__":

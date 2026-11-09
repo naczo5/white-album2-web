@@ -190,6 +190,13 @@ def classify_bare(tok: str) -> str:
     """Classify a bare (unquoted, non-empty) token by shape."""
     if CATCH.match(tok):
         return "catch"
+    m = OPTION.match(tok)
+    if m:
+        digits = m.group(1).translate(_FW_DIGITS)
+        if len(digits) > 3:
+            # 4+ digits before the dot are dates/numbers on the JP spine
+            # (e.g. `２０１１．３．１１`), never real option rows (1..9).
+            return "text"
     # Directive shapes win over the option regex: `1.tga` (a numeric image
     # name) must not parse as option 1 with text "tga".
     if MOVIE.match(tok):

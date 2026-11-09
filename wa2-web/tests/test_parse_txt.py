@@ -161,3 +161,11 @@ def test_mega_fullwidth_option_numbers():
     events, _ = P.resplit_mega(events, {"Setsuna"}, [])
     ch = [e for e in events if e["t"] == "choice"][0]
     assert [o["n"] for o in ch["options"]] == [1, 2]
+
+
+def test_fullwidth_date_not_an_option():
+    # 2011.3.x-style date stamps on the JP spine must not become choice rows.
+    assert P.classify_bare('２０１１．３．１１') == "text"
+    toks = P.split_tokens('２０１１．３．１１,テロップ'.encode('cp932'))
+    events, _ = P.parse_tokens(toks)
+    assert not any(e['t'] == 'choice' for e in events)
