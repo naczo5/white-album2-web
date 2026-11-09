@@ -5,10 +5,10 @@ is a BGM play; pushes[0] = track (BGM_%03d; engine derives _a/_b loop
 pair or solo file); pushes[1] = fade. Shape (-2,1,255)+(4,5),(3,X),(4,158)
 is an explicit stop (rare; engine otherwise sustains BGM across files).
 
-Placement: .bnr statements are segemented on (6,30); each play's fractional
-position (stmt/n_stmts) is snapped to the EN IR event index (frac * m).
-Accurate to the scene (bak), +/- few lines within it: .bnr (3,X) counters
-follow the JP token stream, EN tokens drifted in translation.
+Placement: with `--jp` the .bnr `(3,X)` line labels anchor each play to the
+JP-spine event exactly (tools/bnr_anchor.py); without it, the
+`stmt/n_stmts * m` fractional guess is used (accurate to the scene, ±a few
+lines within it).
 
 Output (build artifact, NOT committed game content - only track numbers +
 event indices, like flow.json option labels):
@@ -106,7 +106,7 @@ def build(paks: list[str], game_dir: str | None = None,
         # fallback without --jp.
         anchors: list[int] | None = None
         events: list[dict] = []
-        if jp_path:
+        if JPDATA is not None:
             try:
                 e = {x.name: x for x in kcap.read_index(JPDATA)
                      if not x.is_folder}[script + ".txt"]
@@ -143,11 +143,11 @@ def build(paks: list[str], game_dir: str | None = None,
             if p["track"] == 0:
                 # Track 0 = silence/pause (cf. exe "BGM-PAUSE"): normalize
                 # to an explicit stop so the player never looks for a file.
-                rows.append({"ev": ev, "stop": True})
+                rows.append({"ev": ev, "_stmt": p["stmt"], "stop": True})
                 n_stop += 1
                 continue
             row: dict = {"ev": ev, "track": p["track"],
-                         "fade": p["fade"]}
+                         "fade": p["fade"], "_stmt": p["stmt"]}
             if have and p["track"] not in have:
                 row["missing"] = True
                 missing_tracks.add(p["track"])
@@ -159,9 +159,13 @@ def build(paks: list[str], game_dir: str | None = None,
             else:
                 frac = s["stmt"] / max(1, n)
                 ev = min(m - 1, int(frac * m)) if m else 0
-            rows.append({"ev": ev, "stop": True})
+            rows.append({"ev": ev, "_stmt": s["stmt"], "stop": True})
             n_stop += 1
-        rows.sort(key=lambda r: r["ev"])
+        # Statement order breaks ties at one event (plays were appended
+        # before stops, so an event with both always stopped before).
+        rows.sort(key=lambda r: (r["ev"], r["_stmt"]))
+        for r in rows:
+            del r["_stmt"]
         if rows:
             cues[script] = rows
     print(f"bgm: {len(cues)} scripts, {n_play} plays, {n_stop} stops")

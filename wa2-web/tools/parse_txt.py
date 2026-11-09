@@ -72,7 +72,7 @@ STYLE_TOKEN = re.compile(r"^(?:<|\[)([FfSs])(\d*)\s*(.*?)(?:>|\])$",
 # Fragments are recovered by splitting on structural shapes and
 # `",Name,"` speaker-change markers (Name from the latch census).
 STRUCT_SEG = re.compile(
-    r"^(mv[0-9]+|[^,]*\.(?:tga|amp|ani)|bak|grp|CATCH[23]?|[0-9]+\..*"
+    r"^(mv[0-9]+|[^,]*\.(?:tga|amp|ani)|bak|grp|CATCH[23]?|[0-9０-９]+[.．].*"
     r"|[0-9]{4}(?:_[0-9]+)?)$", re.IGNORECASE)
 
 
@@ -190,8 +190,8 @@ def classify_bare(tok: str) -> str:
     """Classify a bare (unquoted, non-empty) token by shape."""
     if CATCH.match(tok):
         return "catch"
-    if OPTION.match(tok):
-        return "option"
+    # Directive shapes win over the option regex: `1.tga` (a numeric image
+    # name) must not parse as option 1 with text "tga".
     if MOVIE.match(tok):
         return "movie"
     if IMAGE.match(tok):
@@ -200,6 +200,8 @@ def classify_bare(tok: str) -> str:
         return "filter"
     if ANIM.match(tok):
         return "anim"
+    if OPTION.match(tok):
+        return "option"
     if SCRIPT_ID.match(tok):
         return "script_id"
     if tok in ("bak", "grp"):
@@ -418,6 +420,7 @@ def resplit_mega(events: list[dict], names: set[str],
         sorted(re.escape(n) for n in names if n)) + r")\s*,")
     out: list[dict] = []
     pending_opts: list[dict] = []
+    pending_latches: list[str] = []
     latch = ""
 
     def flush_opts():
@@ -428,6 +431,12 @@ def resplit_mega(events: list[dict], names: set[str],
             warnings.append(f"MEGA_CHOICE: {len(pending_opts)} options "
                             f"recovered inside a mega-token (verify in game)")
             pending_opts.clear()
+        # Speaker tags can sit between option rows ("1. A,Setsuna,2. B").
+        # They must not split one choice UI into two forced single-option
+        # choices; emit them after the merged choice, before following text.
+        for name in pending_latches:
+            out.append({"t": "latch", "name": name})
+        pending_latches.clear()
 
     def emit_frags(page, style, tok):
         # cut on structural segments first (directives/ids/options/layers)
@@ -486,19 +495,23 @@ def resplit_mega(events: list[dict], names: set[str],
         if not f.strip().strip(","):
             return
         if f.startswith("\x01"):
-            flush_opts()
-            latch = f[1:]
-            out.append({"t": "latch", "name": latch})
+            name = f[1:]
+            latch = name
+            if pending_opts:
+                pending_latches.append(name)
+            else:
+                out.append({"t": "latch", "name": name})
             return
         if f.startswith("\x00"):
-            flush_opts()
             body = f[1:]
             if "\x00" in body and CATCH.match(body.split("\x00")[0]):
                 # reattached voice-context name: target + latch both kept
+                flush_opts()
                 mark, voice = body.split("\x00")
                 out.append({"t": "jump", "kind": mark, "targets": [voice]})
                 return  # the latch frag itself follows in the stream
             if "\x00" in body:  # image+layer pair
+                flush_opts()
                 img, layer = body.split("\x00")
                 kind = "image" if IMAGE.match(img) else "anim"
                 out.append({"t": kind, "file": img, "layer": layer})
@@ -507,12 +520,18 @@ def resplit_mega(events: list[dict], names: set[str],
             if w:
                 warnings.append(w)
             if isinstance(sub, list):
+                flush_opts()
                 out.extend(sub)
             elif sub is not None:
                 if sub.get("t") == "_opt":
+                    # Do NOT flush: an option row may follow another option
+                    # (or an interleaved speaker tag held in pending_latches).
                     pending_opts.append(sub)
                 else:
+                    flush_opts()
                     out.append(sub)
+            else:
+                flush_opts()
             return
         c = clean_frag(f)
         if not c:
@@ -608,7 +627,7 @@ def structural_event(seg: str, latch: str) -> tuple:
         return {"t": "layer", "layer": s}, ""
     m = OPTION.match(s)
     if m:
-        return {"t": "_opt", "n": int(m.group(1)),
+        return {"t": "_opt", "n": int(m.group(1).translate(_FW_DIGITS)),
                 "text": m.group(2)}, ""
     return None, f"unresolved structural segment {s!r}"
 

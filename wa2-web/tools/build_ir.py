@@ -447,6 +447,13 @@ def main() -> None:
 
     jp_scripts = sorted({e.name[:-4] for e in kcap.read_index(jp_data)
                          if not e.is_folder and e.name.endswith(".txt")})
+    # Engine-internal files that live in script.pak but are NOT scenarios:
+    # catch/catch2/catch3 are title/menu test screens (catch_*.tga art),
+    # 9999 is the flag-init/debug script (23 bare targets, no story), and
+    # LF3 is the Japanese sample/digital-novel test scene ("サンプル",
+    # "ループします").  Emitting them added 5 fake scripts + 2 fake choices.
+    ENGINE_INTERNAL = {"catch", "catch2", "catch3", "9999", "LF3"}
+    jp_scripts = [s for s in jp_scripts if s not in ENGINE_INTERNAL]
     # The JP pak is the spine: the patched exe routes only through its
     # script set. MAO's EN-only `NNNN_N` files (2031_2 etc.) are toolchain
     # splits of branch content that the JP base files carry inline — no JP

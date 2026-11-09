@@ -109,7 +109,8 @@ def convert_w(src: bytes, dst_wav: str, name: str, missing: list) -> bool:
     return True
 
 
-def handle_movie(pak_path: str, dst_mp4: str, name: str, missing: list) -> bool:
+def handle_movie(pak_path: str, dst_mp4: str, name: str, missing: list,
+                 args=None) -> bool:
     probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
                             "format=format_name", "-of", "csv=p=0", pak_path],
                            capture_output=True, text=True) \
@@ -131,9 +132,15 @@ def handle_movie(pak_path: str, dst_mp4: str, name: str, missing: list) -> bool:
             fin.seek(off)
             shutil.copyfileobj(fin, fout)
         src = tmp
-    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src,
-                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-                        "-c:a", "aac", dst_mp4], capture_output=True, text=True)
+    crf = getattr(args, "movie_crf", 21)
+    preset = getattr(args, "movie_preset", "veryfast")
+    height = getattr(args, "movie_height", 0)
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", src,
+           "-c:v", "libx264", "-preset", preset, "-crf", str(crf)]
+    if height:
+        cmd += ["-vf", f"scale=-2:{height}"]
+    cmd += ["-c:a", "aac", dst_mp4]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if tmp:
         os.unlink(tmp)
     if r.returncode != 0:
@@ -144,9 +151,13 @@ def handle_movie(pak_path: str, dst_mp4: str, name: str, missing: list) -> bool:
 
 
 def _pak_tag(pak: str, game: str) -> str:
-    """Chapter tag from archive location (main vs IC dirs)."""
+    """Chapter tag from archive location (main vs IC dirs).
+
+    Accepts IC at any depth: multi-disc staging puts it under
+    `disc1/IC/...` rather than directly under the --game root.
+    """
     rel = os.path.relpath(pak, game).split(os.sep)
-    if len(rel) > 1 and rel[0].lower() == "ic":
+    if any(part.lower() == "ic" for part in rel[:-1]):
         return "ic"
     return ""
 
@@ -168,6 +179,19 @@ def decode_lac_name(raw: bytes) -> str:
     return ""
 
 
+def voice_line_key(name: str) -> tuple[str, str] | None:
+    """Voice LAC name -> (archive line key, take extension).
+
+    Engine names are `{script}_{NNN}_{take}.OGG`. Variant scripts may carry
+    their own suffix (`1008_020_0199_04`), so the script part is any run of
+    numeric groups; the last `_NN` is the take and is dropped.
+    """
+    import re as _re
+    m = _re.match(r"^([A-Za-z0-9]+(?:_[0-9]+)+)_[0-9]+\.([A-Za-z0-9]+)$",
+                  name)
+    return (m.group(1), m.group(2)) if m else None
+
+
 def extract_voice(pak_path: str, out_sub: str, args, manifest: dict,
                   missing: list) -> None:
     """Voice archive -> voice table keyed by decoded `{script}_{line}`.
@@ -175,7 +199,6 @@ def extract_voice(pak_path: str, out_sub: str, args, manifest: dict,
     One clip per line (6 engine-wide duplicates: first wins, noted).
     `out_sub` namespaces main vs IC (ic/ subdir + `ic/` key prefix).
     """
-    import re as _re
     with open(pak_path, "rb") as f:
         data = f.read()
     if data[:4] != b"LAC\x00":
@@ -193,10 +216,10 @@ def extract_voice(pak_path: str, out_sub: str, args, manifest: dict,
         if doff + size > len(data) or size <= 0:
             missing.append(f"{pak_path}: entry {i} out of range")
             continue
-        m = _re.match(r"^([A-Za-z0-9]+_[0-9]+)_[0-9]+\.([A-Za-z0-9]+)$", name)
-        if not m:
+        lk = voice_line_key(name)
+        if not lk:
             continue
-        key = f"{out_sub}{m.group(1)}" if out_sub else m.group(1)
+        key = f"{out_sub}{lk[0]}" if out_sub else lk[0]
         if key in by_line:
             dupes += 1
             continue
@@ -422,6 +445,12 @@ def main() -> None:
                     help="translation en.pak (repeatable)")
     ap.add_argument("--jobs", type=int, default=8,
                     help="parallel convert workers (default 8)")
+    ap.add_argument("--movie-crf", type=int, default=21,
+                    help="x264 CRF (lower = bigger/better; 23 is a good web tier)")
+    ap.add_argument("--movie-preset", default="veryfast",
+                    help="x264 preset (slow/slower = smaller at one CRF)")
+    ap.add_argument("--movie-height", type=int, default=0,
+                    help="downscale movies to this height (0 = keep; 720 web tier)")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
@@ -549,7 +578,7 @@ def main() -> None:
         if is_movie:
             mvid = lname[:-4]  # mv010.pak -> mv010
             dst = emit("movie", mvid, ".mp4")
-            if handle_movie(pak, dst, base, missing):
+            if handle_movie(pak, dst, base, missing, args):
                 manifest["movies"][mvid] = f"movie/{mvid}.mp4"
             continue
         if magic != b"KCAP":

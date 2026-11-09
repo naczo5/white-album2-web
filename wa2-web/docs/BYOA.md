@@ -52,6 +52,10 @@ features as placeholders.
 | `VOICE.PAK` | 1.4G | voiced lines |
 | `mv*.pak` | 2.5G | movies (also needs ffmpeg) |
 
+The `IC/` intro directory is a separate set of the same archive types
+(~1.9G); the reference install measures **8.0 GB** total. `todokanai/subtitles`
+is optional (voice-cue timing).
+
 Typical light setups:
 
 ```sh
@@ -74,7 +78,9 @@ cp -r build/assets web/public/assets
 Needs: Python Pillow (`pip install pillow`) for TGA→PNG and `ffmpeg`
 for movie transcode (ASF/WMV are not browser-playable). Without them the
 tool reports exactly what's missing (`missing.json`) and the player keeps
-working with placeholders. Leaf `.px` sprites and `.g` audio need
+working with placeholders. Movie size can be tuned with
+`--movie-crf` (default 21), `--movie-preset` and `--movie-height 720`
+(web-size tier; see docs/PACKAGING.md). Leaf `.px` sprites and `.g` audio need
 `arc_unpacker` (`--dec=leaf/...`; archived GPLv3 tool) — see
 `tools/extract_assets.py` for the command ladder; contributions welcome.
 
@@ -87,6 +93,11 @@ BGM/SE: `BGM.PAK`/`SE.PAK` names are the same XOR-0xFF cipher
 once per assets copy to repair). Music timing comes from `.bnr` opcode
 (4,158) via `tools/build_bgm.py` → `data/bgm.json` (build artifact, kept
 next to the other generated data).
+
+Digital-novel PDFs are not part of any pak and are never bundled: copy the
+two PDFs from your copy of the bonus disc to
+`web/public/data/novels/` (exact filenames are linked from the Special
+screen) if you want those buttons to work.
 
 ## 3. Play
 

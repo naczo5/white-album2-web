@@ -7,6 +7,10 @@ top priority.
 **Engine, quickstart, verification:** see
 [`wa2-web/README.md`](wa2-web/README.md) and [`wa2-web/docs/`](wa2-web/docs/).
 
+**Fastest local play:** `cd wa2-web && ./play.sh --game-dir /path/to/game`
+(or `--image disc1.iso ...`); it extracts, builds, and serves the web app.
+See [`wa2-web/docs/ONECLICK.md`](wa2-web/docs/ONECLICK.md).
+
 ## Source build
 
 The reference install this port is built and tested against is the
@@ -21,10 +25,10 @@ drift pin — never redistributed here).
 
 ## Status
 
-Experimental. Voices, BGM/SE, backdrops, event art, LUT color grades,
-flowchart/guide/saves work; per-line character sprite identity is still
-undecoded (an explicitly experimental stand-in layer exists). Full gate
-matrix: `wa2-web/docs/QA.md`.
+Experimental. Voices, BGM/SE, backdrops, event art, sprites, LUT color
+grades, flowchart/guide/saves work. Full gate matrix and open parity items:
+`wa2-web/docs/QA.md`; self-packaging and size tiers:
+`wa2-web/docs/PACKAGING.md`.
 
 ## Hosting
 

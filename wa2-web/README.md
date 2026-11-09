@@ -20,8 +20,19 @@ wa2-web/
               (annotate_flow.py); generated flow.json/links.json are
               reproducible build outputs kept in sync by tools/build.py
   web/        Vite+TypeScript player (engine + title/flowchart/guide/saves)
-  docs/       ARCHITECTURE, BYOA, PARSING, FLOW_GRAPH, QA, LEGAL
+  docs/       ARCHITECTURE, BYOA, ONECLICK, PARSING, FLOW_GRAPH, QA, LEGAL
 ```
+
+## One click
+
+```sh
+./play.sh --game-dir /path/to/game       # installed/extracted game
+# or: ./play.sh --image disc1.iso --image disc2.iso --i-own-the-game
+```
+
+It extracts images (if needed), builds data/assets, builds the web app, and
+serves it locally. See [docs/ONECLICK.md](docs/ONECLICK.md). The manual
+pipeline is below.
 
 ## Quickstart (empty checkout -> playable)
 
@@ -45,23 +56,29 @@ testable with zero assets.
 ## Verification
 
 ```sh
-python3 -m pytest tests/ -q                          # unit (no assets)
+python3 -m pytest tests/ -q                          # unit + data integrity
 WA2_EN_PAK=/path/to/en.pak python3 -m pytest tests/  # + corpus parity
 python3 tools/simulate.py IR FLOW LINKS TERMINALS routers
 python3 tools/fetch_mao.py IR_MAIN IR_SPECIAL --clone /path/to/mao-clone
 cd web && npx vitest run && npx tsc --noEmit && npm run build
+# self-contained package + size report:
+python3 tools/pack_site.py --build --zip
 ```
 
-Current status: 35 pytest + 50 vitest green; full-game sim walks 202/245
-scripts stall-free (43 unvisited = flag-gated scene variants awaiting
-in-game verification); MAO v2.1.0 drift audit 0.986 containment over
-193 game scripts; voices wired (46k clips via XOR-decoded line addresses);
-movies resolve; exact .AMP color LUTs; sprite overlays with .bnr fades;
-typewriter/auto/skip/volumes (voice + BGM); novels + Special menu.
-Music: BGM scene→track map solved statically (.bnr opcode (4,158), 1288
-plays across 242 scripts, loop pairs preferred; only bonus-disc tracks
-78/79 sustain). Choices cross-checked against engine (4,208) markers
-(31/31); flag identities engine-evidenced (Global.vrb/GFLAG.dat).
-Sound effects solved too (.bnr opcode (4,164), 12 cues firing).
-Open residuals: dynamic sprite slots, numeric flag thresholds/deltas.
-Details in `docs/QA.md`.
+Current status: 77 pytest + 7 BYOA-skipped (84 passed with `WA2_EN_PAK`);
+74 vitest + 1 BYOA-skipped, plus the real-data shipped-Router playthrough
+(183/221 scripts, no throw/stall). Full build is green against the installed
+JP game: flow 32/32, bnr choice markers 32/32, simulate clean
+(153/221 routers; 68 unvisited = 19 JP variants + 49 Special-menu scripts),
+links 206 sites (199 HINT + 7 SWITCH), MAO v2.1.0 drift
+audit 0.988 containment over 171 scripts. Voices wired, sprites/dynamic
+staging decoded from `.bnr`, movies resolve; exact `.AMP` color LUTs; BGM
+loop pairs (`_A` intro + `_B` body); typewriter/auto/skip/volumes; novels +
+Special menu. Music: BGM scene→track map solved statically (.bnr opcode
+(4,158), 1288 plays across 242 scripts; only bonus-disc tracks 78/79
+sustain). Choices cross-checked against engine (4,208) markers (32/32);
+flag identities engine-evidenced (Global.vrb/GFLAG.dat). Sound effects:
+(4,164) + ambient (4,165/166). Open residuals: numeric flag thresholds/
+deltas, variant entry rules, special-series termination, 3016/3023
+short-path confirmation. Details in `docs/QA.md`; packaging sizes/limits
+in `docs/PACKAGING.md`.

@@ -194,10 +194,11 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             elif x == -2:
                 recs.append({"ev": ev, "clear": True,
                              "layer": layer,
-                             # sprite-wipe model unchanged: bak-layer shows/
-                             # clears wipe slots (corpus-verified), grp
-                             # overlay (4,148) shows do not.
-                             "sprClear": not has148,
+                             # Sprite wipe only for mode 0 (backdrop/146).
+                             # Disassembly of 0x4167e0: the clear-all call
+                             # 0x402680 sits inside `if (param_3 == 0)`, so
+                             # 147/148 (mode 1 event visuals) never wipe.
+                             "sprClear": layer == "bak",
                              "conf": "high"})
             elif x > 0:
                 recs.append({"ev": ev,
@@ -206,10 +207,9 @@ def decode_script(data: bytes, script: str) -> list[dict]:
                              "fade": fade,
                              # A backdrop show wipes standing sprites: the
                              # image primitive 0x4167e0 reaches the clear-all
-                             # sprite loop 0x402680 (corpus: every sprite
-                             # burst re-shows after a bak change; per-script
-                             # maxima drop from 11 to <=5 under this model).
-                             "sprClear": not has148,
+                             # sprite loop 0x402680 only in mode 0 (see the
+                             # disassembly note above; 147/148 keep sprites).
+                             "sprClear": layer == "bak",
                              "conf": "high"})
         # fade: mode push + 1000ms + CMD(6,16)
         if (6, 16) in op_set and 1000 in s:

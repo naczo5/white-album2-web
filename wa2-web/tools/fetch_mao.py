@@ -34,7 +34,7 @@ PAGES_BASE = "https://mao-tls.github.io/white-album-2/script-data"
 MIN_LEN = 24
 
 
-def norm(s: str) -> string:
+def norm(s: str) -> str:
     # Aggressive delivery normalization: engine `~`/punctuation and
     # manuscript punctuation differ systematically (`,`, `...`, `--`
     # vs `~`), so compare alphanumeric sequences only. This still

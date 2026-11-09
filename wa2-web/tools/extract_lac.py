@@ -52,7 +52,56 @@ def read_index(data: bytes) -> list[tuple[str, int]]:
     return out
 
 
+def read_index_stream(lac_path: str) -> tuple[list[tuple[str, int]], int]:
+    """Read the LAC directory without buffering the whole archive.
+
+    Returns (entries, payload_offset): entries skip zero-size records;
+    payload_offset is where the first payload begins (all `count` records
+    are consumed).
+    """
+    with open(lac_path, "rb") as f:
+        head = f.read(HEADER_SIZE)
+        if head[:4] != MAGIC:
+            raise ValueError(f"bad LAC magic: {head[:4]!r}")
+        (count,) = struct.unpack_from("<I", head, 4)
+        blob = f.read(count * ENTRY_SIZE)
+    out = []
+    for i in range(count):
+        name = decode_name(blob[i * ENTRY_SIZE:i * ENTRY_SIZE + 64])
+        (_u1, _u2, _u3, size, _size2) = struct.unpack_from(
+            "<IIIII", blob, i * ENTRY_SIZE + 64)
+        if not name or not size:
+            continue  # folder record / install-script tail
+        out.append((name, size))
+    return out, HEADER_SIZE + count * ENTRY_SIZE
+
+
+def extract_stream(lac_path: str, out_dir: str, chunk: int = 1 << 22
+                   ) -> list[tuple[str, int]]:
+    """Stream a LAC's payloads to disk in chunks (large archives)."""
+    entries, pos = read_index_stream(lac_path)
+    os.makedirs(out_dir, exist_ok=True)
+    done = []
+    with open(lac_path, "rb") as f:
+        f.seek(pos)
+        for name, size in entries:
+            target = os.path.join(out_dir, *name.split("\\"))
+            os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+            left = size
+            with open(target, "wb") as fh:
+                while left:
+                    got = f.read(min(chunk, left))
+                    if not got:
+                        raise ValueError(f"{name}: truncated")
+                    fh.write(got)
+                    left -= len(got)
+            done.append((name, size))
+    return done
+
+
 def extract(lac_path: str, out_dir: str) -> list[tuple[str, int]]:
+    if os.path.getsize(lac_path) > 64 << 20:
+        return extract_stream(lac_path, out_dir)
     with open(lac_path, "rb") as f:
         data = f.read()
     entries = read_index(data)
@@ -81,7 +130,7 @@ def main() -> None:
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args()
     with open(args.lac, "rb") as f:
-        entries = read_index(f.read())
+        entries, _pos = read_index_stream(args.lac)
     total = sum(s for _, s in entries)
     print(f"{args.lac}: {len(entries)} files, {total / 1e9:.2f} GB")
     for name, size in entries:

@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
-from extract_assets import decode_lac_name  # noqa: E402
+from extract_assets import _pak_tag, decode_lac_name, voice_line_key  # noqa: E402
 from proto_bgm import find_bgm, find_se, iter_statements  # noqa: E402
 
 
@@ -33,6 +33,14 @@ def test_decode_lac_name_accepts_bgm_se_voice():
 def test_decode_lac_name_rejects_garbage():
     assert decode_lac_name(b"\x01\x02\x03" + b"\x00" * 21) == ""
     assert decode_lac_name(b"noext" + b"\x00" * 19) == ""
+
+
+def test_voice_line_key_accepts_variant_script_suffix():
+    assert voice_line_key("1008_0199_04.OGG") == ("1008_0199", "OGG")
+    # variant scripts can carry their own suffix before the line number
+    assert voice_line_key("1008_020_0199_04.OGG") == ("1008_020_0199", "OGG")
+    assert voice_line_key("not-a-voice.OGG") is None
+    assert voice_line_key("1008_0199.OGG") is None
 
 
 def test_find_bgm_play_shape():
@@ -82,3 +90,9 @@ def test_iter_statements_captures_float_pushes():
     _idx, _off, _pushes, ops, _raw, floats = rows[0]
     assert (6, 27) in ops and (6, 18) in ops
     assert floats == [2.0]
+
+
+def test_pak_tag_finds_nested_ic_disc_layout():
+    assert _pak_tag("/g/IC/BGM.PAK", "/g") == "ic"
+    assert _pak_tag("/g/disc1/IC/BGM.PAK", "/g") == "ic"
+    assert _pak_tag("/g/disc1/BGM.PAK", "/g") == ""

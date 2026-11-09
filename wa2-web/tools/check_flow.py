@@ -41,10 +41,13 @@ def check_endings_and_terminals(data_dir: str, node_ids: set[str],
     import re
     ref_re = re.compile(r"\b(\d{4}(?:_\d+)?-\d+)\b")
     end_path = os.path.join(data_dir, "endings.json")
+    ending_ids: set[str] = set()
     if os.path.exists(end_path):
         with open(end_path, encoding="utf-8") as f:
             endings = json.load(f)
         for e in endings.get("endings", []):
+            if e.get("id"):
+                ending_ids.add(e["id"])
             for ref in ref_re.findall(e.get("unlock", "")):
                 if ref not in node_ids:
                     errors.append(f"endings.json {e.get('id')}: dangling "
@@ -59,6 +62,10 @@ def check_endings_and_terminals(data_dir: str, node_ids: set[str],
             if t.get("action") == "chain" and t.get("to") not in scripts:
                 errors.append(f"terminals.json {script}: unknown chain "
                               f"target {t.get('to')}")
+            if t.get("action") == "end" and t.get("ending"):
+                if ending_ids and t["ending"] not in ending_ids:
+                    errors.append(f"terminals.json {script}: unknown ending "
+                                  f"{t['ending']}")
 
 
 def main() -> int:

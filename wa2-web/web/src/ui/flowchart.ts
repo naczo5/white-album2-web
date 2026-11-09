@@ -22,18 +22,16 @@ export const NODE_W = 128;
 export const NODE_H = 34;
 const GAP_X = 46;
 const GAP_Y = 14;
-const ROOT = "1002";
 
-/** Build the route graph: reachable scripts from the IC root. Branch
- * structure comes from decoded links + terminal chains; spine successors
- * carry the linear chapter flow (and cross into the next chapter at the
- * chapter seam, where spine.next is null and a chain/link takes over). */
+/** Build the route graph: reachable scripts from the first scenario
+ * (1001 in the real set; callers pass a sorted list). */
 export function buildChartGraph(
   scripts: string[],
   spine: Spine,
   links: LinkSite[],
   terminals: TerminalsData["terminals"],
 ): ChartGraph {
+  const root = scripts[0] ?? "1001";
   const out = new Map<string, { to: string; kind: ChartGraph["edges"][number]["kind"] }[]>();
   const add = (from: string, to: string, kind: ChartGraph["edges"][number]["kind"]) => {
     if (from === to) return;
@@ -57,9 +55,9 @@ export function buildChartGraph(
   // their spine successors (2002 -> 2003 -> ...), or whole chapters drop
   // out of the chart. Branch depth: every edge gives child = parent + 1;
   // link edges run before the spine successor so decoded branches win.
-  const depth: Record<string, number> = { [ROOT]: 0 };
-  const queue = [ROOT];
-  const reached = new Set([ROOT]);
+  const depth: Record<string, number> = { [root]: 0 };
+  const queue = [root];
+  const reached = new Set([root]);
   while (queue.length) {
     const cur = queue.shift()!;
     for (const e of out.get(cur) ?? []) {

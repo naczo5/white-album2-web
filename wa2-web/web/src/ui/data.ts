@@ -35,6 +35,23 @@ async function tryFetch<T>(url: string): Promise<T | null> {
   }
 }
 
+/** Bounded concurrency (254 scripts loaded one-by-one made boot wait on
+ * ~254 round trips; an unbounded Promise.all can trip host connection
+ * limits). Results keep input order. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
 const DEMO: Scenario[] = [
   {
     script: "demo-1",
@@ -79,8 +96,11 @@ export async function loadGameData(): Promise<GameData> {
   if (index && index.length > 0 && flow) {
     const scenarios: Scenario[] = [];
     const failed: string[] = [];
-    for (const id of index) {
+    const results = await mapLimit(index, 12, async (id) => {
       const sc = await tryFetch<Scenario>(`data/scripts/${id}.json`);
+      return [id, sc] as const;
+    });
+    for (const [id, sc] of results) {
       if (sc) scenarios.push(sc);
       else failed.push(id);
     }

@@ -1,0 +1,27 @@
+{
+ "version": 1,
+ "item": "white-album-2-extended-edition-tokuten",
+ "note": "archive.org item hash sheet (names/sizes/md5 only, no content). Override: pass --hashes FILE, or skip with --no-hashes; mismatch fails only with --strict-hashes.",
+ "files": [
+  {
+   "name": "[180214] [Leaf] WHITE ALBUM2 EXTENDED EDITION + Tokuten/(FN輸入) (18禁ゲーム) [180214] [Leaf] WHITE ALBUM2 EXTENDED EDITION Disk 1 (iso+mds+rr3).rar",
+   "size": 3967801622,
+   "md5": "20737b5be3b5b171ac747a4a596d2ba3"
+  },
+  {
+   "name": "[180214] [Leaf] WHITE ALBUM2 EXTENDED EDITION + Tokuten/(FN輸入) (18禁ゲーム) [180214] [Leaf] WHITE ALBUM2 EXTENDED EDITION Disk 2 (iso+mds+rr3).rar",
+   "size": 4136765851,
+   "md5": "3a9fb9d207a0996d9f012e1c6b1a7c4e"
+  },
+  {
+   "name": "[180214] [Leaf] WHITE ALBUM2 EXTENDED EDITION + Tokuten/(FN輸入) (18禁ゲーム) [180214] [Leaf] WHITE ALBUM2 EXTENDED EDITION 同梱特典 (iso+mds+rr3).rar",
+   "size": 3145020012,
+   "md5": "080db85d698003d9170ab87f52e502dd"
+  },
+  {
+   "name": "[180214] [Leaf] WHITE ALBUM2 EXTENDED EDITION + Tokuten/NemuAndHaruka.png",
+   "size": 1338582,
+   "md5": "a2a7e5ca8c330a85163ee38523a070aa"
+  }
+ ]
+}

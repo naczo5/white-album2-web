@@ -13,10 +13,32 @@ describe("saves", () => {
     const s = newSave("Haruki", { script: "2019", event: 736 });
     s.picks["2019-736"] = 3;
     s.flags.aff["setsuna"] = 4;
+    s.bgm = { track: 41 };
     const back = deserialize(serialize(s));
     expect(back.position).toEqual({ script: "2019", event: 736 });
     expect(back.picks["2019-736"]).toBe(3);
     expect(back.flags.aff["setsuna"]).toBe(4);
+    expect(back.bgm).toEqual({ track: 41 });
+  });
+
+  it("accepts an explicit BGM stop and rejects malformed state", () => {
+    const s = newSave("x", { script: "2019", event: 1 });
+    expect(deserialize(JSON.stringify({ ...s, bgm: null })).bgm).toBeNull();
+    expect(() => deserialize(JSON.stringify({ ...s, bgm: { track: "x" } }))).toThrow();
+  });
+
+  it("repairs a missing updatedAt from an imported file", () => {
+    const s = newSave("x", { script: "2019", event: 1 });
+    const raw = JSON.stringify({ ...s, updatedAt: undefined });
+    expect(deserialize(raw).updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("drops malformed backlog rows instead of crashing the log screen", () => {
+    const s = newSave("x", { script: "2019", event: 1 });
+    const raw = JSON.stringify({
+      ...s, log: [{ speaker: 1, text: "ok" }, { text: 2 }, null],
+    });
+    expect(deserialize(raw).log).toEqual([{ speaker: "", text: "ok" }]);
   });
 
   it("rejects wrong versions and malformed positions", () => {

@@ -1,6 +1,6 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
-import { bgmTrackUrl, imageUrl, movieUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
+import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
 import { Router, chapterOfScript } from "../engine/router";
 import { plainText, renderText, spanize } from "../engine/text";
 import type { BgmData, BnrData, Position, SaveData, ScenarioEvent } from "../engine/types";
@@ -64,6 +64,9 @@ export interface ReaderHooks {
 // Keys are "script:event" for every line that has ever been displayed.
 const READ_KEY = "wa2web.read";
 let readSet: Set<string> | null = null;
+/** Whether the currently displayed line had been read before this render
+ * (skip-read gate; see scheduleAuto). */
+let currentWasRead = true;
 
 function loadRead(): Set<string> {
   if (readSet) return readSet;
@@ -75,16 +78,46 @@ function loadRead(): Set<string> {
   return readSet!;
 }
 
+// Read-set persistence is debounced: rewriting the whole ~46k-key array on
+// every displayed line is O(n^2) late in a playthrough and shows up as a
+// visible hitch on advance. The in-memory Set stays authoritative for
+// skip-read; storage catches up shortly after (and on pagehide).
+let readPersistTimer: number | null = null;
+let readPersistDirty = false;
+
+function persistRead(): void {
+  if (!readPersistDirty || !readSet) return;
+  readPersistDirty = false;
+  try {
+    localStorage.setItem(READ_KEY, JSON.stringify([...readSet]));
+  } catch {
+    /* quota: skip-read degrades to skip-all, harmless */
+  }
+}
+
+function scheduleReadPersist(): void {
+  readPersistDirty = true;
+  if (readPersistTimer !== null) return;
+  if (typeof window === "undefined") {
+    persistRead();
+    return;
+  }
+  readPersistTimer = window.setTimeout(() => {
+    readPersistTimer = null;
+    persistRead();
+  }, 750);
+}
+
 function markRead(save: SaveData): void {
   const key = `${save.position.script}:${save.position.event}`;
   const set = loadRead();
   if (set.has(key)) return;
   set.add(key);
-  try {
-    localStorage.setItem(READ_KEY, JSON.stringify([...set]));
-  } catch {
-    /* quota: skip-read degrades to skip-all, harmless */
-  }
+  scheduleReadPersist();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", persistRead);
 }
 
 function isRead(save: SaveData): boolean {
@@ -100,7 +133,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   const sc = router.scripts.get(pos.script);
 
   const total = sc ? sc.events.length : 1;
-  const pct = sc
+  const pct = sc && total > 0
     ? Math.max(0, Math.min(100, Math.round((pos.event / total) * 100)))
     : 0;
   const where = sc
@@ -151,10 +184,16 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     const cont = router.advance(pos, save.flags);
     if (!cont.ended) {
       save.position = skipLatches(router, cont.pos, save.flags);
+      if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
       pushLog(router, save);
       writeAutosave(localStorage, save);
       h.onChange();
       return;
+    }
+    if (cont.ending && !save.endings.includes(cont.ending)) {
+      save.endings.push(cont.ending);
+      writeAutosave(localStorage, save);
+      h.notify(`Ending recorded: ${cont.ending}`);
     }
     box.innerHTML = `<div class="narrate">— End of ${escapeAttr(pos.script)} —</div>
       <div class="dim">The story continues in another file; use the chart or title.</div>`;
@@ -192,6 +231,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
           h.notify(`Ending recorded: ${r.ending}`);
         }
         save.position = skipLatches(router, r.next, save.flags);
+        if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
         pushLog(router, save);
         writeAutosave(localStorage, save);
         h.onChange();
@@ -204,6 +244,10 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
 
   if (ev.t === "say" || ev.t === "narrate") {
     playVoice(save, ev, h.settings.voiceVol);
+    // Capture whether this line was read BEFORE this display: markRead()
+    // runs now, so checking isRead() later in scheduleAuto() always said
+    // "read" and Ctrl-skip ignored the read-only setting entirely.
+    currentWasRead = isRead(save);
     markRead(save);
     const cls = ev.t === "say" ? "say" : "narrate";
     const who = ev.t === "say" && displaySpeaker(save, ev)
@@ -214,7 +258,12 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     if (speed > 0) {
       startTypewriter(box, full, ev.text, who, outer, speed, () => scheduleAuto(h));
       el.onclick = () => {
-        if (completeTypewriter(box, full)) return; // first click completes
+        if (completeTypewriter(box, full)) {
+          // A manual completion must still arm auto/skip, or the line sits
+          // forever in auto mode until another event re-renders.
+          scheduleAuto(h);
+          return; // first click completes
+        }
         stepForward(h);
       };
     } else {
@@ -346,6 +395,12 @@ function completeTypewriter(box: HTMLElement, full: string): boolean {
   return true;
 }
 
+/** Pure skip-read gate (test-pinned): read-only skip must stop at a line
+ * that had not been displayed before this render. */
+export function skipBlocked(active: boolean, skipRead: boolean, wasRead: boolean): boolean {
+  return active && skipRead && !wasRead;
+}
+
 /** Auto-advance scheduling (auto mode + Ctrl-held skip mode).
  * Read-mode skip halts on the first unread line (never advances past it). */
 function scheduleAuto(h: ReaderHooks): void {
@@ -354,14 +409,14 @@ function scheduleAuto(h: ReaderHooks): void {
   if (delay <= 0) return;
   const ev = h.router.at(h.save.position);
   if (!ev || ev.t === "choice") return; // never auto-pick
-  if (h.skip.active && h.settings.skipRead && !isRead(h.save)) {
+  if (skipBlocked(h.skip.active, h.settings.skipRead, currentWasRead)) {
     h.skip.active = false;
     h.onSkipStop();
     return;
   }
   autoTimer = window.setTimeout(() => {
     autoTimer = null;
-    if (h.skip.active && h.settings.skipRead && !isRead(h.save)) {
+    if (skipBlocked(h.skip.active, h.settings.skipRead, currentWasRead)) {
       h.skip.active = false;
       h.onSkipStop();
       return;
@@ -451,18 +506,19 @@ export function pushLog(router: Router, save: SaveData): void {
 
 function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number): void {
   const st = stageImageState(save);
+  paintBackdrop(stage, st, bnrFadeAt(save));
   const prevPh = stage.querySelector(":scope > .stage-ph");
   if (st.url) {
-    stage.style.backgroundImage = `url("${st.url}")`;
-    stage.style.backgroundColor = "";
     prevPh?.remove();
   } else {
-    stage.style.backgroundImage = "";
     if (st.cleared) {
-      // Engine clear-to-black (e.g. stage-play spotlight scenes).
+      // Engine clear-to-black (e.g. stage-play spotlight scenes): remove
+      // the CSS default gradient too, or the stage stays navy.
+      stage.style.backgroundImage = "none";
       stage.style.backgroundColor = "#000";
       prevPh?.remove();
     } else {
+      stage.style.backgroundImage = "";
       stage.style.backgroundColor = "";
       if (!prevPh) {
         const div = document.createElement("div");
@@ -479,7 +535,50 @@ function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number): void {
   paintOverlay(stage, save);
   paintSprites(stage, save);
   paintBgm(save, bgmVol);
-  paintFade(stage, save);
+}
+
+/** Crossfade the backdrop with a two-layer <img> pair.
+ *
+ * `background-image` cannot animate (the old `transition-duration` on the
+ * stage was inert), and replacing a single <img> pops. Two layers let the
+ * outgoing art fade under the incoming art; the engine's .bnr fade duration
+ * is the transition time. A clear removes both layers (true black).
+ */
+function paintBackdrop(stage: HTMLElement, st: StageImageState, ms: number | null): void {
+  const layers = [...stage.querySelectorAll(":scope > img.stage-bg")] as HTMLImageElement[];
+  const active = layers.find((l) => l.dataset.active === "1") ?? null;
+  if (!st.url) {
+    for (const l of layers) l.remove();
+    return;
+  }
+  if (active?.dataset.cur === st.url) return;
+  const duration = Math.max(0, ms ?? 0);
+  // Reuse the inactive buffer; if both are absent create one.
+  let next = layers.find((l) => l !== active) ?? null;
+  if (!next) {
+    next = document.createElement("img");
+    next.className = "stage-bg";
+    next.alt = "";
+    stage.prepend(next);
+  }
+  next.dataset.cur = st.url;
+  next.style.transitionDuration = `${duration}ms`;
+  next.style.opacity = "0";
+  next.style.zIndex = "1";
+  next.src = st.url;
+  requestAnimationFrame(() => {
+    next!.style.opacity = "1";
+  });
+  if (active) {
+    active.dataset.active = "";
+    active.style.transitionDuration = `${duration}ms`;
+    active.style.opacity = "0";
+    active.style.zIndex = "0";
+    window.setTimeout(() => {
+      if (active.dataset.active !== "1") active.remove();
+    }, duration + 60);
+  }
+  next.dataset.active = "1";
 }
 
 // These walk the loaded scenarios via a module-level ref set by main.ts.
@@ -531,7 +630,14 @@ export function resolveStageImageEx(
   const cues: Cue[] = [];
   let seq = 0;
   for (const { e, i } of txt) {
-    if (e.t === "image") cues.push({ ev: i, file: e.file, rank: 0, seq: seq++ });
+    // txt `<file>.tga` + `grp` is event art (overlay), not a backdrop: the
+    // engine's txt image driver routes grp to the overlay layer. Treating a
+    // grp image as a backdrop let CGs become the stage floor when the
+    // overlay later cleared. `null` (missing layer token) keeps legacy bak
+    // behavior.
+    if (e.t === "image" && e.layer !== "grp") {
+      cues.push({ ev: i, file: e.file, rank: 0, seq: seq++ });
+    }
   }
   for (const r of bnr ?? []) {
     if (r.conf !== "high" || r.ev > event) continue;
@@ -657,11 +763,45 @@ function paintOverlay(stage: HTMLElement, save: SaveData): void {
  * Latest cue at/before the event wins; files with no cue inherit prior BGM
  * (sustain); `missing` tracks (no file in BGM.PAKs) also sustain — the
  * player never inserts silence except on explicit stops. */
-export function bgmCueAt(save: SaveData): { kind: "play"; url: string } | { kind: "stop" } | { kind: "sustain" } {
+export function bgmCueAt(save: SaveData): { kind: "play"; url: string; loopUrl?: string; track?: number } | { kind: "stop" } | { kind: "sustain" } {
   const cues = bgmLookup?.(save.position.script);
   if (!cues || cues.length === 0) return { kind: "sustain" };
   const ch = chapterOfScript(save.position.script);
-  return resolveBgmTimeline(cues, save.position.event, (t) => bgmTrackUrl(t, ch));
+  let track: number | null = null;
+  const cue = resolveBgmCue(cues, save.position.event, (t) => {
+    const intro = bgmIntroUrl(t, ch);
+    const loop = bgmLoopUrl(t, ch);
+    const solo = intro || loop ? null : bgmSoloUrl(t, ch);
+    if (!intro && !loop && !solo) return null;
+    track = t;
+    return { url: intro ?? loop ?? solo!, loopUrl: intro ? (loop ?? intro) : (loop ?? solo!) };
+  });
+  if (cue.kind === "play" && track !== null) {
+    return { ...cue, track };
+  }
+  return cue;
+}
+
+/** Pure BGM cue resolver with loop-pair support (DOM-free; test-pinned).
+ * The engine plays `_A` (intro) once and then loops `_B`; when only one part
+ * exists it loops that. Missing/unresolvable tracks sustain the previous
+ * BGM exactly like resolveBgmTimeline. */
+export function resolveBgmCue(
+  cues: { ev: number; track?: number; stop?: boolean; missing?: boolean }[],
+  event: number,
+  resolve: (track: number) => { url: string; loopUrl?: string } | null,
+): { kind: "play"; url: string; loopUrl?: string } | { kind: "stop" } | { kind: "sustain" } {
+  let pending: { kind: "play"; url: string; loopUrl?: string } | { kind: "stop" } | null = null;
+  for (const c of cues) {
+    if (c.ev > event) break;
+    if (c.stop) {
+      pending = { kind: "stop" };
+    } else if (c.track !== undefined && !c.missing) {
+      const r = resolve(c.track);
+      if (r) pending = { kind: "play", ...r };
+    }
+  }
+  return pending ?? { kind: "sustain" };
 }
 
 /** Pure BGM timeline resolver (DOM-free; test-pinned).
@@ -672,17 +812,10 @@ export function resolveBgmTimeline(
   event: number,
   resolve: (track: number) => string | null,
 ): { kind: "play"; url: string } | { kind: "stop" } | { kind: "sustain" } {
-  let pending: { kind: "play"; url: string } | { kind: "stop" } | null = null;
-  for (const c of cues) {
-    if (c.ev > event) break;
-    if (c.stop) {
-      pending = { kind: "stop" };
-    } else if (c.track !== undefined && !c.missing) {
-      const url = resolve(c.track);
-      if (url) pending = { kind: "play", url };
-    }
-  }
-  return pending ?? { kind: "sustain" };
+  return resolveBgmCue(cues, event, (t) => {
+    const url = resolve(t);
+    return url ? { url } : null;
+  });
 }
 
 type BgmLookup = (script: string) => BgmData["cues"][string] | undefined;
@@ -695,22 +828,84 @@ function paintBgm(save: SaveData, bgmVol: number): void {
   const audio = document.getElementById("bgm") as HTMLAudioElement | null;
   if (!audio) return;
   audio.volume = Math.max(0, Math.min(1, bgmVol));
-  const cue = bgmCueAt(save);
-  if (cue.kind === "play") {
-    if (audio.dataset.cur !== cue.url) {
-      audio.dataset.cur = cue.url;
-      audio.src = cue.url;
+  // Loop pairs (engine strings _a/_b): play the intro once, then loop the
+  // body. `data-cue` is the cue identity (so an already-advanced A->B pair
+  // is not restarted); `data-cur` is the file actually loaded.
+  audio.onended = () => {
+    const loop = audio.dataset.loopUrl;
+    if (loop && audio.dataset.cur !== loop) {
+      audio.dataset.cur = loop;
+      audio.loop = true;
+      audio.src = loop;
       audio.play().catch(() => undefined);
     }
+  };
+  const start = (url: string, loopUrl?: string) => {
+    audio.dataset.cue = url;
+    audio.dataset.cur = url;
+    audio.dataset.loopUrl = loopUrl ?? "";
+    audio.loop = !loopUrl || loopUrl === url;
+    audio.src = url;
+    audio.play().catch(() => undefined);
+  };
+  const stop = () => {
+    if (!audio.dataset.cue) return;
+    delete audio.dataset.cue;
+    delete audio.dataset.cur;
+    delete audio.dataset.loopUrl;
+    audio.loop = false;
+    audio.pause();
+    audio.removeAttribute("src");
+  };
+  const trackParts = (track: number) => {
+    const ch = chapterOfScript(save.position.script);
+    const intro = bgmIntroUrl(track, ch);
+    const loop = bgmLoopUrl(track, ch);
+    const solo = intro || loop ? null : bgmSoloUrl(track, ch);
+    const url = intro ?? loop ?? solo;
+    return url
+      ? { url, loopUrl: intro ? (loop ?? intro) : (loop ?? solo ?? url) }
+      : null;
+  };
+  const cue0 = bgmCueAt(save);
+  let cue = cue0;
+  if (cue.kind === "sustain") {
+    // The engine inherits BGM across files. On a fresh page / save load the
+    // audio element has no state, and after jumping to another script it may
+    // still hold an unrelated track; reconcile it with the save's last track
+    // (undefined = legacy save, null = explicit stop).
+    if (save.bgm === null) {
+      stop();
+    } else if (save.bgm && typeof save.bgm.track === "number") {
+      const target = trackParts(save.bgm.track);
+      if (target && audio.dataset.cue !== target.url) {
+        cue = { kind: "play", track: save.bgm.track, ...target };
+      }
+    }
+  }
+  if (cue.kind === "play") {
+    if (audio.dataset.cue !== cue.url) start(cue.url, cue.loopUrl);
+    if (cue.track !== undefined && save.bgm?.track !== cue.track) {
+      save.bgm = { track: cue.track };
+      writeAutosave(localStorage, save);
+    }
   } else if (cue.kind === "stop") {
-    if (audio.dataset.cur) {
-      delete audio.dataset.cur;
-      audio.pause();
-      audio.removeAttribute("src");
+    stop();
+    if (save.bgm !== null) {
+      save.bgm = null;
+      writeAutosave(localStorage, save);
     }
   }
   // sustain: leave the current track playing (engine inherits BGM across
   // files; only explicit stops silence it).
+  //
+  // Autoplay retry: a cold load (e.g. deep link or save resume without a
+  // user gesture) rejects play(); the cue URL stays current, so retry on
+  // every render — the next advance is a user gesture and starts the track
+  // instead of leaving the session silent forever.
+  if (audio.dataset.cur && audio.paused) {
+    audio.play().catch(() => undefined);
+  }
 }
 
 /** Backdrop fade duration from high-confidence .bnr fade records.
@@ -742,11 +937,6 @@ export function resolveFade(
   return pending;
 }
 
-function paintFade(stage: HTMLElement, save: SaveData): void {
-  const ms = bnrFadeAt(save);
-  stage.style.transitionDuration = ms !== null ? `${ms}ms` : "";
-}
-
 /** Fire-and-forget high-confidence SE triggers (data/bnr.json).
  * Hypothesis-confidence records are deliberately ignored (docs/QA.md). */
 export function seCueAt(save: SaveData): string | null {
@@ -758,7 +948,22 @@ export function seCueAt(save: SaveData): string | null {
 }
 
 /** Pure SE trigger resolver (DOM-free; test-pinned). Only high-confidence
- * records fire; hypothesis records are ignored by design. */
+ * records fire; hypothesis records are ignored by design. Returns every SE
+ * id anchored in `(from, to]` in statement order: a step may skip directive
+ * events (skipLatches), and two statements can share one anchor event. */
+export function resolveSeIds(
+  recs: { ev: number; se?: number[]; conf: string }[],
+  from: number,
+  to: number,
+): number[] {
+  const out: number[] = [];
+  for (const r of recs) {
+    if (r.conf !== "high" || !r.se?.length) continue;
+    if (r.ev > from && r.ev <= to) out.push(...r.se);
+  }
+  return out;
+}
+
 export function resolveSeRec(
   recs: { ev: number; se?: number[]; conf: string }[],
   event: number,
@@ -777,13 +982,42 @@ export function setBnrLookup(fn: BnrLookup | null): void {
   bnrLookup = fn;
 }
 
-function fireSe(save: SaveData): void {
-  const url = seCueAt(save);
-  if (!url) return;
+// Last position whose SEs have fired. A render only fires the events
+// crossed since the previous render: re-rendering the same line (open/close
+// backlog, settings) must not replay its sound, while stepping over skipped
+// directive events must still fire theirs.
+let seCursor: { script: string; ev: number } | null = null;
+
+function playSeUrl(url: string): void {
   const audio = document.getElementById("se") as HTMLAudioElement | null;
   if (!audio) return;
+  if (!audio.paused) {
+    // Two SEs can share one anchor event. Keep the shared element for the
+    // first and play overlaps on a transient element instead of cutting.
+    const extra = new Audio(url);
+    extra.play().catch(() => undefined);
+    return;
+  }
   audio.src = url;
   audio.play().catch(() => undefined);
+}
+
+function fireSe(save: SaveData): void {
+  const script = save.position.script;
+  const ev = save.position.event;
+  const cur = seCursor;
+  if (cur && cur.script === script && cur.ev === ev) return;
+  seCursor = { script, ev };
+  const recs = bnrLookup?.(script);
+  if (!recs) return;
+  // Forward inside one script: fire the crossed range. First render / save
+  // load / backward seek: fire only the current event.
+  const from = cur && cur.script === script && ev > cur.ev ? cur.ev : ev - 1;
+  const ch = chapterOfScript(script);
+  for (const id of resolveSeIds(recs, from, ev)) {
+    const url = seUrl(id, ch);
+    if (url) playSeUrl(url);
+  }
 }
 
 /** Pure ambient-channel resolvers (DOM-free; test-pinned). Only
@@ -808,6 +1042,31 @@ export function resolveAmbStop(
     }
   }
   return null;
+}
+
+/** Latest high-confidence state per ambient channel at/before an event.
+ *
+ * A per-event lookup (the old resolveAmbCue/resolveAmbStop pair) loses cues
+ * whenever the reader steps over directive events (skipLatches) and starts
+ * silent after loading a save mid-scene. The engine keeps channel state, so
+ * the player resolves the same lifetime: replay every cue up to the event
+ * in statement order, last write per channel wins. */
+export type AmbTimelineEntry =
+  | { kind: "play"; cue: AmbCue }
+  | { kind: "stop" };
+
+export function resolveAmbientTimeline(
+  recs: { ev: number; amb?: AmbCue; ambStop?: number; conf: string }[],
+  event: number,
+): Map<number, AmbTimelineEntry> {
+  const out = new Map<number, AmbTimelineEntry>();
+  const ordered = [...recs].sort((a, b) => a.ev - b.ev);
+  for (const r of ordered) {
+    if (r.conf !== "high" || r.ev > event) continue;
+    if (r.amb) out.set(r.amb.ch, { kind: "play", cue: r.amb });
+    else if (r.ambStop !== undefined) out.set(r.ambStop, { kind: "stop" });
+  }
+  return out;
 }
 
 // Ambient channel state (engine .bnr (4,165)/(4,166)): up to four
@@ -836,28 +1095,45 @@ function updateAmbient(save: SaveData): void {
   ambScript = save.position.script;
   const recs = bnrLookup?.(save.position.script);
   if (!recs) return;
-  const stop = resolveAmbStop(recs, save.position.event);
-  if (stop !== null) stopAmbChannel(stop);
-  const cue = resolveAmbCue(recs, save.position.event);
-  if (!cue) return;
+  const timeline = resolveAmbientTimeline(recs, save.position.event);
   const ch = chapterOfScript(save.position.script);
-  const url = seUrl(cue.se, ch);
-  let a = ambEls.get(cue.ch);
-  if (!a) {
-    a = document.createElement("audio");
-    a.dataset.ch = String(cue.ch);
-    ambEls.set(cue.ch, a);
+  // A backward seek/load may land before a channel's cue: anything the
+  // timeline does not keep alive must stop (engine channel state is
+  // positional, not "whatever was playing last").
+  for (const activeCh of [...ambEls.keys()]) {
+    if (!timeline.has(activeCh)) stopAmbChannel(activeCh);
   }
-  if (!url) {
-    // missing asset: silence the channel rather than replay a stale cue
-    stopAmbChannel(cue.ch);
-    return;
+  for (const [chan, state] of timeline) {
+    if (state.kind === "stop") {
+      stopAmbChannel(chan);
+      continue;
+    }
+    const cue = state.cue;
+    const url = seUrl(cue.se, ch);
+    let a = ambEls.get(chan);
+    if (!a) {
+      a = document.createElement("audio");
+      a.dataset.ch = String(chan);
+      ambEls.set(chan, a);
+    }
+    if (!url) {
+      // missing asset: silence the channel rather than replay a stale cue
+      stopAmbChannel(chan);
+      continue;
+    }
+    if (a.dataset.cur === url) {
+      // Same cue still active: never restart the loop on a re-render.
+      a.loop = cue.loop;
+      a.volume = Math.max(0, Math.min(1, cue.vol / 255));
+      if (a.paused) a.play().catch(() => undefined);
+      continue;
+    }
+    a.dataset.cur = url;
+    a.src = url;
+    a.loop = cue.loop;
+    a.volume = Math.max(0, Math.min(1, cue.vol / 255));
+    a.play().catch(() => undefined);
   }
-  a.dataset.cur = url;
-  a.src = url;
-  a.loop = cue.loop;
-  a.volume = Math.max(0, Math.min(1, cue.vol / 255));
-  a.play().catch(() => undefined);
 }
 
 /** Latest .AMP color-grade filter at/before position.
@@ -1000,9 +1276,10 @@ function paintSprites(stage: HTMLElement, save: SaveData): void {
     bnrLookup?.(save.position.script),
     save.position.event,
   );
+  const chapter = chapterOfScript(save.position.script);
   const seen = new Set<number>();
   active.forEach((s, i) => {
-    const url = imageUrl(`${s.stem}.tga`);
+    const url = imageUrl(`${s.stem}.tga`, chapter);
     let img = stage.querySelector(
       `:scope > img.stage-spr[data-id="${s.id}"]`,
     ) as HTMLImageElement | null;

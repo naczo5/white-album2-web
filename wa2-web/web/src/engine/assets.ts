@@ -35,12 +35,14 @@ export async function loadManifest(url: string): Promise<AssetManifest | null> {
     }
     voiceIdx = new Map();
     for (const [key, val] of Object.entries(manifest.voice ?? {})) {
-      const m = /^(ic\/)?(\d+_\d+)/.exec(key);
-      if (!m) continue;
-      const id = `${m[1] ?? ""}${m[2]}`;
-      const arr = voiceIdx.get(id) ?? [];
+      // Keys are already archive line keys ("1008_0199",
+      // "1008_020_0199", "ic/1002_0000"); keep the whole key. The old
+      // `(\d+_\d+)` capture collapsed a variant script suffix into the line
+      // key and made those clips unreachable from voiceUrl().
+      if (!/^(ic\/)?[0-9]/.test(key)) continue;
+      const arr = voiceIdx.get(key) ?? [];
       arr.push(val);
-      voiceIdx.set(id, arr);
+      voiceIdx.set(key, arr);
     }
     return manifest;
   } catch {
@@ -85,14 +87,18 @@ export function bgmUrl(file: string, chapter?: string): string | null {
 }
 
 /**
- * BGM track file for a .bnr cue. Engine plays BGM_%03d: a loop pair
- * (_A intro + _B body) or a solo file. Prefers the loop body when both
- * exist; intro chapter checks ic/-namespaced keys first.
+ * BGM part URLs for a .bnr cue. Engine strings (tools/proto_bgm_report.md):
+ * `BGM_%03d_a.ogg` = loop intro, `_b` = loop body, bare = solo. The extractor
+ * namespaces IC nested-LAC audio as `ic-<file>` (images/voice use `ic/`), so
+ * both forms are probed.
  */
-export function bgmTrackUrl(track: number, chapter?: string): string | null {
-  const id = `BGM_${String(track).padStart(3, "0")}`;
-  const cands = chapter === "intro" ? [`ic/${id}_B.OGG`, `ic/${id}_A.OGG`, `ic/${id}.OGG`] : [];
-  cands.push(`${id}_B.OGG`, `${id}_A.OGG`, `${id}.OGG`);
+function bgmPartUrl(track: number, suffix: "" | "_A" | "_B", chapter?: string): string | null {
+  const id = `BGM_${String(track).padStart(3, "0")}${suffix}`;
+  const cands = chapter === "intro"
+    ? [`ic/${id}.OGG`, `ic/${id}.ogg`, `ic/${id}.g`,
+       `ic-${id}.OGG`, `ic-${id}.ogg`, `ic-${id}.g`]
+    : [];
+  cands.push(`${id}.OGG`, `${id}.ogg`, `${id}.g`);
   for (const c of cands) {
     const hit = lookup(manifest?.bgm, c);
     if (hit) return hit;
@@ -100,11 +106,36 @@ export function bgmTrackUrl(track: number, chapter?: string): string | null {
   return null;
 }
 
+/** Loop intro part (`_A`), if shipped. */
+export function bgmIntroUrl(track: number, chapter?: string): string | null {
+  return bgmPartUrl(track, "_A", chapter);
+}
+
+/** Loop body (`_B`), if shipped. */
+export function bgmLoopUrl(track: number, chapter?: string): string | null {
+  return bgmPartUrl(track, "_B", chapter);
+}
+
+/** Single-file track (no loop pair). */
+export function bgmSoloUrl(track: number, chapter?: string): string | null {
+  return bgmPartUrl(track, "", chapter);
+}
+
+/** Convenience: the track's loop body, then intro, then solo. */
+export function bgmTrackUrl(track: number, chapter?: string): string | null {
+  return bgmLoopUrl(track, chapter) ?? bgmIntroUrl(track, chapter) ??
+    bgmSoloUrl(track, chapter);
+}
+
 /** Sound-effect file by engine id (SE_%04d). Chapter-namespaced like BGM. */
 export function seUrl(id: number | string, chapter?: string): string | null {
   const base = typeof id === "number" ? `SE_${String(id).padStart(4, "0")}` : id;
-  const cands = chapter === "intro" ? [`ic/${base}.WAV`, `ic/${base}.wav`] : [];
-  cands.push(`${base}.WAV`, `${base}.wav`, `${base}.ogg`, `${base}.OGG`);
+  const cands = chapter === "intro"
+    ? [`ic/${base}.WAV`, `ic/${base}.wav`, `ic/${base}.w`, `ic/${base}.W`,
+       `ic-${base}.WAV`, `ic-${base}.wav`, `ic-${base}.w`, `ic-${base}.W`]
+    : [];
+  cands.push(`${base}.WAV`, `${base}.wav`, `${base}.w`, `${base}.W`,
+             `${base}.ogg`, `${base}.OGG`, `${base}.g`);
   for (const c of cands) {
     const hit = lookup(manifest?.sfx, c);
     if (hit) return hit;
@@ -137,12 +168,27 @@ export function movieUrl(id: string): string | null {
 export function voiceUrl(script: string, tok: number | undefined, chapter?: string): string | null {
   if (tok === undefined || !voiceIdx) return null;
   const line = String(tok).padStart(4, "0");
-  if (chapter === "intro") {
-    const ic = voiceIdx.get(`ic/${script}_${line}`);
-    if (ic?.length) return ic[0];
+  // Variant scripts share their family's voice pool (exe key chain:
+  // 1008_020 -> 1008_0199). The exact-key voicemap normally handles this;
+  // this chain keeps the legacy bare-NNN fallback working for variants too.
+  const chain: string[] = [];
+  let base = script;
+  for (;;) {
+    chain.push(base);
+    if (!base.includes("_")) break;
+    base = base.slice(0, base.lastIndexOf("_"));
   }
-  const main = voiceIdx.get(`${script}_${line}`);
-  return main?.length ? main[0] : null;
+  if (chapter === "intro") {
+    for (const b of chain) {
+      const ic = voiceIdx.get(`ic/${b}_${line}`);
+      if (ic?.length) return ic[0];
+    }
+  }
+  for (const b of chain) {
+    const main = voiceIdx.get(`${b}_${line}`);
+    if (main?.length) return main[0];
+  }
+  return null;
 }
 
 /**

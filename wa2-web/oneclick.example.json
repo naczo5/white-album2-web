@@ -1,0 +1,17 @@
+{
+  "game_dir": "",
+  "images": [],
+  "archive_items": [],
+  "mao_zip": "",
+  "mao_dir": "",
+  "assets": true,
+  "serve": true,
+  "open": true,
+  "host": "127.0.0.1",
+  "port": 8080,
+  "jobs": 8,
+  "movie_crf": 21,
+  "movie_height": 0,
+  "auto_deps": true,
+  "i_own_the_game": false
+}

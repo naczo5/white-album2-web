@@ -7,16 +7,24 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit (tools) | `pytest tests/` | 35 passed (bnr 7 + flags 7 + kcap 4 + parse_txt 11 + voice 6) |
-| corpus (BYOA) | `WA2_EN_PAK=... pytest tests/` | 205+49 files, census, routers, mega-choices, warnings allowlist |
-| web unit | `cd web && vitest run` | 58 passed (text/router/save/assets/bgm/flowgraph) |
-| types+build | `tsc --noEmit && npm run build` | clean |
-| flow parity | `check_flow.py IR flow.json` | 32/32 nodes, wording exact |
-| bnr choice gate | `check_bnr_choices.py IR script.pak` | 31/31 choices carry (4,208) markers |
+| unit + data (tools) | `pytest tests/` | 77 passed + 7 BYOA-skipped (unit); 84 passed with `WA2_EN_PAK` |
+| web unit | `cd web && vitest run` | 74 passed + 1 BYOA-skipped |
+| real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | 183/221 scripts, no throw/stall |
+| types+build | `tsc --noEmit && npm run build` | clean (engine ~52 KB) |
+| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 84 passed (7 corpus tests; 517 en.pak entries, zero parser warnings) |
+| flow parity | `check_flow.py IR flow.json` | 32/32 nodes, option text exact |
+| bnr choice gate | `check_bnr_choices.py IR script.pak` | 32/32 choices carry (4,208) markers |
 | flag reference | `build_flags.py script.pak` | 29 vars + 62 gflags, 15/15 pick flags mapped |
-| full sim | `simulate.py … routers/first/chiaki/mari/koharu/special` | 202/245 scripts, 0 stalls |
-| MAO pin | `fetch_mao.py IR_MAIN IR_SPECIAL --clone …` | v2.1.0, 0.986 containment / 193 scripts |
+| links | `build_links.py IR links.json` | 206 sites: 199 HINT + 7 SWITCH |
+| full sim | `simulate.py … routers/first/special` | 153/221 routers, 92/221 first, 49/221 special, 0 stalls |
+| MAO pin | `fetch_mao.py IR --clone …` | v2.1.0, 0.988 containment, 171 scripts / 45526 lines |
 | assets | `extract_assets.py --selftest` | KCAP+TGA+WAV round-trip |
+
+> Verified 2026-11-06 against the installed JP game directory in
+> `.cache/game` plus the MAO v2.1.0 release. `todokanai/subtitles` is absent
+> (optional voice-cue timing only). Movies WERE extracted (imageio-ffmpeg
+> static `ffmpeg`, 32 movies / 689 MB) via the one-click asset build; media
+> stay on disk only, never committed.
 
 ## Proven by engine evidence
 
@@ -82,8 +90,8 @@ is proven, what is assumed, and exactly how to close each gap.
 10. **Coda 31xx/32xx identity** (epilogues vs route tails).
 11. **v1.3.6→v2.1.0 structural diff**: 2007 + 3013 choices exist only in
    v2.1.0; build is version-agnostic but flow.json here is v2.1.0.
-    **Data now built from the MAO v2.1.0 release paks** (downloaded
-    release zip → en.pak × 2), pin audit passed (0.986 / 193 scripts).
+    **Data now built from the installed JP script.pak + MAO v2.1.0
+    en.paks**, pin audit passed (0.988 / 171 scripts / 45526 lines).
 15. **Special-disc variant JP text** (blocks exact voice anchoring for 43
    variant scripts): their `.bnr` anchors reference JP variant txts that
    are NOT in script.pak (e.g. `2031_2.txt` only exists in MAO's en.pak,
@@ -91,16 +99,18 @@ is proven, what is assumed, and exactly how to close each gap.
    state). Those scripts keep fractional voice assignment (resolved file
    keys, so the right clips play); supplying the special/tokuten JP
    script pak would close the gap via the same chain.
-12. **2021/2022/2023 → 2025 SWITCH skips**: consecutive bare-jump pairs
-   offer skipping ahead (including skipping the 2024 12/31 choice).
-   Router plays everything linearly; plausibly flag-gated short paths.
-13. **3016 → 3024 bare hint**: mid-tail either/or pair with the
-    `CATCH3 → 3017` marker (same pattern as the 3015 switch). The port
-    reads `3016→3017→…→3024` linearly (content-coherent); confirm.
-    (Note: FLG_第３部15条件２ in Global.vrb proves the 3015 switch is a
-    flag-gated condition, same family — engine evidence, not just pattern.)
-14. **3023:536 `CATCH3 → {3201, 3101}`** vs linear `3023→3024`: same
-    question as 13, same default-plays-linear treatment.
+12. **2021/2022/2023 → 2025 SWITCH skips**: decoded now — the JP spine
+   encodes them as `CATCH2 [next,2025]` tails, and `build_links.py` keeps
+   them as `2020-52`, `2021-300`, `2022-460`, `2023-517` SWITCH sites
+   (default = next file). Router still plays the default linearly;
+   skipping ahead (including over the 2024 12/31 choice) is plausibly
+   flag-gated and remains unproven.
+13. **3016 → 3024 / 3017 pair**: decoded as `3016-1018` SWITCH
+   `[3024,3017]` (adjacent bare 3024 + `CATCH3` 3017), default 3017.
+   The port reads `3016→3017→…→3024` linearly (content-coherent);
+   confirm the 3024 short path.
+14. **3023 `CATCH3 → {3201, 3101}`**: decoded as `3023-523` SWITCH,
+   default 3101 (numeric play order); the 3201 short path is unconfirmed.
 15. **IC-chapter backdrop mismatch — ROOT-CAUSED (2026-10-08), fix staged**:
     the "CG shown as backdrop" (e.g. 1002 ev 0 `100100` → CG v100100) was
     two port bugs, not an IC-pak mystery: (a) ops (4,146) and (4,147)
@@ -114,16 +124,156 @@ is proven, what is assumed, and exactly how to close each gap.
     apply same-event cues in statement order (last statement wins —
     1002's ev-0 cue 100400 classroom correctly supersedes 100100).
     **Deployment note**: the corrected decode (147→grp, CGs as
-    full-screen overlays) lands in web data only with the JP-spine IR
-    rewiring — the currently deployed bnr.json uses older fractional
-    coordinates that no longer reproduce from HEAD tools, so it ships
-    unchanged; the resolver fix alone already kills the CG leak against
-    it (147-cued stems with both b and v files still show the b-variant
-    as backdrop until then).
+    full-screen overlays) is now live in the real JP-spine build
+    (2026-11-02); the resolver fix alone already killed the CG leak.
 16. **bak-cue resolver fall-through — RESOLVED (2026-10-08)**: replaced by
     the engine-proven per-layer prefixes above; see item 15.
+17. **147/148 sprite-clear semantics — RESOLVED (2026-11-02)**: static
+    disassembly of `FUN_004167e0` shows the clear-all call `0x402680`
+    inside `if (param_3 == 0)` — only the backdrop/146 path. Mode 1
+    (147/148) never wipes. `decode_bnr.py` now emits `sprClear` only for
+    `layer == "bak"`; the 1013 sprite-under-CG observation is consistent.
+18. **Special Contents series termination — needs playtest**: terminals end
+    5000/5100/5200/5300/5400 immediately while their bare-link runs continue
+    through 5004/5104/5209/5303/5401; 4000-4009 and 6001-6005 have no
+    terminal, so numeric spine runs 6005/6104 -> 7000 (a different menu
+    extra). The special menu also starts each file individually. Map which
+    ids are entry points vs continuations before changing routes.
+19. **3016 final-router annotations vs file-jump model**: endings.json
+    describes `3016-822 opt2 -> 3901` *and* a later `3016-859` pick on the
+    same true-ending path, but the router treats opt2 as a hard jump and
+    3016-859 is then unreachable. Either the engine returns from 3901 or
+    the option-goto heuristic is wrong; needs play-test/save evidence.
+20. **Backdrop fade presentation**: the player now crossfades with the .bnr
+    fade duration (an animated `<img>` pair; CSS `transition` on
+    `background-image` was inert) and clears to true black. Confirm the
+    timing/clearance against the PC build at the spotlight scenes.
 
 ## Subagent verification log
+
+- 2026-11-02 (real-asset verification + JP-spine rebase):
+  - **Assets located**: `.cache/game` is the installed/extracted JP game
+    (loose KCAP/LAC paks + `WA2.exe` + `IC/`; 8.0 GB total, no ISOs),
+    `.cache/mao_v210` is the extracted MAO v2.1.0 release, and
+    `.cache/analysis/{WA2_jp,WA2_mao}.exe` are the static-analysis binaries.
+    `todokanai/subtitles` is absent; ffmpeg is absent (movies not converted).
+  - **The committed flow/links were stale, not the endings**: a real JP-spine
+    build produced 34 nodes because `build_ir.py` was emitting five
+    engine-internal scripts (`catch`, `catch2`, `catch3`, `9999`, `LF3` —
+    title/menu screens, flag-init, and a Japanese sample scene). Excluding
+    them yields the documented 32 choices at the *original* coordinates
+    (2019-1484, 2003-242, 3016-822/859, 3014-376), matching endings.json.
+    The previous 2026-10-25 remap was against the stale committed flow and
+    has been reverted; data/flow.json is now the real 32-node build.
+  - **`build_links.py` was dropping every JP CATCH tail branch**: the JP
+    spine encodes transitions as `CATCH/CATCH2/CATCH3 [SCRIPT...]`, while
+    the tool only read bare ids. It now filters voice-context names, groups
+    adjacent jump events, and keeps 206 sites (199 HINT + 7 SWITCH:
+    2020/2021/2022/2023→2025, 2402→{2403,2413}, 3016→{3024,3017},
+    3023→{3201,3101}). `tests/test_links.py` pins this.
+  - **Annotation joins**: eight flow nodes failed the option-prefix join
+    because the JP/MAO manuscript wording differs (`Sorry, but…`, `On
+    second thought~ come here.`, `No, I don't…`, `Oh, who cares?`). Keys
+    updated; the built flow is 30 EXPERT_SOURCED + 2 NEEDS_PLAYTEST, zero
+    unannotated.
+  - **Ghidra 147/148 resolution**: imported `WA2_jp.exe` (87 s analysis)
+    and decompiled `FUN_004167e0`; the `FUN_00402680` sprite-clear call is
+    inside `if (param_3 == 0)`, i.e. only 146/backdrop. 147/148 pass mode 1
+    and do not wipe. `decode_bnr.py` now emits `sprClear` only for
+    `layer=="bak"`; rebuilt bnr has 0 grp wipe flags (all grp recs carry
+    `sprClear:false`). This closes old open item 17.
+  - **Verification**: `WA2_EN_PAK=… pytest` 84 passed; full build exits 0
+    with `check_flow` 32/32, `check_bnr_choices` 32/32, flags 15/15,
+    MAO pin 0.988 (171 scripts / 45526 lines), simulate clean
+    (routers 153/221, first 92/221, special 49/221), shipped-TS playthrough
+    183/221 no throw/stall; web 74 passed + 1 BYOA-skipped; `tsc`/build
+    clean (~52 KB engine).
+  - **Packaging observation**: raw installed archives measure 8.0 GB
+    (main 6.1 GB + IC 1.9 GB), not the 6.7 GB main-only table. Movie
+    extraction awaits ffmpeg; text/web-data build is complete.
+  - **One-click bootstrap** (`tools/oneclick.py`, `play.sh`,
+    docs/ONECLICK.md): installed game / local images / archive.org **item
+    metadata cache** -> MD5-verified local files, static extraction
+    (7z/bsdtar or pycdlib/py7zr), installer-LAC direct input, JP-spine data
+    build, asset extraction, Vite build, local preview. **No network data
+    path**: the user downloads the item files and the one-time metadata JSON,
+    the script hashes locally and refuses to build otherwise. Adds
+    multi-disc IC linking, ISO case normalization, `.cache/venv` auto-deps
+    (Pillow/imageio-ffmpeg/pycdlib/py7zr), disk checks, and `--only-serve`.
+    **2026-11-09 hash-sheet pass** (advisory verify_sheet +
+    `--hashes/--strict-hashes`): see data/archive-checksums.json.
+    Tests: 77 base / 84 with `WA2_EN_PAK` (15 one-click, 3 link tests).
+  - **Playable full build via oneclick** (2026-11-06): extracted the user's
+    share installer-LAC set (8.0 GB -> pipaks), ran data + full asset build
+    with movie transcode (32 movies, 689 MB total; converter time ~14 min).
+    Result: 53410 asset entries (3641 images, 165 BGM, 1962 SE, 45995 voice,
+    32 movies) + 65 non-asset extras (`.scc` text metadata etc.); game boots
+    and serves (text/data + HTTP 206 for movie ranges). The un-compacted
+    self-contained package is 6.7 GB folder / 6.2 GB zip (zip stores media;
+    deflate saves only the ~2.1 MB JSON + JS, so recompressing does not help).
+    Local-only verification against the user-supplied archive.org metadata
+    JSON: the three disc RARs + cover PNG hash OK (4/4).
+
+- 2026-10-25 (static audit; no game files in that checkout):
+  - **Why no corpus run**: the machine has no `*.pak`, no `WA2.exe` and no
+    built IR, so the BYOA/corpus/flow/sim/MAO gates could not be re-run and
+    no new exe disassembly was possible. Ghidra 12.1.4 is present; the
+    remaining RE items need the user's executable/archives.
+  - **Data/gates**: `data/endings.json` still cited pre-spine node ids
+    (2019-1484, 2003-242, 3016-822/859, 3014-376) and would fail
+    `check_flow`'s endings check; remapped to the current nodes
+    (2019-1488, 2003-241, 3016-826/863, 3014-377) — **later reverted
+    2026-11-02**: the real JP-spine build showed the original ids are
+    correct and the committed flow was the stale side. `data/flow.json` still
+    carried the old EN-split node `3904_2-386` though build_ir excludes
+    `NNNN_N`; now `3904-386`. New `tests/test_data.py` pins annotation join,
+    unique coords, endings/terminal refs and link counts. `check_flow` now
+    also rejects terminal `ending` ids that are absent from endings.json.
+  - **Parser**: fullwidth option numbers inside mega segments no longer
+    raise `ValueError`; option rows separated by a speaker tag merge into
+    one choice UI (previously two forced single-option screens, contrary to
+    docs/PARSING's claim); directive shapes are classified before the
+    option regex so `1.tga` is an image, not option 1 with text "tga".
+  - **Router/sim**: `simulate.spine_next` now mirrors buildSpine for
+    variants (a variant at a chapter seam no longer walks into the next
+    chapter's first base).
+  - **Player parity**: ambient channels resolve as a lifetime timeline
+    (cues crossed by skip/img steps and after save-load now play; multiple
+    channels at one event no longer drop); SE fires the whole crossed range
+    and all ids at an anchor (re-render no longer replays); BGM plays the
+    `_A` intro then loops `_B` (was B-only), retries a blocked autoplay
+    on the next gesture, and saves/restores the last engine track across a
+    mid-scene load (optional `save.bgm` field; legacy saves stay silent
+    until the next cue); IC nested-LAC audio probes both `ic/` and `ic-`
+    namespaces; sprite lookups use the IC chapter namespace; txt `grp`
+    images no longer leak into the backdrop resolver; backdrop changes
+    crossfade with the .bnr duration and clear-to-black is actually black.
+  - **Saves**: imported JSON is sanitized (missing `updatedAt`, malformed
+    backlog rows), and the optional BGM state is validated; a damaged save
+    can no longer crash the backlog/save screens.
+  - **Input/UI**: skip-read was broken (markRead ran before the isRead
+    gate, so every line looked read); the gate now captures pre-render read
+    state and is unit-pinned. Manual typewriter completion re-arms
+    auto/skip. Settings sliders no longer re-render mid-drag. Overlay Back/
+    Esc returns to where the screen was opened (title vs reader) instead of
+    always entering the reader. Corrupt/NaN settings are clamped. Scripts
+    load with 12-way concurrency instead of 254 serial round trips.
+  - **Voice/assets**: legacy numeric voice refs chain to the family base
+    (`1008_020` -> `1008_0199`); Special-screen PDF links now say they are
+    BYOA and docs/BYOA documents where to put them.
+  - **Packaging**: `tools/pack_site.py` (static folder + launchers + zip +
+    per-section size report), `tools/optimize_assets.py` (opt-in WebP/AVIF
+    image + Opus audio pass), `docs/PACKAGING.md` (size tiers and limits).
+  - **Gates**: pytest 58 passed + 7 BYOA-skipped, vitest 74 passed + 1
+    BYOA-skipped, `tsc --noEmit` clean, `npm run build` clean (engine ~52 KB),
+    headless Chromium smoke: title->chart->back returns to title,
+    reader->chart->back returns to reader, read-only skip stops on an unread
+    line while skip-all reaches the choice, synthetic backdrop renders with
+    the placeholder removed and a bnr clear goes to true black, no console
+    errors.
+  - **Still open**: QA 17 (147/148 wipe), 18 (special-series terminals),
+    19 (3016 annotations vs jump model), 20 (fade timing). No routing was
+    changed for those: they need play-test/save-state evidence.
 
 - 2026-10-08 (static RE: image-op layer split, user-reported backdrop bug):
   - **Ops (4,146)/(4,147) separated by disassembly**: handlers 0x454f30

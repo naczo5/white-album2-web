@@ -192,4 +192,7 @@ export interface SaveData {
   endings: string[];
   log: { speaker: string; text: string }[];
   lastLogged?: string; // position key of the last logged line
+  /** Last BGM cue state for mid-scene restore: engine track number, or
+   * null after an explicit stop. Absent in legacy saves. */
+  bgm?: { track: number } | null;
 }

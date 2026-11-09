@@ -13,9 +13,9 @@ Usage:
   python3 check_bnr_choices.py IR_DIR SCRIPT_PAK [--report]
   --report prints the table and always exits 0 (default fails on gaps).
 
-  NOTE: .bnr files live in the JP script.pak, while IR events are parsed
-  from the EN .txt (JP counters drift vs EN tokens), so choice<->marker
-  matching is fractional with a +/-window, not exact.
+  NOTE: .bnr files live in the JP script.pak. This gate compares count
+  against the IR; JP-spine builds are event-aligned, legacy EN-only builds
+  drift vs JP tokens, so marker proximity is reported, never gated.
 """
 
 from __future__ import annotations

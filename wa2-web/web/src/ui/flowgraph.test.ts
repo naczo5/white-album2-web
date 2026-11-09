@@ -26,6 +26,15 @@ describe("buildChartGraph", () => {
     expect(g.pos["1004"]!.x).not.toBe(g.pos["2001"]!.x);
   });
 
+  it("roots at 1001 when present (the first script must be on the chart)", () => {
+    const scripts = ["1001", "1002", "1003"];
+    const sp = buildSpine(scripts);
+    const g = buildChartGraph(scripts, sp, [], {});
+    expect(g.depth["1001"]).toBe(0);
+    expect(g.depth["1002"]).toBe(1);
+    expect(g.depth["1003"]).toBe(2);
+  });
+
   it("spine edges fill gaps left by decoded links (no duplicates)", () => {
     const g = buildChartGraph(["1002", "1003", "1004"], buildSpine(["1002", "1003", "1004"]), [link("1002", ["1003"])], {});
     const kinds = g.edges.filter((e) => e.from === "1003").map((e) => e.kind);

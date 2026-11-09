@@ -22,13 +22,20 @@ interface Settings {
   dev: boolean; // dev mode: scene-jump buttons in the flowchart
 }
 
+function storedNumber(key: string, fallback: number, min: number, max: number): number {
+  const raw = localStorage.getItem(key);
+  const n = raw === null ? fallback : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
 const settings: Settings = {
   spoiler: localStorage.getItem("wa2web.spoiler") === "1",
   fontSize: clampFont(Number(localStorage.getItem("wa2web.fontSize") ?? 18)),
-  textSpeed: Number(localStorage.getItem("wa2web.textSpeed") ?? 45),
-  autoDelay: Number(localStorage.getItem("wa2web.autoDelay") ?? 0),
-  voiceVol: Number(localStorage.getItem("wa2web.voiceVol") ?? 0.9),
-  bgmVol: Number(localStorage.getItem("wa2web.bgmVol") ?? 0.7),
+  textSpeed: storedNumber("wa2web.textSpeed", 45, 0, 120),
+  autoDelay: storedNumber("wa2web.autoDelay", 0, 0, 8000),
+  voiceVol: storedNumber("wa2web.voiceVol", 0.9, 0, 1),
+  bgmVol: storedNumber("wa2web.bgmVol", 0.7, 0, 1),
   skipRead: localStorage.getItem("wa2web.skipRead") === "1",
   dev: localStorage.getItem("wa2web.dev") === "1",
 };
@@ -55,6 +62,11 @@ let data: GameData;
 let router: Router;
 let save: SaveData;
 let screen: Screen = "title";
+/** Screen to return to when an overlay (chart/guide/saves/log/settings/
+ * special) is dismissed. Opened from the reader -> reader; opened from the
+ * title -> title. The old hard-coded `screen = "read"` dropped title
+ * visitors into the story when they backed out of the chart. */
+let backTo: Screen = "title";
 const app = document.getElementById("app")!;
 
 async function boot(): Promise<void> {
@@ -126,8 +138,8 @@ async function boot(): Promise<void> {
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && screen !== "title" && screen !== "read") {
       // Esc leaves any overlay screen (log/chart/guide/saves/settings)
-      // back to the reader.
-      screen = "read";
+      // back to wherever it was opened from.
+      screen = backTo;
       render();
       return;
     }
@@ -148,7 +160,9 @@ async function boot(): Promise<void> {
 
 function freshStart(): SaveData {
   const first = data.scenarios[0]?.script ?? "demo-1";
-  return newSave("Haruki", { script: first, event: 0 });
+  const s = newSave("Haruki", { script: first, event: 0 });
+  s.visited.push(first);
+  return s;
 }
 
 function applySettings(): void {
@@ -171,6 +185,7 @@ const hooks = {
       render();
       return;
     }
+    backTo = screen;
     screen = s as Screen;
     render();
   },
@@ -205,12 +220,14 @@ function render(): void {
         if (m === "new") {
           if (confirm("Reset all progress and start over?")) {
             save = freshStart();
+            save.position = skipLatches(router, save.position, save.flags);
             writeAutosave(localStorage, save);
             screen = "read";
             render();
           }
           return;
         }
+        backTo = "title";
         screen = m as Screen;
         render();
       }),
@@ -244,11 +261,13 @@ function render(): void {
       dev: settings.dev,
       onJump: (script) => {
         save = newSave("debug", { script, event: 0 });
+        save.visited.push(script);
+        save.position = skipLatches(router, save.position, save.flags);
         writeAutosave(localStorage, save);
         screen = "read";
         render();
       },
-      onBack: () => { screen = "read"; render(); },
+      onBack: () => { screen = backTo; render(); },
     });
     return;
   }
@@ -258,13 +277,14 @@ function render(): void {
       app.querySelector(".screen") as HTMLElement,
       data.flow, data.endings as unknown as GuideData, save,
       settings.spoiler,
-      () => { screen = "read"; render(); },
+      () => { screen = backTo; render(); },
     );
     return;
   }
   if (screen === "special") {
     app.innerHTML = `<div class="screen"><div class="screen-head"><h2>Special Contents</h2>
-      <div class="dim">Bonus novels and scenes. Novel PDFs open in a new tab.</div></div>
+      <div class="dim">Bonus novels and scenes. Novel PDFs open in a new tab
+      (not bundled - place them in <code>data/novels/</code>, see docs/BYOA.md).</div></div>
       <h3>Digital novels</h3>
       <ol class="chart">
         <li class="node"><a href="data/novels/The Idol Who Forgot How to Sing.pdf" target="_blank">The Idol Who Forgot How to Sing</a></li>
@@ -284,6 +304,8 @@ function render(): void {
       b.textContent = `▶ ${id}`;
       b.onclick = () => {
         save = newSave(`special-${id}`, { script: id, event: 0 });
+        save.visited.push(id);
+        save.position = skipLatches(router, save.position, save.flags);
         writeAutosave(localStorage, save);
         screen = "read";
         render();
@@ -291,7 +313,7 @@ function render(): void {
       li.appendChild(b);
       list.appendChild(li);
     }
-    app.querySelector("[data-back]")?.addEventListener("click", () => { screen = "title"; render(); });
+    app.querySelector("[data-back]")?.addEventListener("click", () => { screen = backTo; render(); });
     return;
   }
   if (screen === "saves") {
@@ -305,12 +327,13 @@ function render(): void {
         }
         save = s;
         save.position = skipLatches(router, save.position, save.flags);
+        if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
         pushLog(router, save);
         writeAutosave(localStorage, save);
         screen = "read";
         render();
       },
-      onBack: () => { screen = "read"; render(); },
+      onBack: () => { screen = backTo; render(); },
       notify,
     });
     return;
@@ -320,8 +343,8 @@ function render(): void {
       <ol class="log">${save.log.map((l) =>
         `<li>${l.speaker ? `<b>${escapeHtml(l.speaker)}</b> ` : ""}${escapeHtml(l.text)}</li>`).join("")}
       </ol><button class="back" id="back">← Back</button></div>`;
-    app.querySelector("#back")?.addEventListener("click", () => { screen = "read"; render(); });
-    app.querySelector("#back-top")?.addEventListener("click", () => { screen = "read"; render(); });
+    app.querySelector("#back")?.addEventListener("click", () => { screen = backTo; render(); });
+    app.querySelector("#back-top")?.addEventListener("click", () => { screen = backTo; render(); });
     return;
   }
   if (screen === "settings") {
@@ -330,8 +353,8 @@ function render(): void {
       <div><label><input type="checkbox" id="dv" ${settings.dev ? "checked" : ""}> Dev mode (scene-jump buttons in the flowchart)</label></div>
       <div><label><input type="checkbox" id="sr" ${settings.skipRead ? "checked" : ""}> Ctrl skips only already-read text (off = skip everything)</label></div>
       <div><label>Text size <input type="range" id="fs" min="14" max="26" value="${settings.fontSize}"></label></div>
-      <div><label>Text speed <input type="range" id="ts" min="0" max="120" step="5" value="${settings.textSpeed}"> <span class="dim">${settings.textSpeed === 0 ? "instant" : settings.textSpeed + "/s"}</span></label></div>
-      <div><label>Auto-play delay <input type="range" id="ad" min="0" max="8000" step="500" value="${settings.autoDelay}"> <span class="dim">${settings.autoDelay === 0 ? "off" : (settings.autoDelay / 1000) + "s"}</span></label></div>
+      <div><label>Text speed <input type="range" id="ts" min="0" max="120" step="5" value="${settings.textSpeed}"> <span class="dim" id="ts-val">${settings.textSpeed === 0 ? "instant" : settings.textSpeed + "/s"}</span></label></div>
+      <div><label>Auto-play delay <input type="range" id="ad" min="0" max="8000" step="500" value="${settings.autoDelay}"> <span class="dim" id="ad-val">${settings.autoDelay === 0 ? "off" : (settings.autoDelay / 1000) + "s"}</span></label></div>
       <div><label>Voice volume <input type="range" id="vv" min="0" max="100" value="${Math.round(settings.voiceVol * 100)}"></label></div>
       <div><label>BGM volume <input type="range" id="bv" min="0" max="100" value="${Math.round(settings.bgmVol * 100)}"></label></div>
       <div><button class="back" id="back">← Back</button></div></div>`;
@@ -360,25 +383,33 @@ function render(): void {
     ts.oninput = () => {
       settings.textSpeed = Number(ts.value);
       persistSettings();
-      render();
+      // Update the readout in place: a full render() replaces the slider
+      // node mid-drag, which cancels the drag after the first step.
+      const out = app.querySelector("#ts-val");
+      if (out) out.textContent = settings.textSpeed === 0 ? "instant" : `${settings.textSpeed}/s`;
     };
     const ad = app.querySelector("#ad") as HTMLInputElement;
     ad.oninput = () => {
       settings.autoDelay = Number(ad.value);
       persistSettings();
-      render();
+      const out = app.querySelector("#ad-val");
+      if (out) out.textContent = settings.autoDelay === 0 ? "off" : `${settings.autoDelay / 1000}s`;
     };
     const vv = app.querySelector("#vv") as HTMLInputElement;
     vv.oninput = () => {
       settings.voiceVol = Number(vv.value) / 100;
+      const voice = document.getElementById("voice") as HTMLAudioElement | null;
+      if (voice) voice.volume = settings.voiceVol;
       persistSettings();
     };
     const bv = app.querySelector("#bv") as HTMLInputElement;
     bv.oninput = () => {
       settings.bgmVol = Number(bv.value) / 100;
+      const bgm = document.getElementById("bgm") as HTMLAudioElement | null;
+      if (bgm) bgm.volume = settings.bgmVol;
       persistSettings();
     };
-    app.querySelector("#back")?.addEventListener("click", () => { screen = "title"; render(); });
+    app.querySelector("#back")?.addEventListener("click", () => { screen = backTo; render(); });
     return;
   }
 }

@@ -18,7 +18,7 @@ your installed game dir (*.pak, movies, todokanai/subtitles)
   -> web/public/assets/
 
 MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
-  -> tools/fetch_mao.py                 version pin + drift audit (0.986)
+  -> tools/fetch_mao.py                 version pin + drift audit (0.988)
 ```
 
 ## Runtime (web/src)
@@ -59,8 +59,9 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
   curves ship in data/luts.json and render via SVG feComponentTransfer
   (CSS fallback); BGM track selection is .bnr opcode (4,158), decoded by
   tools/build_bgm.py into a data/bgm.json timeline the player follows
-  (loop _A/_B pairs preferred; 11 file-less tracks sustain previous BGM).
-- Sprites: grp-layer event art renders as fullscreen overlays with .bnr
-  fade timing (tools/decode_bnr.py); standing-sprite prefix table in
-  data/sprites.json; per-line identity + slots await .bnr integer-slot
-  decode (nothing guessed on stage).
+  (`_A` intro then looped `_B`; file-less tracks sustain previous BGM).
+- Sprites: grp-layer event art renders as a fullscreen overlay with .bnr
+  fade timing (tools/decode_bnr.py); standing sprites are decoded from
+  (4,154)/(4,155) + hides (4,156)/(4,157), keyed by character id with
+  screen positions from the exe's 0x4be0bc table (data/sprites.json is
+  build-copied reference data).

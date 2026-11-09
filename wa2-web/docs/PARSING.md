@@ -140,7 +140,7 @@ tools/decode_bnr.py (fades/cams).
 | `(4,148)` + `[M,X,Y,F,…]` | event-visual overlay, grp layer: handler 0x455050 also passes mode 1 (`push $1` at 0x455122/0x45515a) → `v%06d.tga`; stem `str(X)+str(Y)` (10010,0 → 100100), alt `X*100+Y` (1001000) | high (358 cues + handler mode push) |
 | `(4,176)` + `[slot,MODE,2,256,last]` | txt-named image driver (MODE 14 = `.tga` grp, 12/13 = bak/grp; JP toks in `(3,*)` ops match the image context) | high (1007/1008_030 controls) |
 | `(4,185)` + `[slot,1,0,0]` after multi-image shows | slot selector for txt-named event art (one per loaded image) | medium (positions unknown) |
-| `(4,208)` + `[99,0,0]`/`[99,3,1]`/`[1,1,1]` | choice-present marker (exactly on choice toks; `[99,3,1]` = goto-carrying option) | high (31/31 gate) |
+| `(4,208)` + `[99,0,0]`/`[99,3,1]`/`[1,1,1]` | choice-present marker (exactly on choice toks; `[99,3,1]` = goto-carrying option) | high (32/32 gate) |
 | `(4,209)` + `[0,0,1]` + `(2,0),(6,27),(4,209),(6,16),(6,0)` | choice-commit (1 per choice; payload identical across options — deltas are engine-side) | high |
 | `(4,137)` head `[0,SCRIPT]` vs `[N,SCRIPT]` | script load; head N (145-845) = variant entry/replay key (bases open `[0]`; keyless heads = mid-file splice-ins). Mid-file `[N,-1]` = intra-file label jump (N = label id, −1 = current script). | medium |
 | `(4,196)` + single ms value | timing/staging cue (0, 1000, …, 112770 — not audio) | medium |
@@ -207,14 +207,15 @@ docs/QA.md verification log):
   (handlers 0x4555e0/0x455640; mode 3 = the (4,157) constant form; corpus
   553+175 = 831 hides, all pids valid char ids). Plus the face==4000
   sentinel inside show ops (1 corpus occurrence, 1008_030 tail).
-- **A backdrop show/clear wipes ALL standing sprites**: the image
-  primitive 0x4167e0 (called by (4,146)/(4,147)/(4,148) handlers) reaches
-  the clear-all slot loop 0x402680. Corpus confirmation: every sprite
-  burst re-shows after a bak change; per-script max simultaneous sprites
-  drop from ≤11 to ≤5 (mostly ≤3) under this model, matching play
-  observation. decode_bnr.py therefore emits `sprClear: true` on bak
-  show/clear recs (not grp), and resolveSprites applies recs in statement
-  order so same-event re-shows survive.
+- **A backdrop show/clear (mode 0, op 146) wipes ALL standing sprites.**
+  Disassembly of the shared image primitive `0x4167e0` shows the clear-all
+  slot call `0x402680` inside `if (param_3 == 0)` — only the backdrop path.
+  (4,147)/(4,148) pass mode 1 and therefore do NOT wipe sprites; CGs cover
+  them instead. Corpus confirmation for mode 0: every sprite burst re-shows
+  after a bak change; per-script max simultaneous sprites drop from ≤11 to
+  ≤5 (mostly ≤3), matching play observation. decode_bnr.py emits
+  `sprClear: true` only on bak recs, and resolveSprites applies recs in
+  statement order so same-event re-shows survive.
 - The player renders this timeline (web/src/ui/reader.ts
   resolveSprites, test-pinned): char-keyed state, hide/sprClear clear,
   x from the 0x4be0bc table, hypothesis recs ignored.

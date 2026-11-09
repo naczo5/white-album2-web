@@ -7,10 +7,10 @@
  },
  "nodes": [
   {
-   "id": "2003-241",
+   "id": "2003-242",
    "engine": {
     "script": "2003",
-    "event": 241
+    "event": 242
    },
    "options": [
     {
@@ -44,10 +44,10 @@
    "note": "12/1 first decision. JP: 苦手だ / なんとなく心地良い."
   },
   {
-   "id": "2003-985",
+   "id": "2003-982",
    "engine": {
     "script": "2003",
-    "event": 985
+    "event": 982
    },
    "options": [
     {
@@ -110,10 +110,10 @@
    "note": "Freelance assignment. Recovered from a mega-token; both picks converge (he declines, then takes it back). Opt2 is Mari-critical (1 of 4)."
   },
   {
-   "id": "2005-391",
+   "id": "2005-389",
    "engine": {
     "script": "2005",
-    "event": 391
+    "event": 389
    },
    "options": [
     {
@@ -176,10 +176,10 @@
    "note": "Chiaki asleep in Haruki's room. Present in v2.1.0; absent from v1.3.6 engine data."
   },
   {
-   "id": "2009-1623",
+   "id": "2009-1618",
    "engine": {
     "script": "2009",
-    "event": 1623
+    "event": 1618
    },
    "options": [
     {
@@ -263,7 +263,7 @@
     },
     {
      "n": 2,
-     "text": "Sorry~ but make it tomorrow",
+     "text": "Sorry, but make it tomorrow",
      "goto": null
     }
    ],
@@ -319,10 +319,10 @@
    "note": "Evening talk. Recovered from a mega-token. Opt2 kills the Chiaki route."
   },
   {
-   "id": "2015-353",
+   "id": "2015-351",
    "engine": {
     "script": "2015",
-    "event": 353
+    "event": 351
    },
    "options": [
     {
@@ -353,15 +353,15 @@
    "note": "Koharu/shop-staff scene. Date mapping approximate."
   },
   {
-   "id": "2016-468",
+   "id": "2016-467",
    "engine": {
     "script": "2016",
-    "event": 468
+    "event": 467
    },
    "options": [
     {
      "n": 1,
-     "text": "Just come here.",
+     "text": "On second thought~ come here.",
      "goto": null
     },
     {
@@ -392,10 +392,10 @@
    "walk": "cc-c11"
   },
   {
-   "id": "2017-242",
+   "id": "2017-239",
    "engine": {
     "script": "2017",
-    "event": 242
+    "event": 239
    },
    "options": [
     {
@@ -405,7 +405,7 @@
     },
     {
      "n": 2,
-     "text": "No~ I don't need any more",
+     "text": "No, I don't need any more",
      "goto": null
     }
    ],
@@ -437,7 +437,7 @@
    "options": [
     {
      "n": 1,
-     "text": "Oh~ who cares?",
+     "text": "Oh, who cares?",
      "goto": null
     },
     {
@@ -463,10 +463,10 @@
    "walk": "cc-c13"
   },
   {
-   "id": "2019-1488",
+   "id": "2019-1484",
    "engine": {
     "script": "2019",
-    "event": 1488
+    "event": 1484
    },
    "options": [
     {
@@ -497,10 +497,10 @@
    "note": "THE branch. Engine gotos: opt2->2401 (Mari line), opt3->2501 (common line), opt1 falls through toward the work/stay follow-up (Chiaki line via 2301 on opt2 there; Setsuna line via 2020 on opt1)."
   },
   {
-   "id": "2019-1516",
+   "id": "2019-1512",
    "engine": {
     "script": "2019",
-    "event": 1516
+    "event": 1512
    },
    "options": [
     {
@@ -609,10 +609,10 @@
    "note": "Coda's opening router (SAVE here). Recovered from a mega-token. Opt1 -> Setsuna-True/Normal side; opt2 -> Kazusa-True/Cheating side."
   },
   {
-   "id": "3005-187",
+   "id": "3005-186",
    "engine": {
     "script": "3005",
-    "event": 187
+    "event": 186
    },
    "options": [
     {
@@ -644,10 +644,10 @@
    "note": "'Never see Kazusa again / I met Kazusa'. Opt1 SKIPS the next two choices. Preceded by the 12/24 prologue router in 3003 (coda-c01)."
   },
   {
-   "id": "3005-257",
+   "id": "3005-256",
    "engine": {
     "script": "3005",
-    "event": 257
+    "event": 256
    },
    "options": [
     {
@@ -676,10 +676,10 @@
    "walk": "coda-c03"
   },
   {
-   "id": "3005-266",
+   "id": "3005-265",
    "engine": {
     "script": "3005",
-    "event": 266
+    "event": 265
    },
    "options": [
     {
@@ -814,10 +814,10 @@
    "walk": "coda-c07"
   },
   {
-   "id": "3012-951",
+   "id": "3012-950",
    "engine": {
     "script": "3012",
-    "event": 951
+    "event": 950
    },
    "options": [
     {
@@ -851,10 +851,10 @@
    "walk": "coda-c08"
   },
   {
-   "id": "3013-751",
+   "id": "3013-747",
    "engine": {
     "script": "3013",
-    "event": 751
+    "event": 747
    },
    "options": [
     {
@@ -884,10 +884,10 @@
    "note": "Opt1 SKIPS the next choice."
   },
   {
-   "id": "3013-805",
+   "id": "3013-801",
    "engine": {
     "script": "3013",
-    "event": 805
+    "event": 801
    },
    "options": [
     {
@@ -919,10 +919,10 @@
    "note": "Sources disagree on mapping (Scribd vs gameline); held as gameline. Verify in game."
   },
   {
-   "id": "3013-1849",
+   "id": "3013-1843",
    "engine": {
     "script": "3013",
-    "event": 1849
+    "event": 1843
    },
    "options": [
     {
@@ -956,10 +956,10 @@
    "note": "Present in v2.1.0; absent from v1.3.6 engine data."
   },
   {
-   "id": "3014-377",
+   "id": "3014-376",
    "engine": {
     "script": "3014",
-    "event": 377
+    "event": 376
    },
    "options": [
     {
@@ -991,10 +991,10 @@
    "note": "Opt2 required for Setsuna True."
   },
   {
-   "id": "3016-826",
+   "id": "3016-822",
    "engine": {
     "script": "3016",
-    "event": 826
+    "event": 822
    },
    "options": [
     {
@@ -1019,10 +1019,10 @@
    "note": "Engine goto: opt2->3901 (Kazusa side files). Opt1 skips the final choice -> cheating end."
   },
   {
-   "id": "3016-863",
+   "id": "3016-859",
    "engine": {
     "script": "3016",
-    "event": 863
+    "event": 859
    },
    "options": [
     {
@@ -1045,9 +1045,9 @@
    "note": "'I love Setsuna' with s_flag ON -> Setsuna True; with s_flag OFF -> Normal. 'I can't lie to Kazusa' needs kazusa aff=6 -> Kazusa True."
   },
   {
-   "id": "3904_2-386",
+   "id": "3904-386",
    "engine": {
-    "script": "3904_2",
+    "script": "3904",
     "event": 386
    },
    "options": [
@@ -1068,7 +1068,7 @@
    "walkthrough": null,
    "status": "EXPERT_SOURCED",
    "walk": "coda-c15",
-   "note": "CG-only choice; both options converge. Save + take both."
+   "note": "CG-only choice; both options converge. Save + take both. JP spine 3904 (old EN toolchain split 3904_2)."
   }
  ]
 }

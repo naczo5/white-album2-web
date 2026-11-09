@@ -43,12 +43,29 @@ export function deserialize(json: string): SaveData {
     if (typeof v !== "number") throw new Error(`bad affection value for ${k}`);
   }
   if (typeof data.name !== "string") data.name = "Haruki";
-  data.picks = data.picks ?? {};
-  data.visited = Array.isArray(data.visited) ? data.visited : [];
-  data.endings = Array.isArray(data.endings) ? data.endings : [];
-  data.log = Array.isArray(data.log) ? data.log : [];
+  if (typeof data.updatedAt !== "string") data.updatedAt = new Date().toISOString();
+  data.picks = (data.picks && typeof data.picks === "object") ? data.picks : {};
+  data.visited = Array.isArray(data.visited)
+    ? data.visited.filter((x): x is string => typeof x === "string")
+    : [];
+  data.endings = Array.isArray(data.endings)
+    ? data.endings.filter((x): x is string => typeof x === "string")
+    : [];
+  data.log = Array.isArray(data.log)
+    ? data.log
+      .filter((l) => l && typeof (l as { text?: unknown }).text === "string")
+      .map((l) => ({
+        speaker: typeof l.speaker === "string" ? l.speaker : "",
+        text: l.text,
+      }))
+    : [];
   if (data.lastLogged !== undefined && typeof data.lastLogged !== "string") {
     throw new Error("bad lastLogged");
+  }
+  if (data.bgm !== undefined && data.bgm !== null) {
+    if (typeof data.bgm !== "object" || !Number.isInteger((data.bgm as { track?: unknown }).track)) {
+      throw new Error("bad bgm state");
+    }
   }
   return data;
 }

@@ -27,6 +27,8 @@
 /wa2-web/web/dist/
 /wa2-web/assets/
 /wa2-web/build/
+/wa2-web/package/
+/wa2-web/oneclick.json
 *.log
 
 # --- Runtime / editor noise ---

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { resolveAmbCue, resolveAmbStop, resolveBgmTimeline, resolveFade, resolveSeRec, resolveSprites, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay, spriteLeftPct } from "./reader";
+import { resolveAmbCue, resolveAmbStop, resolveAmbientTimeline, resolveBgmCue, resolveBgmTimeline, resolveFade, resolveSeIds, resolveSeRec, resolveSprites, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay, skipBlocked, spriteLeftPct } from "./reader";
 import { loadManifest } from "../engine/assets";
 import type { BnrRec } from "../engine/types";
 
@@ -121,6 +121,22 @@ describe("BGM timeline (bnr (4,158) cues)", () => {
     expect(resolveBgmTimeline(cues, 10, RESOLVE)).toEqual({ kind: "stop" });
     expect(resolveBgmTimeline(cues, 60, RESOLVE).kind).toBe("play");
   });
+
+  it("returns the A->B loop pair for the player", () => {
+    const cues = [{ ev: 3, track: 7 }];
+    const resolved = resolveBgmCue(cues, 3, (t) => ({
+      url: `bgm/BGM_${t}_A.OGG`, loopUrl: `bgm/BGM_${t}_B.OGG`,
+    }));
+    expect(resolved).toEqual({
+      kind: "play", url: "bgm/BGM_7_A.OGG", loopUrl: "bgm/BGM_7_B.OGG",
+    });
+    // solo track: loop itself
+    expect(resolveBgmCue(cues, 3, (t) => ({
+      url: `bgm/BGM_${t}.OGG`, loopUrl: `bgm/BGM_${t}.OGG`,
+    }))).toEqual({ kind: "play", url: "bgm/BGM_7.OGG", loopUrl: "bgm/BGM_7.OGG" });
+    // missing/unresolvable still sustains
+    expect(resolveBgmCue(cues, 3, () => null)).toEqual({ kind: "sustain" });
+  });
 });
 
 describe("ambient channel resolvers (4,165 cue / 4,166 stop)", () => {
@@ -140,10 +156,38 @@ describe("ambient channel resolvers (4,165 cue / 4,166 stop)", () => {
     expect(resolveAmbStop(RECS, 9)).toBe(0);
     expect(resolveAmbStop(RECS, 5)).toBeNull();
   });
+
+  it("timeline keeps every channel's latest state (skip/load/same-event)", () => {
+    const recs = [
+      { ev: 3, amb: { se: 1, ch: 0, vol: 100, loop: true }, conf: "high" },
+      { ev: 5, amb: { se: 2, ch: 1, vol: 50, loop: false }, conf: "high" },
+      { ev: 5, amb: { se: 3, ch: 2, vol: 60, loop: true }, conf: "high" },
+      { ev: 7, ambStop: 0, conf: "high" },
+      { ev: 9, amb: { se: 4, ch: 3, vol: 80, loop: true }, conf: "hypothesis" },
+    ];
+    const at5 = resolveAmbientTimeline(recs, 5);
+    expect(at5.get(0)).toEqual({ kind: "play", cue: { se: 1, ch: 0, vol: 100, loop: true } });
+    expect(at5.get(1)).toEqual({ kind: "play", cue: { se: 2, ch: 1, vol: 50, loop: false } });
+    expect(at5.get(2)).toEqual({ kind: "play", cue: { se: 3, ch: 2, vol: 60, loop: true } });
+    const at8 = resolveAmbientTimeline(recs, 8);
+    expect(at8.get(0)).toEqual({ kind: "stop" }); // stop overrides the old cue
+    expect(at8.get(1)).toEqual({ kind: "play", cue: { se: 2, ch: 1, vol: 50, loop: false } });
+    expect(at8.has(3)).toBe(false); // hypothesis never enters the timeline
+    // stepping over the background-change events still yields their cues
+    expect(resolveAmbientTimeline(recs, 100).size).toBe(3);
+  });
 });
 
-describe("voice resolver (archive-key/NNN map + tok fallback)", () => {
-  it("prefers the map; null map entry means unvoiced", () => {
+describe("read-only skip gate", () => {
+  it("stops at a line that was unread before this render", () => {
+    expect(skipBlocked(true, true, false)).toBe(true);
+    expect(skipBlocked(true, true, true)).toBe(false);
+    expect(skipBlocked(false, true, false)).toBe(false); // not skipping
+    expect(skipBlocked(true, false, false)).toBe(false); // skip-all setting
+  });
+});
+
+describe("voice resolver (archive-key/NNN map + tok fallback)", () => {  it("prefers the map; null map entry means unvoiced", () => {
     expect(resolveVoiceRef(12, 99)).toBe(12);
     expect(resolveVoiceRef(null, 99)).toBeNull();
   });
@@ -248,6 +292,14 @@ describe("merged stage timeline (txt images + bnr backdrops)", () => {
     expect(resolveStageOverlay(txt, bnr, 470, "intro")).toBe("assets/cg/g.png");
   });
 
+  it("txt grp images are overlays, never stage backdrops", () => {
+    // The txt image driver routes `grp` to the overlay layer. Treating it
+    // as a backdrop made a CG become the floor after the overlay cleared.
+    const txt = [txtEv({ t: "image", file: "g.tga", layer: "grp" }, 10)];
+    expect(resolveStageImage(txt, null, 20, "closing")).toBeNull();
+    expect(resolveStageOverlay(txt, null, 20, "closing")).toBe("assets/cg/g.png");
+  });
+
   it("overlays show grp art and reset on backdrops", () => {
     const txt = [
       txtEv({ t: "image", file: "g.tga", layer: "grp" }, 432),
@@ -270,6 +322,18 @@ describe("SE trigger gate (bnr confidence)", () => {
     expect(resolveSeRec(recs, 5)).toBeNull();
     expect(resolveSeRec(recs, 6)).toBe(448);
     expect(resolveSeRec(recs, 7)).toBeNull();
+  });
+
+  it("range resolver fires every cue crossed by a step, in order", () => {
+    const recs = [
+      { ev: 4, se: [1], conf: "high" },
+      { ev: 6, se: [2, 3], conf: "high" },
+      { ev: 8, se: [9], conf: "hypothesis" },
+    ];
+    expect(resolveSeIds(recs, 3, 6)).toEqual([1, 2, 3]);
+    expect(resolveSeIds(recs, 3, 5)).toEqual([1]);
+    expect(resolveSeIds(recs, 6, 6)).toEqual([]); // re-render: nothing replayed
+    expect(resolveSeIds(recs, 7, 9)).toEqual([]); // hypothesis ignored
   });
 });
 

@@ -79,6 +79,18 @@ code { font-size: 0.85em; }
   color: var(--dim);
   padding: 1rem;
   text-align: center;
+  z-index: 2;
+}
+/* Backdrop layer: crossfaded pair of <img>s (opacity is animatable;
+ * background-image is not, so the old transition was inert). */
+.stage-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  z-index: 1;
 }
 .stage-ov {
   position: absolute;
@@ -89,8 +101,9 @@ code { font-size: 0.85em; }
   pointer-events: none;
   /* grp CG layer sits above the standing-sprite layer (z 10+i) — engine
    * draws event visuals over the sprite scene; DOM order alone loses to
-   * the sprites' explicit z-index. */
-  z-index: 20;
+   * the sprites' explicit z-index. 50 keeps the overlay above even a
+   * full 8-slot (or malformed >10) sprite stack. */
+  z-index: 50;
 }
 /* Standing sprites: char-id keyed slot records (exe 0x4160e0); art is
  * exactly stage-height (720px) and bottom-anchored; x from engine table. */

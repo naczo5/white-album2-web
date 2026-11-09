@@ -56,18 +56,16 @@ def main() -> int:
     bases = [s for s in order if "_" not in s]
 
     def spine_next(s: str):
+        # Mirrors web/src/engine/router.ts buildSpine: a base continues only
+        # to the next base in the SAME chapter; a variant resumes at its
+        # base's successor (including stopping at a chapter seam). The old
+        # variant branch walked into the next chapter's first base.
         base = s.split("_")[0]
-        if "_" in s:
-            i = bases.index(base)
-        else:
-            i = bases.index(s)
+        if base not in bases:
+            return None
+        i = bases.index(base)
         for nxt in bases[i + 1:]:
-            if chapter(nxt) == chapter(base) or "_" in s:
-                # variants resume at base successor; base files stop at
-                # chapter ends (intro 1013 has explicit 1013->2001 link)
-                if "_" in s or chapter(nxt) == chapter(s):
-                    return nxt
-                return None
+            return nxt if chapter(nxt) == chapter(base) else None
         return None
 
     ROUTER_TARGETS = {"2401", "2501", "3901", "2301"}

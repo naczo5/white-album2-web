@@ -66,6 +66,15 @@ def test_directives():
         and events[3]["layer"] == "grp"
 
 
+def test_numeric_image_name_is_not_an_option():
+    # `1.tga` matches the option shape (`1.` + text); directive shapes must
+    # win or the image becomes choice option 1 with text "tga".
+    assert P.classify_bare("1.tga") == "image"
+    toks = P.split_tokens(enc('1.tga,,grp'))
+    events, _ = P.parse_tokens(toks)
+    assert events[0]["t"] == "image" and events[0]["layer"] == "grp"
+
+
 def test_whisper_style_token():
     toks = P.split_tokens(enc('Chiaki,<F16"Weren\'t you…">'))
     events, warnings = P.parse_tokens(toks)
@@ -125,3 +134,30 @@ def test_inline_markup_preserved_for_renderer():
     toks = P.split_tokens(enc('"How should I know?\\n<F16…I only asked>"'))
     events, _ = P.parse_tokens(toks)
     assert "<F16" in events[0]["text"]  # renderer strips to whisper spans
+
+
+def test_mega_options_merge_across_speaker_tags():
+    # "1. A,Setsuna,2. B" is one choice UI, not two forced single-option
+    # screens. The speaker tag is emitted after the merged choice so the
+    # following dialogue keeps its latch.
+    toks = P.split_tokens(enc('"A,1. Yes,Setsuna,2. No,B"'))
+    events, _ = P.parse_tokens(toks)
+    events, warnings = P.resplit_mega(events, {"Setsuna"}, [])
+    choices = [e for e in events if e["t"] == "choice"]
+    assert len(choices) == 1
+    assert [o["n"] for o in choices[0]["options"]] == [1, 2]
+    assert [o["text"] for o in choices[0]["options"]] == ["Yes", "No"]
+    assert events[2] == {"t": "latch", "name": "Setsuna"}
+    assert any(w.startswith("MEGA_CHOICE: 2 options") for w in warnings)
+
+
+def test_mega_fullwidth_option_numbers():
+    # JP spine options are fullwidth (１．); a mega structural segment must
+    # normalize them instead of raising ValueError.
+    assert P.structural_event("１．行く", "")[0] == {
+        "t": "_opt", "n": 1, "text": "行く"}
+    toks = P.split_tokens(enc('"A,１．行く,２．帰る,B"'))
+    events, _ = P.parse_tokens(toks)
+    events, _ = P.resplit_mega(events, {"Setsuna"}, [])
+    ch = [e for e in events if e["t"] == "choice"][0]
+    assert [o["n"] for o in ch["options"]] == [1, 2]
