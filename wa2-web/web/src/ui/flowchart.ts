@@ -18,8 +18,8 @@ export interface ChartGraph {
   height: number;
 }
 
-export const NODE_W = 128;
-export const NODE_H = 34;
+export const NODE_W = 144;
+export const NODE_H = 38;
 const GAP_X = 46;
 const GAP_Y = 14;
 
@@ -160,8 +160,8 @@ export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
     const lit = visited.has(e.to) && visited.has(e.from);
     const my = (y1 + y2) / 2;
     const d = `M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`;
-    return `<path d="${d}" fill="none" stroke="${lit ? "var(--accent)" : "#26334a"}"
-      stroke-width="${lit ? 2 : 1}" opacity="${lit ? 0.8 : 0.7}" ${
+    return `<path d="${d}" fill="none" stroke="${lit ? "#7ef3ec" : "#215a67"}"
+      stroke-width="${lit ? 2 : 1}" opacity="${lit ? 0.85 : 0.7}" ${
       e.kind === "chain" ? 'stroke-dasharray="4 3"' : ""
     } marker-end="url(#arrow)"/>`;
   }).join("");
@@ -171,44 +171,56 @@ export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
     const isCur = n.id === cur;
     const seen = visited.has(n.id);
     const chColor = {
-      intro: "#7fb4ff", closing: "#9fe0ae", coda: "#e8c87f", special: "#b9c7e4",
-    }[n.chapter] ?? "#9aa3b2";
+      intro: "#7fe3e2", closing: "#a9d7ff", coda: "#f0dc9a", special: "#f3b6cf",
+    }[n.chapter] ?? "#8fb3b8";
     const choices = choicesByScript.get(n.id) ?? [];
     const nChoices = choices.length;
     const date = choices.find((c) => c.date)?.date ?? n.chapter;
-    return `<g transform="translate(${p.x},${p.y})" data-node="${n.id}" class="fc-node">
-      <rect width="${NODE_W}" height="${NODE_H}" rx="5"
-        fill="${seen ? "#1d2a3d" : "#131c2b"}"
-        stroke="${isCur ? "var(--accent)" : seen ? "#3d5273" : "#26334a"}"
-        stroke-width="${isCur ? 2.5 : 1}"/>
-      ${isCur ? `<rect width="${NODE_W}" height="${NODE_H}" rx="5" fill="var(--accent)" opacity="0.12"/>` : ""}
-      <text x="8" y="14" font-size="11" fill="${chColor}" font-family="monospace">${n.id}</text>
-      <text x="8" y="27" font-size="9.5" fill="${
-        seen ? "#9aa3b2" : "#5d6b80"
-      }">${escapeHtml(date)}${nChoices ? ` · ${nChoices}✕` : ""}</text>
+    return `<g transform="translate(${p.x},${p.y})" data-node="${escapeAttr(n.id)}"
+      class="fc-node" tabindex="0" role="button" aria-label="Scenario ${escapeAttr(n.id)}">
+      <rect width="${NODE_W}" height="${NODE_H}" rx="2"
+        fill="${seen ? "#0f3d49" : "#082630"}"
+        stroke="${isCur ? "#f0dc9a" : seen ? "#2d7d87" : "#17434f"}"
+        stroke-width="${isCur ? 2 : 1}"/>
+      ${isCur ? `<rect width="${NODE_W}" height="${NODE_H}" rx="2" fill="#f0dc9a" opacity="0.1"/>` : ""}
+      <text x="9" y="16" font-size="12" fill="${chColor}" font-family="Georgia, 'Times New Roman', serif">${escapeHtml(n.id)}</text>
+      <text x="9" y="30" font-size="10" fill="${
+        seen ? "#8fb3b8" : "#4f7279"
+      }" font-family="Georgia, 'Times New Roman', serif">${escapeHtml(date)}${nChoices ? ` · ${nChoices} choice${nChoices === 1 ? "" : "s"}` : ""}</text>
     </g>`;
   }).join("");
 
   el.innerHTML = `
-    <div class="screen-head"><h2>Flowchart</h2>
-    <div class="dim">Route graph from the decoded engine links. Boxes are
-    scenario scripts; ● marks choice points. Highlighted = visited path.
-    ${h.spoiler ? "Spoilers ON." : "Spoilers OFF - unvisited options hidden."}</div></div>
+    <header class="screen-head"><div><h2>Flowchart</h2>
+    <p class="screen-sub">Each box is a scenario script. The lit path is where
+    you have been; the gold outline is your current position.
+    ${h.spoiler ? "Spoilers are on, so unvisited options are shown." : "Spoilers are off; unvisited options stay hidden."}</p></div></header>
     <div class="fc-wrap"><svg class="fc-svg" width="${g.width + pad * 2}" height="${g.height + pad * 2}">
       <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4"
         markerWidth="6" markerHeight="6" orient="auto">
-        <path d="M0,0 L8,4 L0,8 z" fill="#26334a"/>
+        <path d="M0,0 L8,4 L0,8 z" fill="#215a67"/>
       </marker></defs>
       <g transform="translate(${pad},${pad})">${edgesSvg}${nodesSvg}</g>
     </svg></div>
-    <div class="fc-detail dim" id="fc-detail">Click a node for its choices and link evidence.</div>
+    <div class="fc-detail" id="fc-detail">Select a node to see its choices and route evidence.</div>
     <button class="back" data-back>← Back</button>`;
 
-  el.querySelectorAll(".fc-node").forEach((nd) =>
-    nd.addEventListener("click", () => {
-      showDetail(el.querySelector("#fc-detail") as HTMLElement, (nd as HTMLElement).dataset.node!, h, g);
-    }),
-  );
+  el.querySelectorAll(".fc-node").forEach((nd) => {
+    const open = () => showDetail(
+      el.querySelector("#fc-detail") as HTMLElement,
+      (nd as HTMLElement).dataset.node!,
+      h,
+      g,
+    );
+    nd.addEventListener("click", open);
+    nd.addEventListener("keydown", (ev) => {
+      const ke = ev as KeyboardEvent;
+      if (ke.key === "Enter" || ke.key === " " || ke.key === "Spacebar") {
+        ke.preventDefault();
+        open();
+      }
+    });
+  });
   // Auto-scroll so the current position is in view.
   const wrap = el.querySelector(".fc-wrap") as HTMLElement | null;
   const curPos = g.pos[cur];
@@ -223,32 +235,36 @@ function showDetail(box: HTMLElement, script: string, h: FlowHooks, g: ChartGrap
   const nodes = h.flow.nodes.filter((n) => n.engine.script === script);
   const outs = g.edges.filter((e) => e.from === script);
   const term = h.terminals[script];
-  const parts: string[] = [`<div class="fc-detail-h"><code>${script}</code> <span class="dim">${g.depth[script] !== undefined ? `depth ${g.depth[script]}` : ""}</span></div>`];
-  if (term?.action === "end") parts.push(`<div class="opt">⏹ Ending: ${term.ending ?? "?"}</div>`);
-  if (term?.action === "chain") parts.push(`<div class="opt">⇢ chains to <code>${term.to}</code></div>`);
+  const parts: string[] = [`<div class="fc-detail-h"><code>${escapeHtml(script)}</code> <span class="dim">${g.depth[script] !== undefined ? `depth ${g.depth[script]}` : ""}</span></div>`];
+  if (term?.action === "end") parts.push(`<div class="opt">Ending: ${escapeHtml(term.ending ?? "?")}</div>`);
+  if (term?.action === "chain") parts.push(`<div class="opt">Chains to <code>${escapeHtml(term.to)}</code></div>`);
   for (const n of nodes) {
-    parts.push(`<div class="opt"><span class="date">${n.date ?? ""}</span> <code>${n.id}</code>
+    parts.push(`<div class="opt"><span class="date">${escapeHtml(n.date ?? "")}</span> <code>${escapeHtml(n.id)}</code>
       ${n.status === "EXPERT_SOURCED" ? '<span class="badge ok">sourced</span>' : '<span class="badge warn">unverified</span>'}</div>`);
     for (const o of n.options) {
       const picked = h.save.picks[n.id] === o.n;
       const seen = picked || h.spoiler;
-      const label = seen ? escapeHtml(plainText(o.text)) : "??? (unvisited)";
+      const label = seen ? escapeHtml(plainText(o.text)) : "Not seen yet";
       parts.push(`<div class="opt${picked ? " chosen" : ""}"><b>${o.n}.</b> ${label}${
-        o.goto && seen ? ` <span class="dim">→ ${o.goto}</span>` : ""
+        o.goto && seen ? ` <span class="dim">→ ${escapeHtml(o.goto)}</span>` : ""
       }</div>`);
     }
   }
   if (outs.length) {
-    parts.push(`<div class="dim note">links out:</div>`);
-    for (const e of outs) parts.push(`<div class="opt dim">→ ${e.to}${e.kind !== "link" ? ` (${e.kind})` : ""}</div>`);
+    parts.push(`<div class="dim note">Links out</div>`);
+    for (const e of outs) parts.push(`<div class="opt dim">→ ${escapeHtml(e.to)}${e.kind !== "link" ? ` (${escapeHtml(e.kind)})` : ""}</div>`);
   }
-  if (!nodes.length && !outs.length && !term) parts.push(`<div class="dim note">No decoded choices or links.</div>`);
+  if (!nodes.length && !outs.length && !term) parts.push(`<div class="dim note">No decoded choices or links here.</div>`);
   if (h.dev && h.onJump) {
-    parts.push(`<button class="choice-btn" id="fc-jump">▶ Jump to <code>${script}</code></button>`);
+    parts.push(`<button class="choice-btn" id="fc-jump">Jump to <code>${escapeHtml(script)}</code></button>`);
   }
   box.innerHTML = parts.join("");
   box.querySelector("#fc-jump")?.addEventListener("click", () => h.onJump!(script));
   box.classList.remove("dim");
+}
+
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function escapeHtml(s: string): string {

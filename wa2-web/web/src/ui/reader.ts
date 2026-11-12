@@ -4,7 +4,7 @@ import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, seUrl, voiceUr
 import { Router, chapterOfScript } from "../engine/router";
 import { plainText, renderText, spanize } from "../engine/text";
 import type { BgmData, BnrData, Position, SaveData, ScenarioEvent } from "../engine/types";
-import { writeAutosave } from "../engine/save";
+import { storageKey, writeAutosave } from "../engine/save";
 
 export interface ReaderSettings {
   textSpeed: number; // chars per second, 0 = instant
@@ -47,6 +47,9 @@ const FILTER_CSS: Record<string, string> = {
 export interface ReaderHooks {
   router: Router;
   save: SaveData;
+  /** Asset-free demo: draw the original snow scene behind the placeholder
+   * script instead of an empty "no backdrop" stage. */
+  demo?: boolean;
   settings: ReaderSettings;
   /** Shared mutable skip state: main.ts flips `active` on Ctrl down/up and
    * the reader reads it live — a snapshot boolean went stale between
@@ -56,13 +59,19 @@ export interface ReaderHooks {
   onChange(): void;
   open(screen: string): void;
   notify(msg: string): void;
+  /** Explicit quick-save / quick-load actions (Q.Save / Q.Load). */
+  quickSave?(): void;
+  quickLoad?(): void;
   /** Called when read-mode skip halts on an unread line (main clears Ctrl). */
   onSkipStop(): void;
 }
 
 // ---- Read-text tracking (for "skip read text only") -----------------------
 // Keys are "script:event" for every line that has ever been displayed.
-const READ_KEY = "wa2web.read";
+const READ_KEY = "read";
+function readStorageKey(): string {
+  return storageKey(READ_KEY);
+}
 let readSet: Set<string> | null = null;
 /** Whether the currently displayed line had been read before this render
  * (skip-read gate; see scheduleAuto). */
@@ -71,7 +80,7 @@ let currentWasRead = true;
 function loadRead(): Set<string> {
   if (readSet) return readSet;
   try {
-    readSet = new Set(JSON.parse(localStorage.getItem(READ_KEY) ?? "[]") as string[]);
+    readSet = new Set(JSON.parse(localStorage.getItem(readStorageKey()) ?? "[]") as string[]);
   } catch {
     readSet = new Set();
   }
@@ -89,7 +98,7 @@ function persistRead(): void {
   if (!readPersistDirty || !readSet) return;
   readPersistDirty = false;
   try {
-    localStorage.setItem(READ_KEY, JSON.stringify([...readSet]));
+    localStorage.setItem(readStorageKey(), JSON.stringify([...readSet]));
   } catch {
     /* quota: skip-read degrades to skip-all, harmless */
   }
@@ -139,25 +148,43 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   const where = sc
     ? `${chapterOfScript(pos.script)} · ${pos.script} · ${pct}%`
     : `unknown position ${pos.script}:${pos.event}`;
+  const sceneDate = router.flowNode(pos)?.date ?? "";
+
+  const chapter = pos.script.startsWith("demo") ? "Demo" : {
+    intro: "Introductory chapter",
+    closing: "Closing chapter",
+    coda: "Coda",
+    special: "Special",
+  }[chapterOfScript(pos.script)] ?? "Special";
 
   el.innerHTML = `
-    <div class="stage" id="stage"></div>
-    <div class="hud">
-      <span>${where}</span>
-      <span class="hud-btns">
-        <button data-act="auto">${h.settings.autoDelay > 0 ? "⏸ Auto" : "▶ Auto"}</button>
-        <button data-act="log">Log</button>
-        <button data-act="saves">Save</button>
-        <button data-act="flow">Chart</button>
-        <button data-act="guide">Guide</button>
-        <button data-act="title">Title</button>
-      </span>
-    </div>
-    <div class="textbox" id="textbox"></div>
-    <div class="choices" id="choices"></div>
-    <div class="advance-hint" id="hint">click / enter to continue · hold Ctrl to skip · wheel up for log</div>`;
+    <div class="reader">
+      <div class="reader-progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
+      <div class="stage" id="stage"></div>
+      <div class="reader-top">
+        <div class="reader-where" title="${escapeAttr(where)}">
+          <span class="chapter">${chapter}</span>
+          <span class="place">${sceneDate ? ` · ${escapeAttr(sceneDate)}` : ""} · ${pct}%</span>
+        </div>
+        <span class="hud-btns" role="group" aria-label="Reader menu">
+          <button data-act="auto" aria-pressed="${h.settings.autoDelay > 0}" class="${h.settings.autoDelay > 0 ? "active" : ""}">${h.settings.autoDelay > 0 ? "Pause auto" : "Auto"}</button>
+          <button data-act="log">Log</button>
+          <button data-quick="save" title="Quick save">Q.Save</button>
+          <button data-quick="load" title="Quick load">Q.Load</button>
+          <button data-act="saves">Save</button>
+          <button data-act="flow">Chart</button>
+          <button data-act="guide">Guide</button>
+          <button data-act="title">Title</button>
+        </span>
+      </div>
+      <div class="reader-bottom">
+        <div class="textbox" id="textbox"></div>
+        <div class="choices" id="choices"></div>
+        <div class="advance-hint" id="hint">Click or Enter to continue · hold Ctrl to skip · scroll up for the backlog</div>
+      </div>
+    </div>`;
 
-  paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol);
+  paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol, !!h.demo);
   fireSe(save);
   updateAmbient(save);
   const box = el.querySelector("#textbox") as HTMLElement;
@@ -168,6 +195,13 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     b.addEventListener("click", (e) => {
       e.stopPropagation();
       h.open((b as HTMLElement).dataset.act as string);
+    }),
+  );
+  el.querySelectorAll("[data-quick]").forEach((b) =>
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if ((b as HTMLElement).dataset.quick === "save") h.quickSave?.();
+      else h.quickLoad?.();
     }),
   );
   // Standard VN convention: wheel-up opens the backlog.
@@ -195,7 +229,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       writeAutosave(localStorage, save);
       h.notify(`Ending recorded: ${cont.ending}`);
     }
-    box.innerHTML = `<div class="narrate">— End of ${escapeAttr(pos.script)} —</div>
+    box.innerHTML = `<div class="narrate">End of ${escapeAttr(pos.script)}</div>
       <div class="dim">The story continues in another file; use the chart or title.</div>`;
     hint.style.display = "none";
     const back = document.createElement("button");
@@ -212,15 +246,16 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
 
   if (ev.t === "choice") {
     hint.style.display = "none";
+    box.classList.add("prompt-only");
     const node = router.flowNode(pos);
-    box.innerHTML = `<div class="narrate choice-prompt">— Choose —${
+    box.innerHTML = `<div class="narrate choice-prompt">Choose${
       node?.date ? ` <span class="dim">${escapeAttr(node.date)}</span>` : ""
     }</div>`;
     for (const o of ev.options) {
       const gate = node?.gated?.[String(o.n)] ?? null;
       const b = document.createElement("button");
       b.className = "choice-btn";
-      b.innerHTML = renderText(o.text) + (gate ? ` <span class="lock">🔒 ${escapeAttr(gate)}</span>` : "");
+      b.innerHTML = renderText(o.text) + (gate ? ` <span class="lock">(${escapeAttr(gate)})</span>` : "");
       b.onclick = (e) => {
         e.stopPropagation();
         cutVoice();
@@ -254,7 +289,10 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       ? `<div class="speaker">${escapeAttr(displaySpeaker(save, ev))}</div>` : "";
     const outer = `${cls}${ev.style === "whisper" ? " whisper" : ""}`;
     const full = `${who}<div class="${outer}">${renderText(ev.text)}</div>`;
-    const speed = h.skip.active ? 0 : h.settings.textSpeed;
+    const reduceMotion = typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const speed = h.skip.active || reduceMotion ? 0 : h.settings.textSpeed;
     if (speed > 0) {
       startTypewriter(box, full, ev.text, who, outer, speed, () => scheduleAuto(h));
       el.onclick = () => {
@@ -276,8 +314,8 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
 
   if (ev.t === "movie") {
     const url = movieUrl(ev.id);
-    box.innerHTML = `<div class="narrate">▶ Movie <b>${escapeAttr(ev.id)}</b>${
-      url ? "" : ' <span class="dim">(not installed - placeholder; install movies to watch)</span>'
+    box.innerHTML = `<div class="narrate">Movie <b>${escapeAttr(ev.id)}</b>${
+      url ? "" : ' <span class="dim">(not installed, so this is a placeholder; install movies to watch)</span>'
     }</div>`;
     if (url) {
       const v = document.createElement("video");
@@ -293,12 +331,12 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
 
   // Directives / latches auto-advance on click.
   const label =
-    ev.t === "image" ? `🖼 ${ev.file} [${ev.layer ?? "?"}]` :
-    ev.t === "filter" ? `◐ ${ev.file}` :
-    ev.t === "anim" ? `✦ ${ev.file} [${ev.layer ?? "?"}]` :
-    ev.t === "latch" ? `— ${ev.name} —` :
-    ev.t === "jump" ? `⇢ ${ev.kind} ${ev.targets.join(" ")}` :
-    ev.t === "layer" ? `▤ ${ev.layer}` : "…";
+    ev.t === "image" ? `Image ${ev.file} [${ev.layer ?? "?"}]` :
+    ev.t === "filter" ? `Colour grade ${ev.file}` :
+    ev.t === "anim" ? `Animation ${ev.file} [${ev.layer ?? "?"}]` :
+    ev.t === "latch" ? ev.name :
+    ev.t === "jump" ? `Branch ${ev.kind} ${ev.targets.join(" ")}` :
+    ev.t === "layer" ? `Layer ${ev.layer}` : "…";
   box.innerHTML = `<div class="narrate dim">${escapeAttr(label)}</div>`;
   el.onclick = () => stepForward(h);
 }
@@ -504,13 +542,31 @@ export function pushLog(router: Router, save: SaveData): void {
   }
 }
 
-function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number): void {
+function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number, demo: boolean): void {
   const st = stageImageState(save);
   paintBackdrop(stage, st, bnrFadeAt(save));
+  // The demo has no game assets; draw an original placeholder scene rather
+  // than a "no backdrop" label. It is removed as soon as a real backdrop or
+  // an engine clear takes over.
+  const demoScene = stage.querySelector(":scope > .demo-scene");
+  if (demo && !st.url && !st.cleared) {
+    stage.style.backgroundImage = "";
+    stage.style.backgroundColor = "";
+    stage.querySelector(":scope > .stage-ph")?.remove();
+    if (!demoScene) {
+      stage.insertAdjacentHTML("afterbegin", `<div class="demo-scene" aria-hidden="true">
+        <div class="demo-moon"></div>
+        <div class="demo-skyline"></div>
+        <div class="demo-snowfield"></div>
+      </div>`);
+    }
+  } else {
+    demoScene?.remove();
+  }
   const prevPh = stage.querySelector(":scope > .stage-ph");
   if (st.url) {
     prevPh?.remove();
-  } else {
+  } else if (!(demo && !st.cleared)) {
     if (st.cleared) {
       // Engine clear-to-black (e.g. stage-play spotlight scenes): remove
       // the CSS default gradient too, or the stage stays navy.
@@ -527,8 +583,8 @@ function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number): void {
       }
       const ph = stage.querySelector(":scope > .stage-ph") as HTMLElement;
       ph.textContent = st.missingFile
-        ? `🖼 ${st.missingFile} — install assets for visuals`
-        : "— no backdrop yet —";
+        ? `Backdrop not installed: ${st.missingFile}`
+        : "No backdrop yet";
     }
   }
   stage.style.filter = stageFilter(save);
@@ -1355,5 +1411,10 @@ function cutVoice(): void {
 }
 
 function escapeAttr(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

@@ -108,3 +108,22 @@ npm run build && npm run preview         # production preview
 
 Saves: `Save / Load` screen — progress lives in a file YOU own
 (download JSON, re-import anywhere) plus 8 browser slots + autosave.
+The reader also has Q.Save / Q.Load; Save/Load exposes the autosave and a
+manual quick-save row. The same screen imports original-PC
+`save_XX.sav` / `save_Q.sav` files from the game folder (`Sys.sav` is
+recognised but its global read/choice flags are not imported yet; see
+docs/PARSING.md).
+
+## 4. External pack URL (`?pack=`)
+
+The built `data/` + `assets/` tree can also be served from an external
+CORS-enabled static host and passed to the player via `?pack=`:
+
+```
+https://your-frontend.example/?pack=https://your-host.example/wa2-pack
+```
+
+The pack root must contain `data/` and `assets/manifest.json` side by side,
+as produced by `build.py` + `extract_assets.py` (or by `pack_site.py`).
+The player has no server component and fetches the pack directly from the
+browser. See [LEGAL.md](LEGAL.md).

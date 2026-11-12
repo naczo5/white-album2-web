@@ -1,7 +1,7 @@
 # PACKAGING — self-contained builds and realistic sizes
 
 Short answer: **yes, it self-packages today as a plain static folder** (engine
-~52 KB + built data + converted assets). A full-experience package is
+~69 KB + built data + converted assets). A full-experience package is
 media-dominated: the installed reference archives measure ~8.0 GB (main 6.1 + IC 1.9), and the
 current lossless-ish extraction lands around **5–7 GB**. With a
 web-oriented transcode tier (WebP/AVIF images, Opus voice/SE, AV1/H.264
@@ -85,7 +85,7 @@ pass is skipped, not silently claimed.
 | current extractor | PNG | OGG + WAV | H.264 CRF21 | 5–8 GB | 4.8–7.7 GB |
 | web tier | WebP/AVIF q85–90 | Opus 24–32 kbps voice, 64–96 kbps BGM/SE | AV1/VP9 or H.264 CRF23 | 2–4 GB | 1.9–3.9 GB |
 | aggressive | WebP q70–80 / AVIF q50 | Opus 20–24 kbps voice | 540p AV1/H.264 | 1.2–2.5 GB | 1.1–2.4 GB |
-| text-only | — | — | — | **16.4 MB data (12.8 compact) + ~52 KB engine** | **~3.0 MB** |
+| text-only | — | — | — | **16.4 MB data (12.8 compact) + ~69 KB engine** | **~3.0 MB** |
 
 Assumptions: 46k voice clips, 165 BGM tracks (main + IC + bonus), 1,962
 SE files, 14.3k sprite statements (unique files fewer), 2.5 GB of movies.
@@ -111,7 +111,8 @@ Exact ratios vary with source resolution and clip length; the packer's
 ## Notes and limits
 
 - **Legal:** the output contains copyrighted game assets. Build it for
-  yourself; do not publish or redistribute it. The repo stays BYOA.
+  yourself; do not publish or redistribute it. The repo stays BYOA. See
+  [LEGAL.md](LEGAL.md).
 - **Single executable?** Possible with Tauri/Electron, but it adds a
   platform runtime (Electron ~100 MB, Tauri ~5–10 MB) and a webview version
   dependency, while the static folder already runs everywhere with Python.

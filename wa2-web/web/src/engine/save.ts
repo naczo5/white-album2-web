@@ -6,8 +6,19 @@
 import type { Flags, Position, SaveData } from "./types";
 
 export const SAVE_VERSION = 1;
-export const AUTOSAVE_KEY = "wa2web.autosave";
-export const SLOT_KEY = (i: number) => `wa2web.slot.${i}`;
+/** Default namespace for a local full build; setSaveNamespace() isolates
+ * demo and external-pack progress on the same origin. */
+let namespace = "wa2web";
+
+export function setSaveNamespace(id: string): void {
+  namespace = id ? `wa2web.${id}` : "wa2web";
+}
+
+export function storageKey(name: string): string {
+  return `${namespace}.${name}`;
+}
+
+export const SLOT_KEY = (i: number) => storageKey(`slot.${i}`);
 
 export function newSave(name: string, position: Position): SaveData {
   return {
@@ -67,6 +78,32 @@ export function deserialize(json: string): SaveData {
       throw new Error("bad bgm state");
     }
   }
+  if (data.native !== undefined) {
+    const n = data.native;
+    if (!n || typeof n !== "object" || typeof n.script !== "string") {
+      delete data.native;
+    } else {
+      data.native = {
+        file: typeof n.file === "string" ? n.file : undefined,
+        script: n.script,
+        route: typeof n.route === "string" ? n.route : undefined,
+        preview: typeof n.preview === "string" ? n.preview : undefined,
+        speaker: typeof n.speaker === "string" ? n.speaker : undefined,
+        options: Array.isArray(n.options)
+          ? n.options.filter((x): x is string => typeof x === "string")
+          : undefined,
+        timestamp: typeof n.timestamp === "string" ? n.timestamp : undefined,
+        playtime: typeof n.playtime === "number" ? n.playtime : undefined,
+        version: typeof n.version === "number" ? n.version : undefined,
+        ambiguous: n.ambiguous === true ? true : undefined,
+        confidence: n.confidence === "exact" || n.confidence === "fuzzy" || n.confidence === "choice"
+          ? n.confidence
+          : undefined,
+        candidate: Number.isInteger(n.candidate) ? n.candidate : undefined,
+        candidateCount: Number.isInteger(n.candidateCount) ? n.candidateCount : undefined,
+      };
+    }
+  }
   return data;
 }
 
@@ -74,7 +111,12 @@ export function deserialize(json: string): SaveData {
 export function readSlotChecked(storage: Storage, i: number):
   | { ok: true; save: SaveData }
   | { ok: false; corrupt: boolean } {
-  const raw = storage.getItem(SLOT_KEY(i));
+  let raw: string | null;
+  try {
+    raw = storage.getItem(SLOT_KEY(i));
+  } catch {
+    return { ok: false, corrupt: false };
+  }
   if (!raw) return { ok: false, corrupt: false };
   try {
     return { ok: true, save: deserialize(raw) };
@@ -83,12 +125,50 @@ export function readSlotChecked(storage: Storage, i: number):
   }
 }
 
-export function writeSlot(storage: Storage, i: number, save: SaveData): void {
-  storage.setItem(SLOT_KEY(i), serialize(save));
+export function writeSlot(storage: Storage, i: number, save: SaveData): boolean {
+  try {
+    storage.setItem(SLOT_KEY(i), serialize(save));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function readSlot(storage: Storage, i: number): SaveData | null {
-  const raw = storage.getItem(SLOT_KEY(i));
+  try {
+    const raw = storage.getItem(SLOT_KEY(i));
+    if (!raw) return null;
+    return deserialize(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function writeAutosave(storage: Storage, save: SaveData): boolean {
+  try {
+    storage.setItem(storageKey("autosave"), serialize(save));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function writeQuicksave(storage: Storage, save: SaveData): boolean {
+  try {
+    storage.setItem(storageKey("quicksave"), serialize(save));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readStored(storage: Storage, key: string): SaveData | null {
+  let raw: string | null;
+  try {
+    raw = storage.getItem(key);
+  } catch {
+    return null;
+  }
   if (!raw) return null;
   try {
     return deserialize(raw);
@@ -97,8 +177,12 @@ export function readSlot(storage: Storage, i: number): SaveData | null {
   }
 }
 
-export function writeAutosave(storage: Storage, save: SaveData): void {
-  storage.setItem(AUTOSAVE_KEY, serialize(save));
+export function readAutosave(storage: Storage): SaveData | null {
+  return readStored(storage, storageKey("autosave"));
+}
+
+export function readQuicksave(storage: Storage): SaveData | null {
+  return readStored(storage, storageKey("quicksave"));
 }
 
 export function download(filename: string, text: string): void {

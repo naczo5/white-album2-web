@@ -15,6 +15,9 @@ at build time.
    `git ls-files | grep -E "public/data|public/assets|\.pak$|\.ogg$"`.
    Committed JSON (`wa2-web/data/`, `docs/`) holds only short functional
    labels (choice options), flag/opcode names, and our annotations.
+   **Exception:** `wa2-web/docs/preview.webp` is the one permitted
+   promotional UI screenshot; see `docs/LEGAL.md`. Do not add other game
+   screenshots to the repo.
 2. **Static analysis only for RE.** Never launch the game, Wine, windows,
    screenshots, or input automation on the user's machine. Disassemble and
    parse; do not execute. Evidence standard: file offsets, statement dumps,
@@ -46,22 +49,24 @@ at build time.
   (loaders), `main.ts` (screens/settings).
 - `wa2-web/docs/` — `ARCHITECTURE.md`, `PARSING.md` (token + opcode tables),
   `FLOW_GRAPH.md` (flag model), `QA.md` (gates + open items + log),
-  `BYOA.md` (asset setup), `LEGAL.md`.
+  `BYOA.md` (asset setup), `ONECLICK.md`, `PACKAGING.md`, `LEGAL.md`.
 - `skills/` — agent skills (repo-local, harness-agnostic markdown).
 
 ## Commands
 
 ```sh
-cd wa2-web && python3 -m pytest tests/ -q   # 35 passed + 7 BYOA-skipped
-cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 58 passed
+cd wa2-web && python3 -m pytest tests/ -q   # 77 passed + 9 skipped
+cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 88 passed + 2 skipped
 python3 tools/build.py MAIN_EN_PAK [SPECIAL_EN_PAK] OUT [--game GAMEDIR] [--mao MAO_SCRIPT_DATA]
 ```
 
 `--game` unlocks the asset-dependent steps (luts, flags, bnr choice gate).
 Copy `OUT/data/*` → `web/public/data/`; assets via `extract_assets.py`
-(see `docs/BYOA.md`). `web/public/` is gitignored build output — never stage
-it (a stale copy there is the usual "missing asset" false alarm; the loader
-warns on partial loads).
+(see `docs/BYOA.md`). `web/public/data` and `web/public/assets` are
+gitignored build output — never stage them (a stale copy there is the usual
+"missing asset" false alarm; the loader warns on partial loads). The one
+exception is `web/public/_headers`, the static cache/security header file,
+which is source and must be tracked.
 
 ## Working agreements
 

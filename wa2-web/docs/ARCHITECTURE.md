@@ -31,12 +31,21 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
   overrides) + terminals (ends/chains) + flag effects. Bare ids and
   CATCH* never move flow (preload/voice sync). Detour-once visited set.
 - `engine/save.ts` — progress as a FILE (JSON download/upload) + 8
-  localStorage slots + autosave. Round-trip tested.
+  localStorage slots + separate autosave and quick-save keys. Round-trip
+  tested.
+- `engine/native-save.ts` — original-PC `.sav` parser (fixed offsets for
+  script id, current line, speaker, choice buffers, timestamp). The UI
+  maps the line/choices back to IR events; unsupported `Sys.sav` global
+  state is detected and reported, not silently guessed.
+- `ui/saves.ts` — quick save/load row, autosave load/export row, native
+  import list, JSON slots; `reader.ts` exposes desktop Q.Save/Q.Load.
 - `engine/assets.ts` — manifest lookup with null fallback (text-first
   placeholders when assets are missing).
 - `ui/` — title, reader (dialogue/choices/stage/backlog), flowchart
   (progress + spoiler modes + verification badges), guide (endings,
   recommended order, key choices), saves, settings.
+- `main.ts` — optional `?pack=<root>` loads `data/` and `assets/` from an
+  external BYOA host (CORS required); see `docs/BYOA.md`.
 
 ## Key findings baked in (see docs/FLOW_GRAPH.md, docs/PARSING.md)
 

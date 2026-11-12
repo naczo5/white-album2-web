@@ -88,4 +88,55 @@ describe("saves", () => {
     expect(readSlot(storage, 0)?.name).toBe("slot");
     expect(readSlot(storage, 1)).toBeNull();
   });
+
+  it("quick save and autosave are separate round-trip stores", async () => {
+    const { readAutosave, readQuicksave, writeAutosave, writeQuicksave } = await import("./save");
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() { return store.size; },
+    } as Storage;
+    expect(readQuicksave(storage)).toBeNull();
+    expect(readAutosave(storage)).toBeNull();
+    const quick = newSave("quick", { script: "2003", event: 241 });
+    const auto = newSave("auto", { script: "2024", event: 83 });
+    writeQuicksave(storage, quick);
+    writeAutosave(storage, auto);
+    expect(readQuicksave(storage)?.name).toBe("quick");
+    expect(readAutosave(storage)?.name).toBe("auto");
+    expect(store.has("wa2web.quicksave")).toBe(true);
+    expect(store.has("wa2web.autosave")).toBe(true);
+  });
+
+  it("namespaces demo and pack saves away from the local build", async () => {
+    const { setSaveNamespace, readAutosave, readQuicksave, writeAutosave, writeQuicksave } = await import("./save");
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() { return store.size; },
+    } as Storage;
+    setSaveNamespace("demo");
+    writeSlot(storage, 0, newSave("demo slot", { script: "demo-1", event: 0 }));
+    writeQuicksave(storage, newSave("demo quick", { script: "demo-1", event: 1 }));
+    writeAutosave(storage, newSave("demo auto", { script: "demo-1", event: 2 }));
+    expect(store.has("wa2web.demo.slot.0")).toBe(true);
+    expect(store.has("wa2web.demo.quicksave")).toBe(true);
+    expect(readQuicksave(storage)?.name).toBe("demo quick");
+    expect(readAutosave(storage)?.name).toBe("demo auto");
+    setSaveNamespace("");
+    expect(readSlot(storage, 0)).toBeNull();
+    expect(readQuicksave(storage)).toBeNull();
+    expect(readAutosave(storage)).toBeNull();
+    writeSlot(storage, 0, newSave("local slot", { script: "1001", event: 0 }));
+    expect(readSlot(storage, 0)?.name).toBe("local slot");
+    expect(store.has("wa2web.slot.0")).toBe(true);
+  });
 });

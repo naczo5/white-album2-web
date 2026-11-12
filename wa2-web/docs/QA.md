@@ -7,10 +7,10 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit + data (tools) | `pytest tests/` | 77 passed + 7 BYOA-skipped (unit); 84 passed with `WA2_EN_PAK` |
-| web unit | `cd web && vitest run` | 74 passed + 1 BYOA-skipped |
+| unit + data (tools) | `pytest tests/` | 77 passed + 9 skipped (84 passed with `WA2_EN_PAK`) |
+| web unit | `cd web && vitest run` | 88 passed + 2 BYOA-skipped |
 | real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | 183/221 scripts, no throw/stall |
-| types+build | `tsc --noEmit && npm run build` | clean (engine ~52 KB) |
+| types+build | `tsc --noEmit && npm run build` | clean (~69 KB JS + 29 KB CSS, asset-free) |
 | corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 84 passed (7 corpus tests; 517 en.pak entries, zero parser warnings) |
 | flow parity | `check_flow.py IR flow.json` | 32/32 nodes, option text exact |
 | bnr choice gate | `check_bnr_choices.py IR script.pak` | 32/32 choices carry (4,208) markers |
@@ -575,3 +575,59 @@ Fixes (web/ui/flowchart.ts):
   (2001-2517 + 23xx/24xx routes) + coda (3001-3211, 3901-3909).
 - flowgraph.test.ts axes updated (branch siblings share a row, not a
   column). Gates: tsc clean, vitest 62.
+
+### 2026-11-12 — interface redesign, demo scene, external pack handoff
+
+- Rebuilt the player UI around the original interface plates: deep
+  teal/aqua glass header strips and message window, snowflake watermark,
+  gold selection/current-node state, script titles, angular buttons.
+  Title, reader, choices, backlog, flowchart, guide, saves, settings,
+  special contents, mobile portrait layout, focus-visible, and
+  reduced-motion behavior were all touched.
+- Standing sprites now render at engine height with no `max-width`
+  shrink. Some source sprites are hard-cropped at the crown (visible
+  alpha row at y=0); shrinking them exposed that cut as a floating flat
+  edge. Full-height, bottom-anchored placement sits the cut flush with
+  the stage top, matching the original engine.
+- Asset-free demo mode now draws an original CSS winter scene (no game
+  art) and uses original placeholder prose. A real-asset README preview is
+  a single promotional capture, not a runtime asset.
+- `?pack=<root>` loads `data/` + `assets/` from an external BYOA host
+  (CORS required); manifest URLs rebase against the pack; LUTs and novels
+  follow the same root. Pack data is treated as untrusted input:
+  interpolated ids/dates/gotos are escaped, malformed scenario/flow nodes
+  are skipped, and pack failures fall back to the demo with a title warning.
+- Gates: tsc clean; Vitest 77 passed / 1 skipped; pytest 77 passed /
+  9 skipped; clean Vite build from a checkout with `public/data` and
+  `public/assets` removed.
+- Review fixes: pack JSON XSS escaping, quote-safe attribute escaper,
+  ignored `public/assets` symlink, local CORS test command, Special novel
+  links under a pack, demo chapter labels, mobile text-size/touch-target
+  fixes, keyboard Enter on focused controls, reduced-motion typewriter, and
+  screenshot/legal wording.
+
+### 2026-11-12 — native PC save import (manual slots / quick save)
+
+- Decoded the original ~0x54fd0-byte slot format from 11 user-supplied
+  save_XX/save_Q samples (kept outside git): header SYSTEMTIME, preview,
+  full line, speaker, three choice buffers, and script id/route at
+  0x203d8. Evidence offsets are in docs/PARSING.md "Native PC save files".
+- Added `web/src/engine/native-save.ts`: parses `.sav`, normalizes the
+  soft-wrapped CP932 line, matches it against the IR, falls back to choice
+  text, and flags duplicate-line ambiguity. Save/Load now imports native
+  slots into a separate persistent "Imported game saves" list (not
+  limited to the 8 browser slots).
+- `Sys.sav` is detected (name/size) but its global read/choice/affection
+  mapping is not imported yet; the UI states that explicitly. Manual
+  continuation works because choice destinations come from flow.json.
+- Corpus test (BYOA-gated): `WA2_NATIVE_SAVES=… WA2_DATA_DIR=… vitest run
+  native-save.corpus` maps 11/11 samples; save_00's repeated line is
+  imported as two candidate rows (option 1/2), not silently chosen.
+- Quick save/load and the autosave row were added to Save/Load; the
+  reader exposes desktop Q.Save/Q.Load. Keys are namespaced per data source
+  (`wa2web.demo.*`, `wa2web.pack-<hash>.*`, default `wa2web.*`), so demo and
+  pack progress cannot overwrite each other. Quick save is separate from
+  autosave and the 8 slots.
+- Gates: tsc clean; Vitest 88 passed / 2 BYOA-skipped; pytest unchanged
+  77 passed / 9 skipped; browser smoke: Q.Save → advance → Q.Load restored
+  the saved line, Save/Load showed the Quick save and Autosave rows.

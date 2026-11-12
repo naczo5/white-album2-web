@@ -55,16 +55,20 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 const DEMO: Scenario[] = [
   {
     script: "demo-1",
-    tokens: 6,
+    tokens: 10,
     warnings: [],
     events: [
       { t: "image", file: "demo-bg.tga", layer: "bak" },
-      { t: "narrate", text: "Snow falls over the empty platform.\\nThis is demo content - install your assets to play." },
-      { t: "latch", name: "Demo" },
-      { t: "say", speaker: "Demo", text: "No game files were found, so this placeholder plays instead." },
-      { t: "say", speaker: "Demo", text: "Run tools/build.py with your own copy, then reload.", style: "whisper" },
-      { t: "choice", options: [{ n: 1, text: "See the flowchart", goto: null }, { n: 2, text: "Read the guide", goto: null }] },
-      { t: "narrate", text: "The demo ends here. Thanks for checking the engine." },
+      { t: "narrate", text: "Snow gathers on the empty platform. The last train has gone." },
+      { t: "say", speaker: "Demo", text: "You came back." },
+      { t: "narrate", text: "The city hums beyond the embankment. Neither of us moves." },
+      { t: "say", speaker: "Demo", text: "I thought you'd be gone by now." },
+      { t: "narrate", text: "The cold makes every word feel heavier than it should." },
+      { t: "choice", options: [{ n: 1, text: "Tell the truth.", goto: null }, { n: 2, text: "Change the subject.", goto: null }] },
+      { t: "say", speaker: "Demo", text: "Then stay a little longer." },
+      { t: "narrate", text: "The snowfall fills the silence.\\nSomewhere behind us, a crossing bell starts to ring." },
+      { t: "say", speaker: "Demo", text: "This is placeholder script data. Build the engine with your own copy to read the real story.", style: "whisper" },
+      { t: "narrate", text: "End of demo. Open the flowchart, guide, or settings to see the rest of the shell." },
     ],
   },
 ];
@@ -73,31 +77,35 @@ const DEMO_FLOW: FlowData = {
   version: 1,
   nodes: [
     {
-      id: "demo-1-5", engine: { script: "demo-1", event: 5 },
-      options: [{ n: 1, text: "See the flowchart", goto: null }, { n: 2, text: "Read the guide", goto: null }],
+      id: "demo-1-6", engine: { script: "demo-1", event: 6 },
+      options: [{ n: 1, text: "Tell the truth.", goto: null }, { n: 2, text: "Change the subject.", goto: null }],
       date: null, effects: {}, gated: {}, walkthrough: null, status: "NEEDS_REVIEW",
     },
   ],
 };
 
-export async function loadGameData(): Promise<GameData> {
+export async function loadGameData(base = ""): Promise<GameData> {
+  const prefix = base ? `${base.replace(/\/+$/, "")}/` : "";
   const [index, flow, endings, links, terminals, bgm, bnr, voicemap, speakers] =
     await Promise.all([
-      tryFetch<string[]>("data/scripts/index.json"),
-      tryFetch<FlowData>("data/flow.json"),
-      tryFetch<GameData["endings"]>("data/endings.json"),
-      tryFetch<LinksData>("data/links.json"),
-      tryFetch<TerminalsData>("data/terminals.json"),
-      tryFetch<BgmData>("data/bgm.json"),
-      tryFetch<BnrData>("data/bnr.json"),
-      tryFetch<VoiceMapData>("data/voicemap.json"),
-      tryFetch<SpeakersData>("data/speakers.json"),
+      tryFetch<string[]>(`${prefix}data/scripts/index.json`),
+      tryFetch<FlowData>(`${prefix}data/flow.json`),
+      tryFetch<GameData["endings"]>(`${prefix}data/endings.json`),
+      tryFetch<LinksData>(`${prefix}data/links.json`),
+      tryFetch<TerminalsData>(`${prefix}data/terminals.json`),
+      tryFetch<BgmData>(`${prefix}data/bgm.json`),
+      tryFetch<BnrData>(`${prefix}data/bnr.json`),
+      tryFetch<VoiceMapData>(`${prefix}data/voicemap.json`),
+      tryFetch<SpeakersData>(`${prefix}data/speakers.json`),
     ]);
-  if (index && index.length > 0 && flow) {
+  if (Array.isArray(index) && index.length > 0 && flow && Array.isArray(flow.nodes)) {
     const scenarios: Scenario[] = [];
     const failed: string[] = [];
     const results = await mapLimit(index, 12, async (id) => {
-      const sc = await tryFetch<Scenario>(`data/scripts/${id}.json`);
+      const sc = await tryFetch<Scenario>(`${prefix}data/scripts/${id}.json`);
+      if (!sc || typeof sc.script !== "string" || !Array.isArray(sc.events)) {
+        return [id, null] as const;
+      }
       return [id, sc] as const;
     });
     for (const [id, sc] of results) {
@@ -108,8 +116,19 @@ export async function loadGameData(): Promise<GameData> {
       console.warn(`[wa2] ${failed.length}/${index.length} scripts failed to load (hard-refresh?):`, failed.slice(0, 5));
     }
     if (scenarios.length > 0) {
+      // A pack is linkable/importable input; keep malformed nodes out of
+      // Router construction instead of throwing on a missing engine/options.
+      const safeFlow: FlowData = {
+        ...flow,
+        nodes: flow.nodes.filter((n) =>
+          n && n.engine &&
+          typeof n.engine.script === "string" &&
+          typeof n.engine.event === "number" &&
+          Array.isArray(n.options)
+        ),
+      };
       return {
-        scenarios, flow,
+        scenarios, flow: safeFlow,
         links: links ?? { version: 1, links: [] },
         terminals: terminals ?? { version: 1, terminals: {} },
         endings: endings ?? { endings: [] },

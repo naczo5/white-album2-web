@@ -181,6 +181,26 @@ export interface Flags {
   set: Record<string, boolean>;
 }
 
+/** Metadata for a save imported from the original PC build. The native
+ * file is not stored; only the display/position fields needed by the port. */
+export interface NativeSaveMeta {
+  file?: string;
+  script: string;
+  route?: string;
+  preview?: string;
+  speaker?: string;
+  options?: string[];
+  timestamp?: string;
+  playtime?: number;
+  version?: number;
+  /** More than one scenario line normalized to the same text. */
+  ambiguous?: boolean;
+  confidence?: "exact" | "fuzzy" | "choice";
+  /** 1-based candidate index when a native line is ambiguous. */
+  candidate?: number;
+  candidateCount?: number;
+}
+
 export interface SaveData {
   version: 1;
   name: string;
@@ -195,4 +215,6 @@ export interface SaveData {
   /** Last BGM cue state for mid-scene restore: engine track number, or
    * null after an explicit stop. Absent in legacy saves. */
   bgm?: { track: number } | null;
+  /** Present on saves imported from the PC build. */
+  native?: NativeSaveMeta;
 }

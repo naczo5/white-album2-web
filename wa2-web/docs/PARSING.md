@@ -240,6 +240,45 @@ docs/QA.md verification log):
   SetSelect/SetSelectMess, LoadBmp/SetBmp*, GetReplayMode, EroMode).
   Group numbers in `(4,X)`/`(6,X)` statements are NOT .fnc indices.
 
+## Native PC save files (sample-backed, static format map)
+
+The original build writes fixed-size slot saves and a separate system save.
+The samples used for this map were user-supplied and are not committed.
+
+- `save_%02d.sav` and `save_Q.sav`: **0x54fd0 bytes** (348,112) each.
+  Header fields confirmed across 11 independent saves:
+  - `0x00` u32 version (2)
+  - `0x04` u32 playtime/serial
+  - `0x08` `SYSTEMTIME` (8 × u16: year, month, weekday, day, hour,
+    minute, second, milliseconds)
+  - `0x18` CP932 current-line preview, 64-byte buffer
+  - `0x112c2` CP932 full current line (soft-wrapped, `~`/`…` separators,
+    literal `\n`)
+  - `0x116c4` CP932 speaker
+  - `0x11714`/`0x11814`/`0x11914` CP932 choice buffers, 256 bytes apart
+  - `0x203d8` CP932 script id (e.g. `2003`, `2503`), followed by a
+    route/mode string (`2` for IC, `030` for CC/Coda in the samples)
+  - the rest is engine VM/graphics state plus two appended blobs written
+    by `WriteFile`/append; it is not needed for position import.
+- The current **script id + full line + choice buffers** are enough to map
+  back to the web IR: exact normalized text finds the line; if the line
+  cannot be matched, the three option buffers match a choice event.
+  `native-save.ts` implements this and the BYOA corpus test
+  (`WA2_NATIVE_SAVES=… WA2_DATA_DIR=… vitest run native-save.corpus`)
+  maps 11/11 sample saves. Identical repeated lines are returned as separate
+  candidates; Save/Load shows them as option N/M instead of silently
+  choosing a scene.
+- `Sys.sav`: **0x269480 bytes** (2,528,384), shared by all slots. It is
+  mostly a read/global bitmap plus a 4 KB flag table at `0x268480`
+  (0/1/3/7 words) and a sparse table around `0x98700`. The slot saves do
+  not contain the prior-choice/read profile, so importing it requires the
+  Sys.sav read/flag mapping; that is deliberately left as pending rather
+  than guessing. The Slot/Quick import works without it because the
+  shipped Router's choice destinations come from `flow.json`.
+- Save thumbnails: `save.tga` is a separate screenshot file; the slot
+  files also contain a 64×96 RGBA preview near `0x58`. Neither is used by
+  the importer.
+
 ## Display granularity assumption (needs play-test)
 
 One fragment = one advance. Plain narration tokens are comma-free by
