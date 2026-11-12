@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, bgmTrackUrl, imageUrl, loadManifest, resolveMovieUrl, seUrl, voiceUrl } from "./assets";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, bgmTrackUrl, clearAudioPackCache, imageUrl, loadManifest, resolveAudioUrl, resolveMovieUrl, seUrl, voiceUrl } from "./assets";
 
 const TABLE = {
   mv000: "movie/mv000.mp4",
@@ -135,3 +135,72 @@ describe("manifest URL rebasing (assets/ relative -> page fetchable)", () => {
     }
   });
 });
+
+describe("chunked .vpk audio resolution", () => {
+  afterEach(() => {
+    clearAudioPackCache();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns plain audio URLs unchanged without fetching", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    expect(await resolveAudioUrl(null)).toBeNull();
+    expect(await resolveAudioUrl("assets/voice/a.ogg")).toBe("assets/voice/a.ogg");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("fetches a .vpk chunk once, slices ranges with proper MIME types, and revokes on clear", async () => {
+    const payload = new Uint8Array([0x4f, 0x67, 0x67, 0x53, 0x52, 0x49, 0x46, 0x46, 0x01, 0x02]);
+    let fetches = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      fetches++;
+      return {
+        ok: true,
+        arrayBuffer: async () => payload.buffer.slice(0),
+      };
+    }));
+    const created: { url: string; blob: Blob }[] = [];
+    const revoked: string[] = [];
+    vi.spyOn(URL, "createObjectURL").mockImplementation((b) => {
+      const u = `blob:mock/${created.length}`;
+      created.push({ url: u, blob: b as Blob });
+      return u;
+    });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation((u) => {
+      revoked.push(u);
+    });
+
+    const [oggUrl, wavUrl] = await Promise.all([
+      resolveAudioUrl("https://cdn.example/assets/vpk/c0.vpk#0-4"),
+      resolveAudioUrl("https://cdn.example/assets/vpk/c0.vpk#4-10:wav"),
+    ]);
+    expect(fetches).toBe(1);
+    expect(oggUrl).toBe("blob:mock/0");
+    expect(wavUrl).toBe("blob:mock/1");
+    expect(created[0].blob.type).toBe("audio/ogg");
+    expect(await created[0].blob.arrayBuffer()).toEqual(payload.slice(0, 4).buffer);
+    expect(created[1].blob.type).toBe("audio/wav");
+    expect(await created[1].blob.arrayBuffer()).toEqual(payload.slice(4, 10).buffer);
+
+    // Cached slice hit returns the same blob URL with zero extra fetch or createObjectURL calls.
+    expect(await resolveAudioUrl("https://cdn.example/assets/vpk/c0.vpk#0-4")).toBe("blob:mock/0");
+    expect(created).toHaveLength(2);
+    expect(fetches).toBe(1);
+
+    clearAudioPackCache();
+    expect(revoked).toEqual(["blob:mock/1", "blob:mock/0"]);
+  });
+
+  it("rejects out-of-bounds slices cleanly", async () => {
+    const payload = new Uint8Array([1, 2, 3, 4]);
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => payload.buffer.slice(0),
+    })));
+    expect(await resolveAudioUrl("assets/vpk/c1.vpk#0-10")).toBeNull();
+    expect(await resolveAudioUrl("assets/vpk/c1.vpk#3-2")).toBeNull();
+  });
+});
+

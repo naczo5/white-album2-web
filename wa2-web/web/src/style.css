@@ -71,7 +71,6 @@ body {
     radial-gradient(120% 80% at 76% 8%, rgb(18 78 92 / 0.42), transparent 60%),
     radial-gradient(90% 70% at 8% 100%, rgb(9 57 68 / 0.5), transparent 65%),
     linear-gradient(180deg, #061b23 0%, var(--night-0) 60%, #020e13 100%);
-  background-attachment: fixed;
 }
 
 /* A single faint diagonal glimmer across every screen: the light-trail
@@ -217,7 +216,6 @@ code {
       rgb(150 244 240 / 0.055) 150px 152px,
       transparent 152px 390px
     );
-  filter: blur(0.4px);
 }
 
 .title::after {
@@ -233,10 +231,14 @@ code {
 
 .title-snow {
   position: absolute;
-  inset: -20% -10%;
+  top: -420px;
+  left: -10%;
+  right: -10%;
+  bottom: 0;
   z-index: -1;
   pointer-events: none;
   opacity: 0.55;
+  will-change: transform;
   background-image:
     radial-gradient(1.6px 1.6px at 22% 18%, #fff 45%, transparent 55%),
     radial-gradient(1.2px 1.2px at 68% 42%, #eafcff 45%, transparent 55%),
@@ -247,7 +249,7 @@ code {
     radial-gradient(1.4px 1.4px at 32% 92%, #fff 45%, transparent 55%),
     radial-gradient(1.2px 1.2px at 94% 24%, #dff8ff 45%, transparent 55%);
   background-size: 420px 420px;
-  animation: snowfall 70s linear infinite;
+  animation: snowfall 48s linear infinite;
 }
 
 .title-main {
@@ -410,8 +412,7 @@ code {
   width: min(46vw, 560px);
   aspect-ratio: 1;
   border-radius: 50%;
-  background: radial-gradient(circle, rgb(120 238 233 / 0.14), transparent 66%);
-  filter: blur(8px);
+  background: radial-gradient(circle, rgb(120 238 233 / 0.16), transparent 68%);
 }
 
 .snowflake-mark {
@@ -419,7 +420,7 @@ code {
   width: min(43vw, 540px);
   height: auto;
   opacity: 0.82;
-  filter: drop-shadow(0 0 28px rgb(82 227 221 / 0.3));
+  will-change: transform, opacity;
   animation: breathe 18s ease-in-out infinite;
 }
 
@@ -999,7 +1000,6 @@ h3::after {
     opacity 0.25s ease,
     translate 0.25s ease,
     left 0.35s ease;
-  filter: drop-shadow(0 4px 10px rgb(0 0 0 / 0.45));
 }
 
 /* Asset-free demo scene: an original winter platform, drawn with gradients
@@ -1075,9 +1075,13 @@ h3::after {
 .demo-scene::after {
   content: "";
   position: absolute;
-  inset: -20% -10%;
+  top: -300px;
+  left: -10%;
+  right: -10%;
+  bottom: 0;
   pointer-events: none;
   opacity: 0.5;
+  will-change: transform;
   background-image:
     radial-gradient(1.4px 1.4px at 24% 20%, #fff 45%, transparent 55%),
     radial-gradient(1px 1px at 62% 46%, #eafcff 45%, transparent 55%),
@@ -1085,7 +1089,7 @@ h3::after {
     radial-gradient(1.1px 1.1px at 84% 84%, #dff8ff 45%, transparent 55%),
     radial-gradient(1.3px 1.3px at 10% 58%, #fff 45%, transparent 55%);
   background-size: 300px 300px;
-  animation: snowfall 65s linear infinite;
+  animation: snowfall-demo 45s linear infinite;
 }
 
 .reader-top {
@@ -1127,9 +1131,8 @@ h3::after {
   justify-content: flex-end;
   gap: 2px;
   pointer-events: auto;
-  border: 1px solid rgb(126 238 233 / 0.16);
-  background: rgb(3 22 28 / 0.66);
-  backdrop-filter: blur(6px);
+  border: 1px solid rgb(126 238 233 / 0.18);
+  background: rgb(3 22 28 / 0.84);
 }
 
 .hud-btns button {
@@ -1214,9 +1217,6 @@ h3::after {
       rgb(5 34 43 / 0.97) 68%,
       rgb(3 24 31 / 0.98) 100%
     );
-  filter:
-    drop-shadow(0 10px 34px rgb(0 0 0 / 0.55))
-    drop-shadow(0 0 12px rgb(82 227 221 / 0.18));
   box-shadow: inset 0 1px rgb(255 255 255 / 0.14);
 }
 
@@ -1597,10 +1597,19 @@ ruby rt {
 
 @keyframes snowfall {
   from {
-    background-position: 0 0;
+    transform: translate3d(0, 0, 0);
   }
   to {
-    background-position: 0 420px;
+    transform: translate3d(0, 420px, 0);
+  }
+}
+
+@keyframes snowfall-demo {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 300px, 0);
   }
 }
 

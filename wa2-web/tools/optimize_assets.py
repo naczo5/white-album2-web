@@ -24,6 +24,7 @@ original paks / an unoptimized assets copy if you may want lossless later.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import shutil
@@ -53,7 +54,7 @@ def convert_image(src: str, dst: str, quality: int, fmt: str) -> bool:
         with Image.open(src) as im:
             im.load()
             if fmt == "webp":
-                im.save(dst, "WEBP", quality=quality, method=6)
+                im.save(dst, "WEBP", quality=quality, method=4)
             elif fmt == "avif":
                 im.save(dst, "AVIF", quality=quality)
             else:
@@ -62,6 +63,18 @@ def convert_image(src: str, dst: str, quality: int, fmt: str) -> bool:
     except Exception as e:
         print(f"WARN {src}: {e}")
         return False
+
+
+def _image_worker(job: tuple[str, str, str, int, str, bool]) -> tuple[str, str, int, int, bool]:
+    src, dst_rel, dst, q, fmt, keep = job
+    orig_size = os.path.getsize(src)
+    ok = convert_image(src, dst, q, fmt)
+    if ok:
+        new_size = os.path.getsize(dst)
+        if not keep:
+            os.unlink(src)
+        return src, dst_rel, orig_size, new_size, True
+    return src, dst_rel, orig_size, orig_size, False
 
 
 def convert_audio(src: str, dst: str, kbps: int) -> bool:
@@ -90,34 +103,49 @@ def optimize(assets: str, webp_quality: int, avif_quality: int,
     # image pass: one conversion per unique file, rewrite every key pointing
     # at it (the extractor stores name + lowercased alias).
     img_map: dict[str, str] = {}
-    for key, rel in list((manifest.get("images") or {}).items()):
+    fmt = "avif" if avif_quality > 0 else ("webp" if webp_quality > 0 else "")
+    q = avif_quality if fmt == "avif" else webp_quality
+    jobs: list[tuple[str, str, str, int, str, bool]] = []
+    seen_src: set[str] = set()
+    for _key, rel in list((manifest.get("images") or {}).items()):
         if not isinstance(rel, str) or not _safe_rel(rel):
             continue
         src = os.path.join(assets, rel)
         if not os.path.isfile(src):
             continue
-        before += os.path.getsize(src)
-        if src in img_map:
-            after += os.path.getsize(os.path.join(assets, img_map[src]))
+        if src in seen_src:
             continue
-        fmt = "avif" if avif_quality > 0 else ("webp" if webp_quality > 0 else "")
+        seen_src.add(src)
         if not fmt or not src.lower().endswith((".png", ".bmp", ".tga")):
-            after += os.path.getsize(src)
+            sz = os.path.getsize(src)
+            before += sz
+            after += sz
             continue
         dst_rel = os.path.splitext(rel)[0] + f".{fmt}"
         dst = os.path.join(assets, dst_rel)
         if dry_run:
             print(f"would convert {rel} -> {dst_rel}")
-            after += os.path.getsize(src)
+            sz = os.path.getsize(src)
+            before += sz
+            after += sz
             continue
-        q = avif_quality if fmt == "avif" else webp_quality
-        if convert_image(src, dst, q, fmt):
-            img_map[src] = dst_rel
-            after += os.path.getsize(dst)
-            if not keep:
-                os.unlink(src)
-        else:
-            after += os.path.getsize(src)
+        jobs.append((src, dst_rel, dst, q, fmt, keep))
+
+    if len(jobs) > 8 and (os.cpu_count() or 1) > 1:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as pool:
+            for src, dst_rel, orig_sz, new_sz, ok in pool.map(_image_worker, jobs, chunksize=16):
+                before += orig_sz
+                after += new_sz
+                if ok:
+                    img_map[src] = dst_rel
+    else:
+        for job in jobs:
+            src, dst_rel, orig_sz, new_sz, ok = _image_worker(job)
+            before += orig_sz
+            after += new_sz
+            if ok:
+                img_map[src] = dst_rel
+
     for key, rel in list((manifest.get("images") or {}).items()):
         src = os.path.join(assets, rel) if isinstance(rel, str) and _safe_rel(rel) else ""
         if src in img_map:

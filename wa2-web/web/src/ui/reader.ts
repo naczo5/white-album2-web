@@ -1,6 +1,6 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
-import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
+import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, resolveAudioUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
 import { Router, chapterOfScript } from "../engine/router";
 import { plainText, renderText, spanize } from "../engine/text";
 import type { BgmData, BnrData, Position, SaveData, ScenarioEvent } from "../engine/types";
@@ -157,32 +157,66 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     special: "Special",
   }[chapterOfScript(pos.script)] ?? "Special";
 
-  el.innerHTML = `
-    <div class="reader">
-      <div class="reader-progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
-      <div class="stage" id="stage"></div>
-      <div class="reader-top">
-        <div class="reader-where" title="${escapeAttr(where)}">
-          <span class="chapter">${chapter}</span>
-          <span class="place">${sceneDate ? ` · ${escapeAttr(sceneDate)}` : ""} · ${pct}%</span>
+  if (!el.firstElementChild?.classList.contains("reader")) {
+    el.innerHTML = `
+      <div class="reader">
+        <div class="reader-progress" aria-hidden="true"><i></i></div>
+        <div class="stage" id="stage"></div>
+        <div class="reader-top">
+          <div class="reader-where">
+            <span class="chapter"></span>
+            <span class="place"></span>
+          </div>
+          <span class="hud-btns" role="group" aria-label="Reader menu">
+            <button data-act="auto"></button>
+            <button data-act="log">Log</button>
+            <button data-quick="save" title="Quick save">Q.Save</button>
+            <button data-quick="load" title="Quick load">Q.Load</button>
+            <button data-act="saves">Save</button>
+            <button data-act="flow">Chart</button>
+            <button data-act="guide">Guide</button>
+            <button data-act="title">Title</button>
+          </span>
         </div>
-        <span class="hud-btns" role="group" aria-label="Reader menu">
-          <button data-act="auto" aria-pressed="${h.settings.autoDelay > 0}" class="${h.settings.autoDelay > 0 ? "active" : ""}">${h.settings.autoDelay > 0 ? "Pause auto" : "Auto"}</button>
-          <button data-act="log">Log</button>
-          <button data-quick="save" title="Quick save">Q.Save</button>
-          <button data-quick="load" title="Quick load">Q.Load</button>
-          <button data-act="saves">Save</button>
-          <button data-act="flow">Chart</button>
-          <button data-act="guide">Guide</button>
-          <button data-act="title">Title</button>
-        </span>
-      </div>
-      <div class="reader-bottom">
-        <div class="textbox" id="textbox"></div>
-        <div class="choices" id="choices"></div>
-        <div class="advance-hint" id="hint">Click or Enter to continue · hold Ctrl to skip · scroll up for the backlog</div>
-      </div>
-    </div>`;
+        <div class="reader-bottom">
+          <div class="textbox" id="textbox"></div>
+          <div class="choices" id="choices"></div>
+          <div class="advance-hint" id="hint">Click or Enter to continue · hold Ctrl to skip · scroll up for the backlog</div>
+        </div>
+      </div>`;
+    el.querySelectorAll("[data-act]").forEach((b) =>
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        curHooks?.open((b as HTMLElement).dataset.act as string);
+      }),
+    );
+    el.querySelectorAll("[data-quick]").forEach((b) =>
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if ((b as HTMLElement).dataset.quick === "save") curHooks?.quickSave?.();
+        else curHooks?.quickLoad?.();
+      }),
+    );
+    // Standard VN convention: wheel-up opens the backlog.
+    el.addEventListener("wheel", (e) => {
+      if (e.deltaY < 0) {
+        e.preventDefault();
+        curHooks?.open("log");
+      }
+    });
+  }
+
+  const prog = el.querySelector(".reader-progress > i") as HTMLElement;
+  prog.style.width = `${pct}%`;
+  const whereEl = el.querySelector(".reader-where") as HTMLElement;
+  whereEl.title = where;
+  (whereEl.querySelector(".chapter") as HTMLElement).textContent = chapter;
+  (whereEl.querySelector(".place") as HTMLElement).textContent = `${sceneDate ? ` · ${sceneDate}` : ""} · ${pct}%`;
+  const autoBtn = el.querySelector('[data-act="auto"]') as HTMLButtonElement;
+  const autoOn = h.settings.autoDelay > 0;
+  autoBtn.setAttribute("aria-pressed", String(autoOn));
+  autoBtn.classList.toggle("active", autoOn);
+  autoBtn.textContent = autoOn ? "Pause auto" : "Auto";
 
   paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol, !!h.demo);
   fireSe(save);
@@ -190,27 +224,10 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   const box = el.querySelector("#textbox") as HTMLElement;
   const ch = el.querySelector("#choices") as HTMLElement;
   const hint = el.querySelector("#hint") as HTMLElement;
-
-  el.querySelectorAll("[data-act]").forEach((b) =>
-    b.addEventListener("click", (e) => {
-      e.stopPropagation();
-      h.open((b as HTMLElement).dataset.act as string);
-    }),
-  );
-  el.querySelectorAll("[data-quick]").forEach((b) =>
-    b.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if ((b as HTMLElement).dataset.quick === "save") h.quickSave?.();
-      else h.quickLoad?.();
-    }),
-  );
-  // Standard VN convention: wheel-up opens the backlog.
-  el.addEventListener("wheel", (e) => {
-    if (e.deltaY < 0) {
-      e.preventDefault();
-      h.open("log");
-    }
-  });
+  box.classList.remove("prompt-only");
+  delete box.dataset.typing;
+  ch.innerHTML = "";
+  hint.style.display = "";
 
   if (!ev) {
     // Past the end of a script: try to keep going (heals stale saves),
@@ -1045,17 +1062,26 @@ export function setBnrLookup(fn: BnrLookup | null): void {
 let seCursor: { script: string; ev: number } | null = null;
 
 function playSeUrl(url: string): void {
-  const audio = document.getElementById("se") as HTMLAudioElement | null;
-  if (!audio) return;
-  if (!audio.paused) {
-    // Two SEs can share one anchor event. Keep the shared element for the
-    // first and play overlaps on a transient element instead of cutting.
-    const extra = new Audio(url);
-    extra.play().catch(() => undefined);
+  const start = (src: string) => {
+    const audio = document.getElementById("se") as HTMLAudioElement | null;
+    if (!audio) return;
+    if (!audio.paused) {
+      // Two SEs can share one anchor event. Keep the shared element for the
+      // first and play overlaps on a transient element instead of cutting.
+      const extra = new Audio(src);
+      extra.play().catch(() => undefined);
+      return;
+    }
+    audio.src = src;
+    audio.play().catch(() => undefined);
+  };
+  if (!url.includes("#")) {
+    start(url);
     return;
   }
-  audio.src = url;
-  audio.play().catch(() => undefined);
+  void resolveAudioUrl(url).then((resolved) => {
+    if (resolved) start(resolved);
+  });
 }
 
 function fireSe(save: SaveData): void {
@@ -1181,14 +1207,25 @@ function updateAmbient(save: SaveData): void {
       // Same cue still active: never restart the loop on a re-render.
       a.loop = cue.loop;
       a.volume = Math.max(0, Math.min(1, cue.vol / 255));
-      if (a.paused) a.play().catch(() => undefined);
+      if (a.paused && a.src) a.play().catch(() => undefined);
       continue;
     }
     a.dataset.cur = url;
-    a.src = url;
     a.loop = cue.loop;
     a.volume = Math.max(0, Math.min(1, cue.vol / 255));
-    a.play().catch(() => undefined);
+    if (!url.includes("#")) {
+      a.src = url;
+      a.play().catch(() => undefined);
+    } else {
+      a.pause();
+      a.removeAttribute("src");
+      const elAudio = a;
+      void resolveAudioUrl(url).then((resolved) => {
+        if (!resolved || elAudio.dataset.cur !== url) return;
+        elAudio.src = resolved;
+        elAudio.play().catch(() => undefined);
+      });
+    }
   }
 }
 
@@ -1373,6 +1410,8 @@ function paintSprites(stage: HTMLElement, save: SaveData): void {
   });
 }
 
+let voicePlaySeq = 0;
+
 /** Play the voice clip for a displayed line, if the archive has it. */
 function playVoice(save: SaveData, ev: ScenarioEvent, vol: number): void {
   const audio = document.getElementById("voice") as HTMLAudioElement | null;
@@ -1392,9 +1431,20 @@ function playVoice(save: SaveData, ev: ScenarioEvent, vol: number): void {
       : voiceUrl(save.position.script, ref, ch);
   if (url) {
     if (audio.dataset.cur !== url) {
+      const seq = ++voicePlaySeq;
       audio.dataset.cur = url;
-      audio.src = url;
-      audio.play().catch(() => undefined);
+      if (!url.includes("#")) {
+        audio.src = url;
+        audio.play().catch(() => undefined);
+      } else {
+        audio.pause();
+        audio.removeAttribute("src");
+        void resolveAudioUrl(url).then((resolved) => {
+          if (seq !== voicePlaySeq || !resolved || audio.dataset.cur !== url) return;
+          audio.src = resolved;
+          audio.play().catch(() => undefined);
+        });
+      }
     }
   } else {
     cutVoice();
@@ -1402,6 +1452,7 @@ function playVoice(save: SaveData, ev: ScenarioEvent, vol: number): void {
 }
 
 function cutVoice(): void {
+  ++voicePlaySeq;
   const audio = document.getElementById("voice") as HTMLAudioElement | null;
   if (audio && audio.dataset.cur) {
     delete audio.dataset.cur;

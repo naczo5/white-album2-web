@@ -203,3 +203,85 @@ export function voiceUrlByKey(key: string): string | null {
 export function hasAssets(): boolean {
   return manifest !== null;
 }
+
+const VPK_CACHE_MAX = 8;
+const BLOB_CACHE_MAX = 64;
+const vpkPromises = new Map<string, Promise<ArrayBuffer | null>>();
+const vpkBuffers = new Map<string, ArrayBuffer>();
+const blobUrls = new Map<string, string>();
+
+function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  const v = map.get(key);
+  if (v !== undefined) {
+    map.delete(key);
+    map.set(key, v);
+  }
+  return v;
+}
+
+async function fetchVpk(packUrl: string): Promise<ArrayBuffer | null> {
+  const cached = lruGet(vpkBuffers, packUrl);
+  if (cached) return cached;
+  const inflight = vpkPromises.get(packUrl);
+  if (inflight) return inflight;
+  const p = (async () => {
+    try {
+      const res = await fetch(packUrl);
+      if (!res.ok) return null;
+      const buf = await res.arrayBuffer();
+      vpkBuffers.set(packUrl, buf);
+      while (vpkBuffers.size > VPK_CACHE_MAX) {
+        const oldest = vpkBuffers.keys().next().value;
+        if (oldest === undefined) break;
+        vpkBuffers.delete(oldest);
+      }
+      return buf;
+    } catch {
+      return null;
+    } finally {
+      vpkPromises.delete(packUrl);
+    }
+  })();
+  vpkPromises.set(packUrl, p);
+  return p;
+}
+
+const VPK_REF_RE = /^(.+)#(\d+)-(\d+)(?::([a-z0-9]+))?$/i;
+
+/**
+ * Resolve an audio manifest URL into a playable src. Plain URLs return as-is;
+ * packed `.vpk#<start>-<end>` refs fetch the chunk once into an LRU buffer and
+ * return a sliced Blob object URL.
+ */
+export async function resolveAudioUrl(url: string | null): Promise<string | null> {
+  if (!url) return null;
+  const m = VPK_REF_RE.exec(url);
+  if (!m) return url;
+  const existing = lruGet(blobUrls, url);
+  if (existing) return existing;
+  const [, packUrl, startStr, endStr, ext] = m;
+  const start = Number(startStr);
+  const end = Number(endStr);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  const buf = await fetchVpk(packUrl);
+  if (!buf || end > buf.byteLength) return null;
+  const mime = ext?.toLowerCase() === "wav" ? "audio/wav" : "audio/ogg";
+  const objUrl = URL.createObjectURL(new Blob([buf.slice(start, end)], { type: mime }));
+  blobUrls.set(url, objUrl);
+  while (blobUrls.size > BLOB_CACHE_MAX) {
+    const oldest = blobUrls.keys().next().value;
+    if (oldest === undefined) break;
+    const oldUrl = blobUrls.get(oldest);
+    blobUrls.delete(oldest);
+    if (oldUrl) URL.revokeObjectURL(oldUrl);
+  }
+  return objUrl;
+}
+
+export function clearAudioPackCache(): void {
+  vpkPromises.clear();
+  vpkBuffers.clear();
+  for (const u of blobUrls.values()) URL.revokeObjectURL(u);
+  blobUrls.clear();
+}
+

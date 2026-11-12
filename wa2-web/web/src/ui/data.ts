@@ -5,6 +5,8 @@
 
 import type { BgmData, BnrData, FlowData, LinksData, Scenario, SpeakersData, TerminalsData, VoiceMapData } from "../engine/types";
 
+export type LutMap = Record<string, { r: number[]; g: number[]; b: number[] }>;
+
 export interface GameData {
   scenarios: Scenario[];
   flow: FlowData;
@@ -19,6 +21,8 @@ export interface GameData {
   voicemap: VoiceMapData | null;
   /** Display-name overrides (built by tools/build_voice.py); null = none. */
   speakers: SpeakersData | null;
+  /** Color-grade LUTs (when delivered via data/bundle.json); null = fetch luts.json or fallback. */
+  luts: LutMap | null;
   demo: boolean;
   /** Scripts listed in the index that failed to load (stale cache/partial
    * copy). Empty when healthy; boot warns otherwise. */
@@ -112,8 +116,66 @@ export function resolvePackBase(
   return { packBase: envPack, fromQuery: false };
 }
 
+interface BundlePayload {
+  version?: number;
+  scenarios?: Scenario[];
+  flow?: FlowData;
+  links?: LinksData | null;
+  terminals?: TerminalsData | null;
+  endings?: GameData["endings"] | null;
+  bgm?: BgmData | null;
+  bnr?: BnrData | null;
+  voicemap?: VoiceMapData | null;
+  speakers?: SpeakersData | null;
+  luts?: LutMap | { version?: number; luts?: LutMap } | null;
+}
+
+function sanitizeFlow(flow: FlowData): FlowData {
+  // A pack is linkable/importable input; keep malformed nodes out of
+  // Router construction instead of throwing on a missing engine/options.
+  return {
+    ...flow,
+    nodes: flow.nodes.filter((n) =>
+      n && n.engine &&
+      typeof n.engine.script === "string" &&
+      typeof n.engine.event === "number" &&
+      Array.isArray(n.options)
+    ),
+  };
+}
+
+function unwrapLuts(raw: BundlePayload["luts"]): LutMap | null {
+  if (!raw || typeof raw !== "object") return null;
+  if ("luts" in raw && !("r" in raw) && raw.luts && typeof raw.luts === "object") {
+    return raw.luts as LutMap;
+  }
+  return raw as LutMap;
+}
+
 export async function loadGameData(base = ""): Promise<GameData> {
   const prefix = base ? `${base.replace(/\/+$/, "")}/` : "";
+  const bundle = await tryFetch<BundlePayload>(`${prefix}data/bundle.json`);
+  if (bundle && Array.isArray(bundle.scenarios) && bundle.flow && Array.isArray(bundle.flow.nodes)) {
+    const scenarios = bundle.scenarios.filter((sc) =>
+      sc && typeof sc.script === "string" && Array.isArray(sc.events)
+    );
+    if (scenarios.length > 0) {
+      return {
+        scenarios,
+        flow: sanitizeFlow(bundle.flow),
+        links: bundle.links ?? { version: 1, links: [] },
+        terminals: bundle.terminals ?? { version: 1, terminals: {} },
+        endings: bundle.endings ?? { endings: [] },
+        bgm: bundle.bgm ?? null,
+        bnr: bundle.bnr ?? null,
+        voicemap: bundle.voicemap ?? null,
+        speakers: bundle.speakers ?? null,
+        luts: unwrapLuts(bundle.luts),
+        demo: false,
+        incomplete: [],
+      };
+    }
+  }
   const [index, flow, endings, links, terminals, bgm, bnr, voicemap, speakers] =
     await Promise.all([
       tryFetch<string[]>(`${prefix}data/scripts/index.json`),
@@ -144,23 +206,12 @@ export async function loadGameData(base = ""): Promise<GameData> {
       console.warn(`[wa2] ${failed.length}/${index.length} scripts failed to load (hard-refresh?):`, failed.slice(0, 5));
     }
     if (scenarios.length > 0) {
-      // A pack is linkable/importable input; keep malformed nodes out of
-      // Router construction instead of throwing on a missing engine/options.
-      const safeFlow: FlowData = {
-        ...flow,
-        nodes: flow.nodes.filter((n) =>
-          n && n.engine &&
-          typeof n.engine.script === "string" &&
-          typeof n.engine.event === "number" &&
-          Array.isArray(n.options)
-        ),
-      };
       return {
-        scenarios, flow: safeFlow,
+        scenarios, flow: sanitizeFlow(flow),
         links: links ?? { version: 1, links: [] },
         terminals: terminals ?? { version: 1, terminals: {} },
         endings: endings ?? { endings: [] },
-        bgm, bnr, voicemap, speakers,
+        bgm, bnr, voicemap, speakers, luts: null,
         demo: false,
         incomplete: failed,
       };
@@ -172,7 +223,7 @@ export async function loadGameData(base = ""): Promise<GameData> {
     links: { version: 1, links: [] },
     terminals: { version: 1, terminals: {} },
     endings: { endings: [] },
-    bgm: null, bnr: null, voicemap: null, speakers: null,
+    bgm: null, bnr: null, voicemap: null, speakers: null, luts: null,
     demo: true,
     incomplete: [],
   };

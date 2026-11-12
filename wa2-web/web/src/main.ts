@@ -120,18 +120,24 @@ async function boot(): Promise<void> {
   });
   // JP speaker labels -> EN names (MAO manuscript, name-vote based)
   setSpeakerLookup((script, ev) => data.speakers?.speakers[script]?.[String(ev)]);
-  const manifest = await loadManifest(packBase ? `${packBase}/assets/manifest.json` : "assets/manifest.json");
-  assetsMissing = !!packBase && !manifest;
-  try {
-    const lutRes = await fetch(packBase ? `${packBase}/data/luts.json` : "data/luts.json");
-    if (lutRes.ok) {
-      const lutData = (await lutRes.json()) as {
-        luts: Record<string, { r: number[]; g: number[]; b: number[] }>;
-      };
-      installLutFilters(lutData.luts ?? {});
+  const manifest = data.demo
+    ? null
+    : await loadManifest(packBase ? `${packBase}/assets/manifest.json` : "assets/manifest.json");
+  assetsMissing = !data.demo && !!packBase && !manifest;
+  if (data.luts) {
+    installLutFilters(data.luts);
+  } else if (!data.demo) {
+    try {
+      const lutRes = await fetch(packBase ? `${packBase}/data/luts.json` : "data/luts.json");
+      if (lutRes.ok) {
+        const lutData = (await lutRes.json()) as {
+          luts: Record<string, { r: number[]; g: number[]; b: number[] }>;
+        };
+        installLutFilters(lutData.luts ?? {});
+      }
+    } catch {
+      /* LUTs optional: CSS fallback covers named filters */
     }
-  } catch {
-    /* LUTs optional: CSS fallback covers named filters */
   }
   const auto = data.demo ? null : readAutosave(localStorage);
   if (auto) {
@@ -376,8 +382,12 @@ function render(): void {
     return;
   }
   if (screen === "read") {
-    app.innerHTML = `<div id="reader"></div>`;
-    renderReader(app.querySelector("#reader") as HTMLElement, {
+    let readerEl = app.firstElementChild as HTMLElement | null;
+    if (!readerEl || readerEl.id !== "reader") {
+      app.innerHTML = `<div id="reader"></div>`;
+      readerEl = app.firstElementChild as HTMLElement;
+    }
+    renderReader(readerEl, {
       router, save,
       demo: data.demo,
       settings: {

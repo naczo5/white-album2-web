@@ -54,6 +54,28 @@ describe("loadGameData external pack", () => {
     const choice = data.scenarios[0]!.events.findIndex((e) => e.t === "choice");
     expect(data.flow.nodes[0]?.engine).toEqual({ script: "demo-1", event: choice });
   });
+
+  it("loads data/bundle.json in a single request when available", async () => {
+    const calls: string[] = [];
+    const lut = { r: [0], g: [1], b: [2] };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url === "https://pack.example/wa2/data/bundle.json") {
+        return new Response(JSON.stringify({
+          version: 1,
+          scenarios: [SCENARIO],
+          flow: FLOW,
+          luts: { version: 1, luts: { sepia: lut } },
+        }), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }));
+    const data = await loadGameData("https://pack.example/wa2");
+    expect(data.demo).toBe(false);
+    expect(data.scenarios).toEqual([SCENARIO]);
+    expect(data.luts).toEqual({ sepia: lut });
+    expect(calls).toEqual(["https://pack.example/wa2/data/bundle.json"]);
+  });
 });
 
 describe("resolvePackBase", () => {

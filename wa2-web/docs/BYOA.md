@@ -127,5 +127,8 @@ VITE_PACK_URL=https://your-host.example/wa2-pack npm run build
 You can also override the pack URL per visit via `?pack=https://your-host.example/wa2-pack`.
 The pack root must contain `data/` and `assets/manifest.json` side by side,
 as produced by `build.py` + `extract_assets.py` (or by `pack_site.py`).
+To minimize HTTP requests and object counts on external static hosts, run
+`tools/optimize_assets.py` followed by `tools/pack_bundle.py --data <pack>/data --assets <pack>/assets --prune-data --prune-audio`
+to merge `data/` into `data/bundle.json` and chunk `voice/` + `sfx/` into `assets/vpk/*.vpk`.
 The player has no server component and fetches the pack directly from the
 browser. See [LEGAL.md](LEGAL.md).
