@@ -84,6 +84,34 @@ const DEMO_FLOW: FlowData = {
   ],
 };
 
+export function parsePackBase(raw: string | null | undefined, baseHref = "https://localhost/"): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return "";
+  try {
+    const u = new URL(trimmed, baseHref);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return "";
+    // A pack root is a path prefix; query/hash belong to the page URL and
+    // would make `<root>/data/...` malformed. Signed per-object URLs are
+    // not a pack root.
+    u.search = "";
+    u.hash = "";
+    return u.href.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+export function resolvePackBase(
+  envPackUrl?: string | null,
+  search = "",
+  baseHref = "https://localhost/",
+): { packBase: string; fromQuery: boolean } {
+  const queryPack = parsePackBase(new URLSearchParams(search).get("pack"), baseHref);
+  if (queryPack) return { packBase: queryPack, fromQuery: true };
+  const envPack = parsePackBase(envPackUrl, baseHref);
+  return { packBase: envPack, fromQuery: false };
+}
+
 export async function loadGameData(base = ""): Promise<GameData> {
   const prefix = base ? `${base.replace(/\/+$/, "")}/` : "";
   const [index, flow, endings, links, terminals, bgm, bnr, voicemap, speakers] =

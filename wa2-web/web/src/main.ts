@@ -2,7 +2,7 @@ import { loadManifest } from "./engine/assets";
 import { Router, chapterOfScript } from "./engine/router";
 import { newSave, readAutosave, readQuicksave, setSaveNamespace, writeAutosave, writeQuicksave } from "./engine/save";
 import type { SaveData } from "./engine/types";
-import { loadGameData, type GameData } from "./ui/data";
+import { loadGameData, resolvePackBase, type GameData } from "./ui/data";
 import { renderFlowchart } from "./ui/flowchart";
 import { renderGuide, type GuideData } from "./ui/guide";
 import { installLutFilters, pushLog, renderReader, setBgmLookup, setBnrLookup, setScenarioLookup, setSpeakerLookup, setSkipping, setVoiceLookup, skipLatches } from "./ui/reader";
@@ -74,30 +74,16 @@ let data: GameData;
 let router: Router;
 let save: SaveData;
 let screen: Screen = "title";
-/** Optional external BYOA pack root (`?pack=https://host/wa2-demo`). Data
- * and assets live side by side under it; nothing copyrighted is committed
- * to this repo. See docs/BYOA.md. */
+/** External BYOA pack root configured via VITE_PACK_URL (main path for
+ * decoupled hosting) or overridden via `?pack=`. Nothing copyrighted is
+ * committed to this repo. See docs/BYOA.md. */
 let packBase = "";
-/** Data loaded from ?pack= but assets/manifest.json did not. Surfaced as a
- * title warning so a pack/CORS misconfiguration is diagnosable. */
+let packFromQuery = false;
+/** Data loaded from a configured pack root, but assets/manifest.json did
+ * not. Surfaced as a title warning so a pack/CORS misconfiguration is
+ * diagnosable. */
 let assetsMissing = false;
 let backTo: Screen = "title";
-
-function parsePackBase(raw: string | null): string {
-  if (!raw) return "";
-  try {
-    const u = new URL(raw, location.href);
-    if (u.protocol !== "https:" && u.protocol !== "http:") return "";
-    // A pack root is a path prefix; query/hash belong to the page URL and
-    // would make `<root>/data/...` malformed. Signed per-object URLs are
-    // not a pack root.
-    u.search = "";
-    u.hash = "";
-    return u.href.replace(/\/+$/, "");
-  } catch {
-    return "";
-  }
-}
 
 /** Stable short id for save-key namespacing (FNV-1a). */
 function dataNamespace(): string {
@@ -115,7 +101,9 @@ const app = document.getElementById("app")!;
 async function boot(): Promise<void> {
   applySettings();
   const q = new URLSearchParams(location.search);
-  packBase = parsePackBase(q.get("pack"));
+  const resolved = resolvePackBase(import.meta.env.VITE_PACK_URL, location.search, location.href);
+  packBase = resolved.packBase;
+  packFromQuery = resolved.fromQuery;
   data = await loadGameData(packBase);
   setSaveNamespace(dataNamespace());
   router = new Router(data.scenarios, data.flow, data.links, data.terminals);
@@ -345,7 +333,7 @@ function render(): void {
           <div class="title-logo">
             <span class="title-over">ホワイトアルバム2</span>
             <h1><span>WHITE</span><span>ALBUM</span><b>2</b></h1>
-            <div class="title-sub">Extended Edition <span class="web">· web port${data.demo ? " · demo" : packBase ? " · external pack" : ""}</span></div>
+            <div class="title-sub">Extended Edition <span class="web">· web port${data.demo ? " · demo" : packFromQuery ? " · external pack" : ""}</span></div>
           </div>
           ${data.demo && packBase ? `<div class="warn-box">The external pack at <code>${escapeHtml(packBase)}</code> did not load. Check the URL, CORS headers, and that it contains <code>data/</code> and <code>assets/manifest.json</code>. The asset-free demo is shown instead.</div>` : ""}
           ${data.demo && !packBase ? `<div class="warn-box">Engine demo. No game data or assets are loaded; the scene and prose are original placeholder content. To play the story, build with your own legally-owned copy (docs/BYOA.md).</div>` : ""}

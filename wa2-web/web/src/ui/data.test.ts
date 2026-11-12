@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadGameData } from "./data";
+import { loadGameData, resolvePackBase } from "./data";
 
 const SCENARIO = {
   script: "1001",
@@ -55,3 +55,24 @@ describe("loadGameData external pack", () => {
     expect(data.flow.nodes[0]?.engine).toEqual({ script: "demo-1", event: choice });
   });
 });
+
+describe("resolvePackBase", () => {
+  it("uses VITE_PACK_URL as the configured main pack root", () => {
+    expect(resolvePackBase("https://pack.example/wa2/?foo=1#bar", "")).toEqual({
+      packBase: "https://pack.example/wa2",
+      fromQuery: false,
+    });
+  });
+
+  it("allows ?pack= to override VITE_PACK_URL and rejects non-http schemes", () => {
+    expect(resolvePackBase("https://pack.example/wa2", "?pack=https://other.example/pack/")).toEqual({
+      packBase: "https://other.example/pack",
+      fromQuery: true,
+    });
+    expect(resolvePackBase("https://pack.example/wa2", "?pack=javascript:alert(1)")).toEqual({
+      packBase: "https://pack.example/wa2",
+      fromQuery: false,
+    });
+  });
+});
+

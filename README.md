@@ -30,9 +30,10 @@ original CSS winter scene. It demonstrates the reader, choices, backlog,
 flowchart, guide, saves, and settings without redistributing any game
 content.
 
-An independently hosted pack can also be loaded via
-`?pack=https://your-host.example/wa2-pack` (the pack root must contain
-`data/` and `assets/manifest.json` and allow CORS). See
+An independently hosted pack is configured at build time via
+`VITE_PACK_URL=https://your-host.example/wa2-pack` (or overridden at
+runtime with `?pack=...`; the pack root must contain `data/` and
+`assets/manifest.json` and allow CORS). See
 [`wa2-web/docs/BYOA.md`](wa2-web/docs/BYOA.md) and
 [`wa2-web/docs/LEGAL.md`](wa2-web/docs/LEGAL.md).
 

@@ -114,15 +114,17 @@ manual quick-save row. The same screen imports original-PC
 recognised but its global read/choice flags are not imported yet; see
 docs/PARSING.md).
 
-## 4. External pack URL (`?pack=`)
+## 4. External pack URL (`VITE_PACK_URL` / `?pack=`)
 
-The built `data/` + `assets/` tree can also be served from an external
-CORS-enabled static host and passed to the player via `?pack=`:
+When serving the built `data/` + `assets/` tree from an external
+CORS-enabled static host, configure `VITE_PACK_URL` at build time (the
+main path for decoupled hosting):
 
+```sh
+VITE_PACK_URL=https://your-host.example/wa2-pack npm run build
 ```
-https://your-frontend.example/?pack=https://your-host.example/wa2-pack
-```
 
+You can also override the pack URL per visit via `?pack=https://your-host.example/wa2-pack`.
 The pack root must contain `data/` and `assets/manifest.json` side by side,
 as produced by `build.py` + `extract_assets.py` (or by `pack_site.py`).
 The player has no server component and fetches the pack directly from the

@@ -20,11 +20,12 @@ and is not part of any pack.*
 
 ## Demo and external packs
 
-The frontend is a static Vite app. Built without `data/` or `assets/`,
-it boots an asset-free engine demo using original placeholder prose and a
-CSS winter scene. A separately hosted BYOA pack can be loaded with
-`?pack=https://your-host.example/wa2-pack` (the pack root needs `data/`
-and `assets/manifest.json` with CORS enabled). See
+The frontend is a static Vite app. Built without `data/`, `assets/`, or
+`VITE_PACK_URL`, it boots an asset-free engine demo using original
+placeholder prose and a CSS winter scene. To point a build at an
+independently hosted BYOA pack, set `VITE_PACK_URL=https://your-host.example/wa2-pack`
+at build time (or pass `?pack=...` in the URL; the pack root needs
+`data/` and `assets/manifest.json` with CORS enabled). See
 [docs/BYOA.md](docs/BYOA.md) for the pack layout.
 
 ## Layout
