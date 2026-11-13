@@ -98,6 +98,47 @@ export function renderText(raw: string): string {
     .join("");
 }
 
+/** Mechanical keywords the annotator appends to a real date, or offers on
+ * their own instead of one. They describe the flow graph (a routing node, a
+ * decider, a continuation), never the story: `1/29 FINAL ROUTER`,
+ * `1/27 DECIDER`, `1/13 cont.`, `12/24 prologue`. Pure data, no DOM. */
+const DATE_KEYWORDS = "final|router|decider|cont|continued|prologue|epilogue";
+/** A trailing keyword run on an otherwise real label ("12/24 ROUTER"). */
+const TRAILING_KEYWORD = new RegExp(`\\s+(?:${DATE_KEYWORDS})\\.?$`, "i");
+/** A whole label that is nothing but annotation ("ROUTER", "FINAL ROUTER"). */
+const MECHANICAL_ONLY = new RegExp(`^(?:(?:${DATE_KEYWORDS})\\s*\\.?\\s*)+$`, "i");
+/** A clean story date: `12/24`, `1/29`, `12/18~19`, `12/28~31`. */
+const DATE_TOKEN = /^\d{1,2}\/\d{1,2}(?:\s*[~〜–-]\s*\d{1,2})?$/;
+
+/** Engine flow dates are authored labels, but the annotator's notes are
+ * build artifacts: parentheticals (`(1st)`, `(cheating only)`,
+ * `(drifts by edition)`), uncertainty marks (`12/18~19?`) and trailing
+ * keywords (`12/24 ROUTER`, `1/29 FINAL ROUTER`, `12/24 cont.?`,
+ * `12/24 prologue`). Players see only the clean date token; dev mode sees
+ * the raw label verbatim so the flow annotation stays debuggable.
+ *
+ * Returns `null` when nothing story-facing is left (standalone mechanical
+ * tokens, bare script ids). Pure (DOM-free). */
+export function displayDate(date: string | null | undefined, dev: boolean): string | null {
+  if (!date) return null;
+  if (dev) return date;
+  let s = date
+    // Annotator parentheticals and the "this is uncertain" question mark.
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\?/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Peel keyword runs right-to-left: "1/29 FINAL ROUTER" -> "1/29".
+  while (TRAILING_KEYWORD.test(s)) s = s.replace(TRAILING_KEYWORD, "").trim();
+  if (!s || MECHANICAL_ONLY.test(s)) return null;
+  // A bare script id (2012, 2012_020) offered as a date is not a date.
+  if (/^[0-9_]+$/.test(s)) return null;
+  const token = DATE_TOKEN.exec(s);
+  // Collapse an authored range ("12/18 ~ 19") into one token.
+  if (token) return token[0].replace(/\s*([~〜–-])\s*/, "$1");
+  return s;
+}
+
 /** Plain-text projection (backlog/search/exports): strip markup. */
 export function plainText(raw: string): string {
   let s = raw

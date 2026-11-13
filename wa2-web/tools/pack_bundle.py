@@ -33,6 +33,7 @@ BUNDLE_TOP_FILES = (
     ("voicemap", "voicemap.json"),
     ("speakers", "speakers.json"),
     ("luts", "luts.json"),
+    ("sysSlots", "sys-slots.json"),
 )
 
 EXTRA_REDUNDANT_DATA = ("flags.json", "sprites.json")

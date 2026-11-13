@@ -84,6 +84,50 @@ working with placeholders. Movie size can be tuned with
 `arc_unpacker` (`--dec=leaf/...`; archived GPLv3 tool) — see
 `tools/extract_assets.py` for the command ladder; contributions welcome.
 
+**Movie subtitles.** The v2.1.0 release ships its movie subtitle sources at
+`Main Game/Movie Patcher/assets/ass/*.ass`. The extractor converts them to
+WebVTT (`subs/<mvNNN>.vtt`, listed under `subtitles` in `manifest.json`) so
+movies play with captions; the directory is auto-discovered relative to a
+supplied `--en-pak`, or passed explicitly with `--ass-dir DIR`.
+
+What survives the conversion:
+
+- **Italic/bold from two sources.** `[V4+ Styles]` `Bold`/`Italic` flags
+  (nonzero = on, so `-1` counts) wrap the whole cue — MAO marks
+  `Narrative`/`Spoken` italic and `Profile`/`Credit` bold — and inline
+  `\i0`/`\i1`, `\b0`/`\b1`, `\r` / `\rStyleName` override or reset them
+  per span. Tags are balanced and closed at the end of the cue, so an
+  inline `\i0` inside an italic style renders as `<i>…</i>plain`.
+- **Vertical band.** `PlayResX`/`PlayResY` from `[Script Info]` turn
+  `\pos(x,y)` into a frame fraction; a cue anchored above 45% of the
+  height is emitted with `line:8%` (lyrics/overlays), anything lower stays
+  on the bottom. Songs on the `SongTop` style and top `\an` values without
+  a `\pos` also map to the top band. This is why mv010's narrative block
+  (`\an8\pos(640,410)` = 57% of the frame) and mv240's credits
+  (`\an7\pos(90,562)` = 78%) stay at the bottom where they actually render.
+- **Horizontal column.** A `\pos` whose text block is noticeably
+  off-centre (>= 8% of the width) emits `position:<x>%`, so the
+  side-by-side profile columns in mv020/mv081/mv201 keep their own column
+  instead of collapsing onto centre. Centred cues carry `align:center`.
+
+`.ass`/`.vtt` files are game content and are gitignored. To regenerate only
+the captions after an `optimize_assets.py` pass, without re-transcoding any
+movie:
+
+```sh
+python3 tools/extract_assets.py build/assets --subs-only \
+  --ass-dir "/path/to/.../Main Game/Movie Patcher/assets/ass"
+```
+
+`--subs-only` **requires an existing `<OUT>/manifest.json`** — it updates
+that file's `subtitles` table in place and refuses to run otherwise. (A
+fresh manifest would carry empty image/audio/movie tables and make every
+asset look missing.) The refresh also prunes stale entries: a `subtitles`
+key whose `.ass` source is gone, and any orphaned `subs/*.vtt` that no
+longer has a source, are removed so the player never requests a caption
+file that is not produced. If the `--ass-dir` itself is missing, pruning
+is skipped — the old mapping still points at good files.
+
 Voice: `VOICE.PAK` filenames are XOR-0xFF `{script}_{token}_{take}.OGG`;
 the parser records the raw token index (`tok`) on every say/narrate event
 and the player auto-plays the clip (46k lines, ic-namespaced).

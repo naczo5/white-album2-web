@@ -1,20 +1,32 @@
 // Save/Load screen: localStorage slots + progress-as-a-file export/import.
 
 import {
+  clearProfile,
   deserialize,
   download,
   readAutosave,
+  readProfile,
   readQuicksave,
   readSlotChecked,
   saveFilename,
   serialize,
   storageKey,
+  writeAutosave,
+  writeProfile,
   writeQuicksave,
   writeSlot,
 } from "../engine/save";
 import { chapterOfScript, type Router } from "../engine/router";
 import { findNativeCandidates, nativeToSave, parseNativeFile, type NativePosition, type NativeSave, NATIVE_SYS_SIZE } from "../engine/native-save";
-import type { SaveData } from "../engine/types";
+import {
+  SYS_SIZE,
+  buildSysProfile,
+  countGalleryRows,
+  mergeSysProfile,
+  parseSysSave,
+} from "../engine/sys-save";
+import { ingestReadKeys } from "./reader";
+import type { FlowData, SaveData, SysProfile, SysSlotsTable } from "../engine/types";
 
 export interface SaveHooks {
   /** Used to resolve native save script ids and line text. */
@@ -23,6 +35,117 @@ export interface SaveHooks {
   onLoad(s: SaveData): void;
   onBack(): void;
   notify(msg: string): void;
+  /** `Sys.sav` slot map (absent = system saves are recognized but skipped). */
+  sysSlots?: SysSlotsTable;
+  /** Flow nodes: needed to map choice bitmasks onto node ids. */
+  flow?: FlowData;
+  /** Global profile currently stored (read lines, endings, unlocks). */
+  profile?: SysProfile | null;
+  /** Called after an import/removal so callers can repaint and re-sync. */
+  onProfileChange?(p: SysProfile | null): void;
+}
+
+export type SysImportResult =
+  | {
+    ok: false;
+    reason: "truncated" | "unreadable";
+    size: number;
+    /** How many slots the table says a full `Sys.sav` occupies. */
+    expected: number;
+  }
+  | {
+    ok: true;
+    profile: SysProfile;
+    readKeys: string[];
+    /** The run save after the monotonic visited/endings union. */
+    save: SaveData;
+    /** Read lines this import added to the browser read set. */
+    addedReadKeys: number;
+    /** The global profile reached `localStorage` (false = quota/denied). */
+    profileSaved: boolean;
+    /** The imported read lines reached `localStorage`. */
+    readKeysPersisted: boolean;
+    gainedVisited: number;
+    gainedEndings: number;
+    /** The run gained visited/endings entries (autosave refreshed). */
+    gained: boolean;
+  };
+
+/** In-place union of global progress into the active run. Only the two
+ * global arrays grow: position, backlog, flags and picks keep describing
+ * *where the player is*, which a `Sys.sav` says nothing about. */
+export function applyProfileToRun(save: SaveData, profile: SysProfile | null): boolean {
+  if (!profile) return false;
+  let gained = false;
+  for (const s of profile.visited) {
+    if (save.visited.includes(s)) continue;
+    save.visited.push(s);
+    gained = true;
+  }
+  for (const e of profile.endings) {
+    if (save.endings.includes(e)) continue;
+    save.endings.push(e);
+    gained = true;
+  }
+  return gained;
+}
+
+/** Parse + merge one `Sys.sav` buffer and persist the global profile.
+ *
+ * `Sys.sav` carries no reading position at all: this only ever adds read
+ * lines, visited scripts, high-confidence endings, seen choices and the
+ * gallery/music/movie bands to the stored profile and to the read set. */
+export function importSysSave(
+  buffer: ArrayBuffer,
+  fileName: string,
+  table: SysSlotsTable,
+  router: Router,
+  flow: FlowData,
+  save: SaveData,
+  storage: Storage = localStorage,
+): SysImportResult {
+  if (buffer.byteLength < SYS_SIZE) {
+    // A short file is a truncated copy, not a different save: say so with
+    // the two sizes so the caller's message can be exact.
+    return { ok: false, reason: "truncated", size: buffer.byteLength, expected: SYS_SIZE };
+  }
+  const sys = parseSysSave(buffer, table);
+  if (!sys) {
+    return { ok: false, reason: "unreadable", size: buffer.byteLength, expected: SYS_SIZE };
+  }
+  const built = buildSysProfile(sys, table, router, flow, fileName);
+  const existing = readProfile(storage);
+  const profile = mergeSysProfile(existing, built.profile);
+  // Both writes can fail independently (quota): report each one instead of
+  // claiming a durable import that a reload will not see.
+  const profileSaved = writeProfile(storage, profile);
+  // Seed from the *merged* profile: if the browser read set was cleared but
+  // the profile survived, re-importing Sys.sav restores those lines too.
+  const readRes = ingestReadKeys(profile.readKeys);
+  const addedReadKeys = readRes.added;
+  const beforeVisited = save.visited.length;
+  const beforeEndings = save.endings.length;
+  // The live run object keeps its identity; only the two global arrays grow.
+  applyProfileToRun(save, profile);
+  const gainedVisited = save.visited.length - beforeVisited;
+  const gainedEndings = save.endings.length - beforeEndings;
+  const gained = gainedVisited > 0 || gainedEndings > 0;
+  // The active run gained global entries; refresh the autosave copy so a
+  // reload keeps the wider visited/endings sets. Position and backlog are
+  // untouched by construction (applyProfileToRun only pushes into arrays).
+  if (gained) writeAutosave(storage, save);
+  return {
+    ok: true,
+    profile,
+    readKeys: built.readKeys,
+    save,
+    addedReadKeys,
+    profileSaved,
+    readKeysPersisted: readRes.persisted,
+    gainedVisited,
+    gainedEndings,
+    gained,
+  };
 }
 
 const NATIVE_IMPORTS_KEY = "native.imports";
@@ -101,8 +224,98 @@ const CHAPTER_LABEL: Record<string, string> = {
   special: "Special",
 };
 
+/** Human-readable story gates from a `Sys.sav` profile.
+ *
+ * Region C's gate slots are the engine's own unlock switches (see
+ * `gateSlots` in `data/sys-slots.json`): a nonzero value means the gate was
+ * passed at some point in that save.
+ *  - `replay`      = a second playthrough was started -> New Game+ exists.
+ *  - `codaEntered` = the third part was entered -> Coda is open.
+ *  - `setsunaCc`   = the CC Setsuna ending cleared, which also opens Coda.
+ *  - `chiakiNormal`= the CC Chiaki normal end cleared, which unlocks her
+ *                    true-end option.
+ * Returns an empty list when no gate is set, so the caller can omit the
+ * whole line instead of printing a row of zeros. */
+export function profileGateLabels(gates: Record<string, number> | null | undefined): string[] {
+  if (!gates) return [];
+  const out: string[] = [];
+  if ((gates.replay ?? 0) > 0) out.push("New Game+");
+  if ((gates.codaEntered ?? 0) > 0 || (gates.setsunaCc ?? 0) > 0) out.push("Coda unlocked");
+  if ((gates.chiakiNormal ?? 0) > 0) out.push("Chiaki True route unlocked");
+  return out;
+}
+
+export function profileCard(p: SysProfile, cgRows?: number[][]): string {
+  const gallery = cgRows && cgRows.length > 0 ? countGalleryRows(new Set(p.cg), cgRows) : null;
+  const imported = p.importedAt ? p.importedAt.slice(0, 16).replace("T", " ") : "unknown";
+  const films = p.movies.filter((id) => id !== 0);
+  // Gate flags are easy to lose in a stat strip; give them their own line
+  // so a cleared Coda / Chiaki True route is actually visible.
+  const gates = profileGateLabels(p.gates);
+  const stats = [
+    `${p.readKeys.length.toLocaleString("en-US")} read lines`,
+    `${p.visited.length} visited scripts`,
+    `${p.endings.length} ending${p.endings.length === 1 ? "" : "s"}`,
+    gallery ? `gallery ${gallery.unlocked}/${gallery.total} CGs` : `gallery ${p.cg.length} CGs`,
+    `${p.music.length} music track${p.music.length === 1 ? "" : "s"}`,
+    // Movie id 0 is the "all movies unlocked" sentinel, not a film.
+    p.movies.includes(0)
+      ? `all movies${films.length > 0 ? ` (${films.length} flagged)` : ""}`
+      : `${films.length} movie${films.length === 1 ? "" : "s"}`,
+  ];
+  return `<ol class="slots profile-card" id="profile-card"><li>
+      <span class="slot-no">PRO</span>
+      <span class="slot-main"><b>Global profile</b>
+      <span>${escapeHtml(p.fileName ?? "Sys.sav")} · imported ${escapeHtml(imported)}</span>
+      <span>${escapeHtml(stats.join(" · "))}</span>
+      ${gates.length > 0
+        ? `<span class="profile-gates">${gates.map((g) => `<span class="badge ok">${escapeHtml(g)}</span>`).join(" ")}</span>`
+        : ""}</span>
+      <span class="slot-actions"><button data-profile-remove>Remove</button></span></li></ol>`;
+}
+
+export interface SysSkipCounts {
+  /** Files whose size rules out a `Sys.sav` (too big, or a `Sys.sav` name
+   * at a size that is not the format's). */
+  wrongSize: number[];
+  /** `Sys.sav` names/copies that stopped short of the full size. */
+  truncated: number[];
+  unreadable: number;
+  unsupported: number;
+}
+
+/** Wording for skipped `Sys.sav` candidates. A wrong-size file, a truncated
+ * copy and a build that cannot decode the table are three different
+ * mistakes; one generic "file(s) skipped" sentence told the player nothing. */
+export function sysSkipNote(c: SysSkipCounts, expected: number = NATIVE_SYS_SIZE): string {
+  const bytes = expected.toLocaleString("en-US");
+  return [
+    c.wrongSize.length
+      ? `${c.wrongSize.length} file(s) not a ${bytes}-byte Sys.sav (wrong size); skipped`
+      : "",
+    c.truncated.length
+      ? `${c.truncated.length} Sys.sav copy truncated (shorter than ${bytes} bytes); nothing imported from it`
+      : "",
+    c.unreadable ? `${c.unreadable} Sys.sav file(s) could not be decoded` : "",
+    c.unsupported ? `${c.unsupported} Sys.sav skipped (no slot table in this build)` : "",
+  ].filter(Boolean).join("; ");
+}
+
+/** Storage can reject the profile and/or the read set while the parse itself
+ * succeeded: never report a durable import that was not written. */
+export function sysStorageNote(profileSaved: boolean, readKeysPersisted: boolean): string {
+  const lost = [
+    !profileSaved ? "the profile" : "",
+    !readKeysPersisted ? "the imported read lines" : "",
+  ].filter(Boolean);
+  if (lost.length === 0) return "";
+  return `browser storage is full, so ${lost.join(" and ")} could not be stored; ` +
+    "the import holds for this session only. Free space, then re-import Sys.sav";
+}
+
 export function renderSaves(el: HTMLElement, h: SaveHooks): void {
   const nativeImports = readNativeImports();
+  let profile = h.profile ?? readProfile(localStorage);
   const quick = readQuicksave(localStorage);
   const auto = readAutosave(localStorage);
   const storedRow = (
@@ -165,11 +378,20 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
     html += `</li>`;
   }
   html += `</ol>
+    <h3>Global profile</h3>
+    <p class="screen-sub native-note">Import <code>Sys.sav</code> with “Import game saves”.
+    It stores read lines (skip-read), visited scripts, high-confidence clear flags,
+    seen choices, and gallery, music and movie unlocks in this browser. It never
+    changes where you are reading.</p>
+    ${profile ? profileCard(profile, h.sysSlots?.cgRows) : `<ol class="slots profile-card" id="profile-card">
+      <li class="empty"><span class="slot-no">PRO</span>
+      <span class="slot-main"><b>No global profile</b><span>Nothing imported yet.</span></span></li></ol>`}
     <h3>Imported game saves</h3>
     <p class="screen-sub native-note">Native <code>save_XX.sav</code> / <code>save_Q.sav</code>
     files from the English-patched PC build. Position and scene text are imported;
-    duplicate lines become separate options. The global <code>Sys.sav</code>
-    read/choice flags are not imported yet.</p>
+    duplicate lines become separate options. Add <code>Sys.sav</code> for the global
+    read lines, visited scripts, ending clears, seen choices, and gallery/music/movie
+    unlocks — the reading position is left alone.</p>
     <ol class="slots" id="native-list">`;
   if (nativeImports.length === 0) {
     html += `<li class="empty"><span class="slot-no">--</span>
@@ -279,17 +501,46 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
     const imported = readNativeImports();
     let added = 0;
     let systems = 0;
+    let sysImported: SysImportResult | null = null;
+    /** Files that are clearly a `Sys.sav` but not the full expected size. */
+    const sysWrongSize: number[] = [];
+    /** Cuts of a `Sys.sav` that stopped half-way (a real but partial file). */
+    const sysTruncated: number[] = [];
+    let sysUnreadable = 0;
+    let sysUnsupported = 0;
     let skipped = 0;
     let japanese = 0;
+    let runSave = h.save;
     for (const file of files) {
       try {
+        const looksSystem = /^sys\.sav$/i.test(file.name) || file.size === NATIVE_SYS_SIZE;
         if (file.size > NATIVE_SYS_SIZE) {
-          skipped++;
+          // Only a `Sys.sav` name can be a wrong-size system save; any other
+          // oversized upload is just not a save this build reads.
+          if (looksSystem) sysWrongSize.push(file.size);
+          else skipped++;
           continue;
         }
-        const parsed = parseNativeFile(await file.arrayBuffer(), file.name);
+        const buffer = await file.arrayBuffer();
+        const parsed = parseNativeFile(buffer, file.name);
         if (parsed.kind === "system") {
           systems++;
+          if (!h.sysSlots || !h.flow) {
+            sysUnsupported++;
+            continue;
+          }
+          const result = importSysSave(
+            buffer, file.name, h.sysSlots, h.router, h.flow, runSave, localStorage,
+          );
+          if (!result.ok) {
+            if (result.reason === "truncated") sysTruncated.push(result.size);
+            else sysUnreadable++;
+            continue;
+          }
+          sysImported = result;
+          runSave = result.save;
+          profile = result.profile;
+          h.onProfileChange?.(result.profile);
           continue;
         }
         if (parsed.kind !== "slot") {
@@ -312,23 +563,75 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
         skipped++;
       }
     }
+    const sysNote = sysImported
+      ? `Sys.sav imported: ${sysImported.readKeys.length.toLocaleString("en-US")} read lines ` +
+        `(${sysImported.addedReadKeys.toLocaleString("en-US")} new), ` +
+        `${sysImported.profile.visited.length} visited scripts, ` +
+        `${sysImported.profile.endings.length} endings, ` +
+        `${sysImported.profile.cg.length} gallery CGs, ` +
+        `${sysImported.profile.music.length} music tracks, ` +
+        `${sysImported.profile.movies.includes(0) ? "all movies" : `${sysImported.profile.movies.length} movies`}; ` +
+        `reading position unchanged`
+      : "";
+    // Storage can reject the profile and/or the read set while the parse
+    // itself succeeded: never report a durable import we did not write.
+    const storageNote = sysImported
+      ? sysStorageNote(sysImported.profileSaved, sysImported.readKeysPersisted)
+      : "";
+    /** Wrong-size and truncated reads are different mistakes: a file that is
+     * not `Sys.sav` at all, versus a copy that stopped mid-write. */
+    const sysSizeNotes = sysSkipNote({
+      wrongSize: sysWrongSize,
+      truncated: sysTruncated,
+      unreadable: sysUnreadable,
+      unsupported: sysUnsupported,
+    });
     if (added > 0) {
       const persisted = writeNativeImports(imported);
       const extra = [
         !persisted ? "browser storage is full, so the list could not be persisted" : "",
-        systems ? `${systems} Sys.sav recognized (global flags pending)` : "",
+        storageNote,
+        sysNote,
+        sysSizeNotes,
         japanese ? `${japanese} Japanese-language save(s) could not be matched to the English script` : "",
         skipped && !japanese ? `${skipped} file(s) skipped` : "",
       ].filter(Boolean).join("; ");
       h.notify(`Imported ${added} native save option${added === 1 ? "" : "s"}${extra ? `; ${extra}` : ""}.`);
+    } else if (sysNote) {
+      const trailer = [
+        storageNote,
+        sysSizeNotes,
+        skipped && !japanese ? `${skipped} other file(s) skipped` : "",
+      ].filter(Boolean).join("; ");
+      h.notify(`${sysNote}${trailer ? `; ${trailer}` : ""}.`);
+    } else if (sysWrongSize.length > 0) {
+      h.notify(
+        `That file is ${sysWrongSize[0]!.toLocaleString("en-US")} bytes; a Sys.sav is exactly ` +
+        `${NATIVE_SYS_SIZE.toLocaleString("en-US")} bytes, so it was not imported.`,
+      );
+    } else if (sysTruncated.length > 0) {
+      h.notify(
+        `Sys.sav is shorter than the expected ${NATIVE_SYS_SIZE.toLocaleString("en-US")} bytes; ` +
+        "the copy is truncated, so nothing was imported.",
+      );
+    } else if (sysUnreadable > 0) {
+      h.notify("Sys.sav could not be decoded; nothing was imported.");
     } else if (systems > 0) {
-      h.notify("Sys.sav recognized. Global read/choice flags are not imported yet.");
+      h.notify("Sys.sav was recognized, but this build has no slot table to decode it with.");
     } else if (japanese > 0) {
       h.notify("Native saves were read, but their text is Japanese; this build matches English-patched saves only.");
     } else {
       h.notify(`No native saves matched this build (${skipped} skipped).`);
     }
-    renderSaves(el, h);
+    renderSaves(el, { ...h, profile });
+  });
+
+  el.querySelector("[data-profile-remove]")?.addEventListener("click", () => {
+    clearProfile(localStorage);
+    profile = null;
+    h.onProfileChange?.(null);
+    h.notify("Global profile removed. Read lines already stored in this browser are kept.");
+    renderSaves(el, { ...h, profile });
   });
 
   el.querySelectorAll("[data-native-load]").forEach((b) =>

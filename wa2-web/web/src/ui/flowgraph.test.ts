@@ -1,9 +1,10 @@
 // Flowchart graph builder: pure layout (tsukiweb-style chart), test-pinned.
 
 import { describe, expect, it } from "vitest";
-import { buildChartGraph, NODE_H, NODE_W } from "./flowchart";
+import { buildChartGraph, chartVisited, NODE_H, NODE_W, optionSeen } from "./flowchart";
+import { guideEndings, guideOptionSeen } from "./guide";
 import { buildSpine } from "../engine/router";
-import type { LinkSite, TerminalsData } from "../engine/types";
+import type { LinkSite, SaveData, SysProfile, TerminalsData } from "../engine/types";
 
 const link = (script: string, targets: string[]): LinkSite => ({
   id: `${script}-x`, engine: { script, events: [0] },
@@ -65,5 +66,99 @@ describe("buildChartGraph", () => {
     for (const x of xs) expect(x).toBeGreaterThanOrEqual(0);
     expect(g.width).toBeGreaterThan(NODE_W);
     expect(g.height).toBeGreaterThan(NODE_H);
+  });
+});
+
+describe("global profile on the chart", () => {
+  const save = (over: Partial<SaveData> = {}): SaveData => ({
+    version: 1,
+    name: "x",
+    updatedAt: "2026-11-13T00:00:00.000Z",
+    position: { script: "1002", event: 0 },
+    flags: { aff: {}, set: {} },
+    picks: {},
+    visited: ["1002"],
+    endings: [],
+    log: [],
+    ...over,
+  });
+
+  const profile = (over: Partial<SysProfile> = {}): SysProfile => ({
+    version: 1,
+    importedAt: "2026-11-13T00:00:00.000Z",
+    readKeys: [],
+    visited: [],
+    endings: [],
+    seenPicks: {},
+    cg: [],
+    music: [],
+    movies: [],
+    ero: [],
+    gates: {},
+    ...over,
+  });
+
+  it("unions profile.visited into the lit path without losing the run", () => {
+    const lit = chartVisited(save(), profile({ visited: ["2001", "1002"] }));
+    expect([...lit].sort()).toEqual(["1002", "2001"]);
+    expect(chartVisited(save()).has("2001")).toBe(false);
+  });
+
+  it("treats a seen pick as visible while spoilers are off", () => {
+    const p = profile({ seenPicks: { "2019-1484": [1, 2, 3] } });
+    expect(optionSeen(save(), p, "2019-1484", 2, false)).toBe(true);
+    expect(optionSeen(save(), p, "2019-1484", 1, false)).toBe(true);
+    expect(optionSeen(save(), null, "2019-1484", 2, false)).toBe(false);
+    expect(optionSeen(save(), null, "2019-1484", 2, true)).toBe(true);
+  });
+
+  it("keeps the run's own pick as .chosen and profile bits as seen only", () => {
+    const s = save({ picks: { "2019-1484": 3 } });
+    const p = profile({ seenPicks: { "2019-1484": [1, 2, 3] } });
+    expect(s.picks["2019-1484"]).toBe(3);
+    expect(optionSeen(s, p, "2019-1484", 1, false)).toBe(true);
+    expect(optionSeen(s, p, "2019-1484", 3, false)).toBe(true);
+  });
+});
+
+describe("global profile in the guide", () => {
+  const save = (over: Partial<SaveData> = {}): SaveData => ({
+    version: 1,
+    name: "x",
+    updatedAt: "2026-11-13T00:00:00.000Z",
+    position: { script: "1002", event: 0 },
+    flags: { aff: {}, set: {} },
+    picks: {},
+    visited: [],
+    endings: [],
+    log: [],
+    ...over,
+  });
+  const profile = (over: Partial<SysProfile> = {}): SysProfile => ({
+    version: 1,
+    importedAt: "2026-11-13T00:00:00.000Z",
+    readKeys: [],
+    visited: [],
+    endings: [],
+    seenPicks: {},
+    cg: [],
+    music: [],
+    movies: [],
+    ero: [],
+    gates: {},
+    ...over,
+  });
+
+  it("unions profile.endings into the seen ending set", () => {
+    const got = guideEndings(save({ endings: ["cc-mari"] }), profile({ endings: ["cc-setsuna"] }));
+    expect([...got].sort()).toEqual(["cc-mari", "cc-setsuna"]);
+    expect(guideEndings(save()).size).toBe(0);
+  });
+
+  it("shows profile-seen options with spoilers off", () => {
+    const p = profile({ seenPicks: { "2019-1512": [2] } });
+    expect(guideOptionSeen(save(), p, "2019-1512", 2, false)).toBe(true);
+    expect(guideOptionSeen(save(), p, "2019-1512", 1, false)).toBe(false);
+    expect(guideOptionSeen(save(), null, "2019-1512", 1, true)).toBe(true);
   });
 });

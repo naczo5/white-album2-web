@@ -3,7 +3,8 @@
 // Built data lives in /data (emitted by tools/build.py) and is gitignored;
 // demo content below is original placeholder text, not game content.
 
-import type { BgmData, BnrData, FlowData, LinksData, Scenario, SpeakersData, TerminalsData, VoiceMapData } from "../engine/types";
+import type { BgmData, BnrData, FlowData, LinksData, Scenario, SpeakersData, SysSlotsTable, TerminalsData, VoiceMapData } from "../engine/types";
+import committedSysSlots from "../../../data/sys-slots.json";
 
 export type LutMap = Record<string, { r: number[]; g: number[]; b: number[] }>;
 
@@ -23,6 +24,10 @@ export interface GameData {
   speakers: SpeakersData | null;
   /** Color-grade LUTs (when delivered via data/bundle.json); null = fetch luts.json or fallback. */
   luts: LutMap | null;
+  /** `Sys.sav` slot map (native global save import). Always present: the
+   * committed table is the fallback, so the importer works with demo and
+   * older packs that predate `bundle.sysSlots`. */
+  sysSlots: SysSlotsTable;
   demo: boolean;
   /** Scripts listed in the index that failed to load (stale cache/partial
    * copy). Empty when healthy; boot warns otherwise. */
@@ -128,7 +133,26 @@ interface BundlePayload {
   voicemap?: VoiceMapData | null;
   speakers?: SpeakersData | null;
   luts?: LutMap | { version?: number; luts?: LutMap } | null;
+  sysSlots?: SysSlotsTable | null;
 }
+
+/** The committed table is the fallback for demo runs and packs built before
+ * `bundle.sysSlots` existed, so importing `Sys.sav` always has a slot map. */
+const FALLBACK_SYS_SLOTS = committedSysSlots as unknown as SysSlotsTable;
+
+function usableSysSlots(raw: unknown): SysSlotsTable | null {
+  const t = raw as Partial<SysSlotsTable> | null | undefined;
+  if (!t || typeof t !== "object") return null;
+  if (!Array.isArray(t.scripts) || t.scripts.length === 0) return null;
+  if (!Array.isArray(t.choiceTable?.scriptIds)) return null;
+  if (!Array.isArray(t.cgRows)) return null;
+  if (!t.endingSlots || typeof t.endingSlots !== "object") return null;
+  if (!t.endingSlotsConfidence || typeof t.endingSlotsConfidence !== "object") return null;
+  if (!t.gateSlots || typeof t.gateSlots !== "object") return null;
+  return t as SysSlotsTable;
+}
+
+export const DEFAULT_SYS_SLOTS: SysSlotsTable = usableSysSlots(FALLBACK_SYS_SLOTS) ?? FALLBACK_SYS_SLOTS;
 
 function sanitizeFlow(flow: FlowData): FlowData {
   // A pack is linkable/importable input; keep malformed nodes out of
@@ -159,7 +183,11 @@ export async function loadGameData(base = ""): Promise<GameData> {
     const scenarios = bundle.scenarios.filter((sc) =>
       sc && typeof sc.script === "string" && Array.isArray(sc.events)
     );
+    const bundleSys = usableSysSlots(bundle.sysSlots);
     if (scenarios.length > 0) {
+      const sysSlots = bundleSys
+        ?? usableSysSlots(await tryFetch<SysSlotsTable>(`${prefix}data/sys-slots.json`))
+        ?? DEFAULT_SYS_SLOTS;
       return {
         scenarios,
         flow: sanitizeFlow(bundle.flow),
@@ -171,12 +199,13 @@ export async function loadGameData(base = ""): Promise<GameData> {
         voicemap: bundle.voicemap ?? null,
         speakers: bundle.speakers ?? null,
         luts: unwrapLuts(bundle.luts),
+        sysSlots,
         demo: false,
         incomplete: [],
       };
     }
   }
-  const [index, flow, endings, links, terminals, bgm, bnr, voicemap, speakers] =
+  const [index, flow, endings, links, terminals, bgm, bnr, voicemap, speakers, sysSlotsRaw] =
     await Promise.all([
       tryFetch<string[]>(`${prefix}data/scripts/index.json`),
       tryFetch<FlowData>(`${prefix}data/flow.json`),
@@ -187,7 +216,9 @@ export async function loadGameData(base = ""): Promise<GameData> {
       tryFetch<BnrData>(`${prefix}data/bnr.json`),
       tryFetch<VoiceMapData>(`${prefix}data/voicemap.json`),
       tryFetch<SpeakersData>(`${prefix}data/speakers.json`),
+      tryFetch<SysSlotsTable>(`${prefix}data/sys-slots.json`),
     ]);
+  const sysSlots = usableSysSlots(sysSlotsRaw) ?? DEFAULT_SYS_SLOTS;
   if (Array.isArray(index) && index.length > 0 && flow && Array.isArray(flow.nodes)) {
     const scenarios: Scenario[] = [];
     const failed: string[] = [];
@@ -212,6 +243,7 @@ export async function loadGameData(base = ""): Promise<GameData> {
         terminals: terminals ?? { version: 1, terminals: {} },
         endings: endings ?? { endings: [] },
         bgm, bnr, voicemap, speakers, luts: null,
+        sysSlots,
         demo: false,
         incomplete: failed,
       };
@@ -224,6 +256,7 @@ export async function loadGameData(base = ""): Promise<GameData> {
     terminals: { version: 1, terminals: {} },
     endings: { endings: [] },
     bgm: null, bnr: null, voicemap: null, speakers: null, luts: null,
+    sysSlots: DEFAULT_SYS_SLOTS,
     demo: true,
     incomplete: [],
   };

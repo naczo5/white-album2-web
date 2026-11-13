@@ -74,7 +74,51 @@ describe("loadGameData external pack", () => {
     expect(data.demo).toBe(false);
     expect(data.scenarios).toEqual([SCENARIO]);
     expect(data.luts).toEqual({ sepia: lut });
+    // The bundle has no slot table, so the loose copy is fetched once; the
+    // committed table backs it up when that 404s. Still no per-script calls.
+    expect(calls).toEqual([
+      "https://pack.example/wa2/data/bundle.json",
+      "https://pack.example/wa2/data/sys-slots.json",
+    ]);
+    expect(data.sysSlots.scripts.length).toBeGreaterThan(0);
+  });
+
+  it("takes the slot table from the bundle without a second request", async () => {
+    const calls: string[] = [];
+    const sysSlots = {
+      version: 1,
+      scripts: ["1001"],
+      choiceTable: { scriptIds: [], base: 900, stride: 4 },
+      cgRows: [[0]],
+      endingSlots: { "22": "cc-setsuna" },
+      endingSlotsConfidence: { "22": "high" },
+      gateSlots: { replaySlot: 3 },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url === "https://pack.example/wa2/data/bundle.json") {
+        return new Response(JSON.stringify({
+          version: 1,
+          scenarios: [SCENARIO],
+          flow: FLOW,
+          sysSlots,
+        }), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }));
+    const data = await loadGameData("https://pack.example/wa2");
+    expect(data.sysSlots).toEqual(sysSlots);
     expect(calls).toEqual(["https://pack.example/wa2/data/bundle.json"]);
+  });
+
+  it("always exposes a slot table, even for the asset-free demo", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("not found", { status: 404 })));
+    const data = await loadGameData();
+    expect(data.demo).toBe(true);
+    // Committed data/sys-slots.json keeps Sys.sav import working offline.
+    expect(data.sysSlots.scripts.length).toBe(185);
+    expect(data.sysSlots.cgRows.length).toBe(168);
+    expect(data.sysSlots.endingSlotsConfidence["22"]).toBe("high");
   });
 });
 

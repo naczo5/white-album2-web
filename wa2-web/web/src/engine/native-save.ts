@@ -18,10 +18,13 @@
 
 import type { NativeSaveMeta, SaveData } from "./types";
 import { newSave } from "./save";
+import { SYS_SIZE } from "./sys-save";
 import type { Scenario } from "./types";
 
 export const NATIVE_SAVE_SIZE = 0x54fd0; // 348112
-export const NATIVE_SYS_SIZE = 0x269480; // 2528384
+/** `Sys.sav` is exactly the same size as the system table's region span:
+ * alias the decoder's constant instead of repeating the magic number. */
+export const NATIVE_SYS_SIZE = SYS_SIZE;
 
 const OFF_PREVIEW = 0x18;
 const OFF_TEXT = 0x112c2;

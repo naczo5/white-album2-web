@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, bgmTrackUrl, clearAudioPackCache, imageUrl, loadManifest, resolveAudioUrl, resolveMovieUrl, seUrl, voiceUrl } from "./assets";
+import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, bgmTrackUrl, clearAudioPackCache, imageUrl, loadManifest, movieUrl, resolveAudioUrl, resolveMovieUrl, seUrl, subtitleUrl, voiceUrl } from "./assets";
 
 const TABLE = {
   mv000: "movie/mv000.mp4",
@@ -15,7 +15,6 @@ describe("movie cue resolution (engine mvNN -> file mvNN0/1 pairs)", () => {
     expect(resolveMovieUrl(TABLE, "mv10")).toBe("movie/mv100.mp4");
     expect(resolveMovieUrl(TABLE, "mv99")).toBeNull();
   });
-
   it("covers every engine cue used by the scenarios", () => {
     const cues = ["mv01", "mv02", "mv07", "mv08", "mv09", "mv10", "mv11",
       "mv12", "mv13", "mv14", "mv20", "mv21", "mv22", "mv23", "mv24"];
@@ -26,6 +25,81 @@ describe("movie cue resolution (engine mvNN -> file mvNN0/1 pairs)", () => {
     }
     for (const c of cues) {
       expect(resolveMovieUrl(full, c)).toBe(`movie/${c}0.mp4`);
+    }
+  });
+});
+
+describe("movie subtitle lookup (BYOA WebVTT tracks)", () => {
+  const SUB = {
+    mv010: "subs/mv010.vtt",
+    mv02: "subs/mv02.vtt",
+    "mv03.mp4": "subs/mv03.vtt",
+  };
+
+  it("uses the same key chain as the movie file", () => {
+    // Exact cue id, then the high/low file variants.
+    expect(resolveMovieUrl({ mv010: "movie/mv010.mp4" }, "mv01")).not.toBeNull();
+    expect(subtitleUrl("mv01")).toBeNull(); // no manifest loaded yet
+  });
+
+  it("resolves exact, mvNN0/mvNN1 and .mp4 keys after load", async () => {
+    const body = {
+      version: 1,
+      images: {},
+      bgm: {},
+      sfx: {},
+      voice: {},
+      movies: { mv010: "movie/mv010.mp4" },
+      subtitles: SUB,
+    };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true, json: async () => body,
+    })) as unknown as typeof fetch;
+    try {
+      await loadManifest("assets/manifest.json");
+      expect(subtitleUrl("mv01")).toBe("assets/subs/mv010.vtt");
+      expect(subtitleUrl("MV01")).toBe("assets/subs/mv010.vtt");
+      expect(subtitleUrl("mv02")).toBe("assets/subs/mv02.vtt");
+      expect(subtitleUrl("mv03")).toBe("assets/subs/mv03.vtt");
+      expect(subtitleUrl("mv99")).toBeNull();
+      // The movie itself still resolves from its own table.
+      expect(movieUrl("mv01")).toBe("assets/movie/mv010.mp4");
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it("tolerates a manifest with no subtitles table", async () => {
+    const body = {
+      version: 1, images: {}, bgm: {}, sfx: {}, voice: {}, movies: {},
+    };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true, json: async () => body,
+    })) as unknown as typeof fetch;
+    try {
+      await loadManifest("assets/manifest.json");
+      expect(subtitleUrl("mv01")).toBeNull();
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it("rebases absolute subtitle URLs untouched", async () => {
+    const body = {
+      version: 1, images: {}, bgm: {}, sfx: {}, voice: {}, movies: {},
+      subtitles: { mv010: "https://cdn.example/subs/mv010.vtt" },
+    };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true, json: async () => body,
+    })) as unknown as typeof fetch;
+    try {
+      await loadManifest("assets/manifest.json");
+      expect(subtitleUrl("mv01")).toBe("https://cdn.example/subs/mv010.vtt");
+    } finally {
+      globalThis.fetch = origFetch;
     }
   });
 });

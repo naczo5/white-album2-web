@@ -3,7 +3,7 @@
 // localStorage holds autosave + named slots for convenience; the FILE is
 // the source of truth and the unit under test (round-trip stable).
 
-import type { Flags, Position, SaveData } from "./types";
+import type { Flags, Position, SaveData, SysProfile } from "./types";
 
 export const SAVE_VERSION = 1;
 /** Default namespace for a local full build; setSaveNamespace() isolates
@@ -177,12 +177,94 @@ function readStored(storage: Storage, key: string): SaveData | null {
   }
 }
 
+export function readQuicksave(storage: Storage): SaveData | null {
+  return readStored(storage, storageKey("quicksave"));
+}
+
 export function readAutosave(storage: Storage): SaveData | null {
   return readStored(storage, storageKey("autosave"));
 }
 
-export function readQuicksave(storage: Storage): SaveData | null {
-  return readStored(storage, storageKey("quicksave"));
+// ---- Global profile (Sys.sav import) -------------------------------------
+// Kept in its own key so a new game, a slot load or an autosave overwrite
+// can never erase accumulated read lines, endings or unlock bands.
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+function numberList(v: unknown): number[] {
+  return Array.isArray(v)
+    ? [...new Set(v.filter((x): x is number => Number.isInteger(x) && (x as number) >= 0))].sort((a, b) => a - b)
+    : [];
+}
+
+/** Sanitize a stored profile field-by-field; malformed data degrades to an
+ * empty (but usable) profile instead of throwing at boot. */
+export function sanitizeProfile(raw: unknown): SysProfile | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Partial<SysProfile>;
+  if (p.version !== 1) return null;
+  const seenPicks: Record<string, number[]> = {};
+  if (p.seenPicks && typeof p.seenPicks === "object" && !Array.isArray(p.seenPicks)) {
+    for (const [k, v] of Object.entries(p.seenPicks)) {
+      const opts = numberList(v).filter((n) => n >= 1);
+      if (opts.length > 0) seenPicks[k] = opts;
+    }
+  }
+  const gates: Record<string, number> = {};
+  if (p.gates && typeof p.gates === "object" && !Array.isArray(p.gates)) {
+    for (const [k, v] of Object.entries(p.gates)) {
+      if (typeof v === "number" && Number.isFinite(v)) gates[k] = v;
+    }
+  }
+  return {
+    version: 1,
+    ...(typeof p.fileName === "string" && p.fileName ? { fileName: p.fileName } : {}),
+    importedAt: typeof p.importedAt === "string" ? p.importedAt : new Date().toISOString(),
+    readKeys: [...new Set(stringList(p.readKeys))],
+    visited: [...new Set(stringList(p.visited))],
+    endings: [...new Set(stringList(p.endings))],
+    seenPicks,
+    cg: numberList(p.cg),
+    music: numberList(p.music),
+    movies: numberList(p.movies),
+    ero: numberList(p.ero),
+    gates,
+  };
+}
+
+export function readProfile(storage: Storage): SysProfile | null {
+  let raw: string | null;
+  try {
+    raw = storage.getItem(storageKey("profile"));
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    return sanitizeProfile(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function writeProfile(storage: Storage, p: SysProfile): boolean {
+  try {
+    storage.setItem(storageKey("profile"), JSON.stringify(p));
+    return true;
+  } catch {
+    /* quota: global progress is recoverable by re-importing Sys.sav */
+    return false;
+  }
+}
+
+export function clearProfile(storage: Storage): void {
+  try {
+    storage.removeItem(storageKey("profile"));
+  } catch {
+    /* storage unavailable: nothing to clear */
+  }
 }
 
 export function download(filename: string, text: string): void {

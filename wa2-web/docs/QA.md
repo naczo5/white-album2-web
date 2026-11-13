@@ -7,11 +7,15 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit + data (tools) | `pytest tests/` | 77 passed + 9 skipped (84 passed with `WA2_EN_PAK`) |
-| web unit | `cd web && vitest run` | 88 passed + 2 BYOA-skipped |
-| real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | 183/221 scripts, no throw/stall |
+| unit + data (tools) | `pytest tests/` | 144 passed + 9 skipped |
+| web unit | `cd web && vitest run` | 225 passed + 4 BYOA-skipped |
+| real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | 183/221 scripts, no throw/stall (BYOA) |
 | types+build | `tsc --noEmit && npm run build` | clean (~69 KB JS + 29 KB CSS, asset-free) |
-| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 84 passed (7 corpus tests; 517 en.pak entries, zero parser warnings) |
+| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 151 passed + 2 skipped (7 corpus tests; 517 en.pak entries, zero parser warnings) |
+| save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 229 passed + 0 skipped (native slots 11/11, `Sys.sav` profile) |
+| movie subtitles | `pytest tests/test_subtitles.py`; `vitest run vtt` | ASS→VTT conversion + cue/region parsing pinned (`test_subtitles.py`, `vtt.test.ts`) |
+| movie player | `vitest run reader-movie` | HUD/CC/skip/autoplay-fallback/missing-card behaviour, no DOM leak (`reader-movie.test.ts`) |
+| `Sys.sav` compatibility | `pytest tests/test_sys_sav.py tests/test_build_sys_table.py`; `vitest run sys-save` | slot map + region decode + read-line bitmap + profile merge (`sys-save.test.ts`, `sys-save.corpus.test.ts`) |
 | flow parity | `check_flow.py IR flow.json` | 32/32 nodes, option text exact |
 | bnr choice gate | `check_bnr_choices.py IR script.pak` | 32/32 choices carry (4,208) markers |
 | flag reference | `build_flags.py script.pak` | 29 vars + 62 gflags, 15/15 pick flags mapped |
@@ -617,9 +621,12 @@ Fixes (web/ui/flowchart.ts):
   text, and flags duplicate-line ambiguity. Save/Load now imports native
   slots into a separate persistent "Imported game saves" list (not
   limited to the 8 browser slots).
-- `Sys.sav` is detected (name/size) but its global read/choice/affection
-  mapping is not imported yet; the UI states that explicitly. Manual
-  continuation works because choice destinations come from flow.json.
+- `Sys.sav` global state is now imported as a separate profile (see the
+  2026-11-13 entry below): read lines, gallery/CG unlocks, music/movie
+  bands, choice bitmasks and the high-confidence ending slots. Slot 0 (the
+  engine's catch-all read bucket) and slot 99 (force-zeroed by the guarded
+  setter at `0x405320`) stay excluded/untrusted — documented as open items
+  in `data/sys-slots.json`.
 - Corpus test (BYOA-gated): `WA2_NATIVE_SAVES=… WA2_DATA_DIR=… vitest run
   native-save.corpus` maps 11/11 samples; save_00's repeated line is
   imported as two candidate rows (option 1/2), not silently chosen.
@@ -631,3 +638,88 @@ Fixes (web/ui/flowchart.ts):
 - Gates: tsc clean; Vitest 88 passed / 2 BYOA-skipped; pytest unchanged
   77 passed / 9 skipped; browser smoke: Q.Save → advance → Q.Load restored
   the saved line, Save/Load showed the Quick save and Autosave rows.
+
+### 2026-11-13 — movie subtitles + player, speaker/anchor fixes, `Sys.sav` RE
+
+Static analysis only (no game launch); corpus gates ran against the
+installed game in `.cache/game`, the MAO v2.1.0 release, and the
+2026-11-13 user save set (`.cache/saves/2026-11-13`, never committed).
+
+- **Movie subtitles** (`tools/extract_assets.py`, `web/src/engine/vtt.ts`,
+  `web/src/ui/movie.ts`): MAO's Movie Patcher `.ass` tracks convert to
+  WebVTT per movie (`subs/mvNNN.vtt`, listed under `subtitles` in
+  `manifest.json`). Timestamp math (ASS centiseconds, `HH:MM:SS.mmm`),
+  style-level and inline `\i`/`\b` → `<i>`/`<b>`, `PlayResX/Y` geometry,
+  top-vs-bottom/column placement by `line:`/`pos`, chronological sort, and
+  drawing-block skipping are pinned by `tests/test_subtitles.py` (25
+  tests). The runtime parser additionally sanitises every cue (escape
+  first, then re-emit only an `<i>/<b>/<br>` allow-list), maps `line:` to
+  the two overlay regions, groups positioned lyric pairs into columns and
+  keeps authored line breaks — pinned by `web/src/engine/vtt.test.ts` (30
+  tests). `--subs-only` regenerates just the tracks and prunes stale
+  manifest keys plus orphaned `.vtt` files, so a renumbered movie can
+  never request a missing caption file.
+- **Movie player UX** (`web/src/ui/movie.ts`, `reader-movie.test.ts`):
+  one persistent layer per reader (no listener stacking), auto-hidden HUD
+  with a measured subtitle clearance, CC toggle persisted in
+  `wa2web.cc`, Escape reveal-then-skip, M/C shortcuts, Space/Enter on the
+  missing-asset card, and an autoplay fallback to muted playback plus a
+  "Tap to unmute" pill instead of a black frame. Teardown is idempotent and
+  unloads the source; the lookahead `<video>` buffer is released when a
+  film starts or the reader leaves. Save/position drift while a film plays
+  is pinned (`protects a save that moved on while the film played`), as is
+  the lookahead scan limit (26 tests).
+- **Speaker/latch + anchor fixes** (`tools/parse_txt.py`,
+  `tools/build_ir.py`, `tools/build_voice.py`, `tools/bnr_anchor.py`):
+  JP narration rows carrying `、。！？「」『』` and curly-quoted beats
+  (`“…”`) are rejected as speaker names, so a full sentence can no longer
+  latch and steal the next line's attribution. `_replay_spine` only falls
+  back to a hybrid event's `text` when that event is itself a latch (an EN
+  narration row must never be promoted to a speaker), and the fullwidth
+  unknown-speaker tag normalizes to `???`. Voice speaker votes now join
+  MAO `_N` continuation manuscripts (`3906` + `coda-3906_2`), so tail
+  characters get their EN names; the map needs ≥3 votes and ≥90 % agreement
+  or it keeps the JP name. `bnr_anchor` now *skips* an out-of-range
+  `(3,X)` label that follows a settled anchor instead of clamping every
+  earlier statement onto the last event (1001's airport/city backdrops had
+  collapsed onto ev 80).
+- **`Sys.sav` RE + compatibility** (`tools/build_sys_table.py`,
+  `data/sys-slots.json`, `web/src/engine/sys-save.ts`, `ui/saves.ts`):
+  static reads of `WA2.exe` .data resolved the whole file — Region A
+  `0..0x7FFFF` = 4096 × `0x200` MSB-first read-line bitmaps indexed by the
+  185-entry script table at `0x4be530` (slot bits = message lines + one
+  sentinel; 82 fully-read slots match exactly and contiguously against
+  `script.pak`, partially read and branching scripts stop earlier and can
+  have gaps); Region B `0x80000..0x26847F` = one byte per
+  `part*1e6 + cgId` (gallery table `0x4c01b0`, 168 × 10 ids, ends at
+  `0x4c1bf0`; 272 distinct ids); Region C `0x268480..0x26947F` = 1024 `u32`
+  global flags behind `GetGameFlag`/`SetGameFlag`, with `GFLAG.dat` record
+  `+256` supplying the slot index (now emitted as `gflagSlots`) and
+  `900 + 4*choiceIdx + nodeIdx` bitmasks matching the 23-entry choice table
+  `0x4be4d0` in `flow.json` order. The player imports the profile as a
+  separate global save (read lines, ending slots, music/movie/ero bands,
+  choice history) and merges it into read state, endings and the flowchart
+  without touching the run save. Gates: `tests/test_sys_sav.py` (slot map
+  schema/counts, no game text, choice order, CG uniqueness, ending map,
+  bundle delivery, `GFLAG.dat` slot parse, Region A bitmap rule — the
+  last two BYOA-gated), `tests/test_build_sys_table.py` (PE/section
+  parsing, extractor counts, gallery end, exe cross-checks, BYOA-gated),
+  `web/src/engine/sys-save.test.ts`, and
+  `web/src/engine/sys-save.corpus.test.ts` (103 read scripts, >30k read
+  lines, four high-confidence endings on the sample).
+- **Still open on `Sys.sav`** (recorded in `data/sys-slots.json`
+  `openItems`): Region A **slot 0 is the engine's catch-all bucket** (the
+  `0x40ea10` resolver falls back to index 0 for ids absent from the
+  table), so it is excluded from import and kept as reference only; **slot
+  99 is force-zeroed** by the guarded setter `0x405320` (coda-setsuna is
+  never observable — read other end states instead); the `900` band is
+  shared with an ero-scene flag; movie/music ids overlap in the low 200s;
+  and affection thresholds remain play-test data (`Global.vrb` snapshots
+  in `save_XX.sav` at `0x54cb0` are decoded but not used for gating).
+- **Gates (verified, 2026-11-13)**: `pytest tests/ -q` → **144 passed, 9
+  skipped**; `WA2_EN_PAK=… pytest tests/ -q` → **151 passed, 2 skipped**;
+  `npx tsc --noEmit` clean; `npx vitest run` → **225 passed, 4 skipped**;
+  with the BYOA save corpora (`WA2_NATIVE_SAVES`, `WA2_SYS_SAVES`,
+  `WA2_DATA_DIR=build/data`) → **229 passed, 0 skipped** (native slots
+  11/11, real-data playthrough 183/221 scripts, `Sys.sav` profile).
+

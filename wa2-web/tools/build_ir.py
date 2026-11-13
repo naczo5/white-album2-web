@@ -373,9 +373,19 @@ def _replay_spine(jp_events: list[dict], hy_events: list[dict],
     for jp, hy in zip(jp_events, hy_events):
         t = jp["t"]
         if t == "latch":
-            name = (hy.get("name") or hy.get("text") or "").strip()
+            # Name payload: a hybrid event that is itself a latch may carry
+            # the EN name in `text` (the reader's latch shape puts it in
+            # `name`, but the resplit/census paths emit `text` rows too).
+            # A hybrid *narrate* event never donates its text: that would
+            # relatch narration as a speaker, so the JP spine name is
+            # authoritative whenever the hybrid latch payload is empty.
+            name = (hy.get("name") or "").strip()
+            if not name and hy.get("t") == "latch":
+                name = (hy.get("text") or "").strip()
             if not name:
-                name = jp["name"]
+                name = jp["name"].strip()
+            if name in ("？？？",):
+                name = "???"
             votes = name_votes.setdefault(jp["name"], {})
             votes[name] = votes.get(name, 0) + 1
             hy.clear()
@@ -386,6 +396,8 @@ def _replay_spine(jp_events: list[dict], hy_events: list[dict],
             if jp.get("speaker"):
                 votes = name_votes.get(jp["speaker"])
                 sp = max(votes, key=votes.get) if votes else jp["speaker"]
+            if sp == "？？？":
+                sp = "???"
             hy["speaker"] = sp
             if "tok" not in hy:
                 hy["tok"] = jp["tok"]

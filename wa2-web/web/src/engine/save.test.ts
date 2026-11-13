@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { SysProfile } from "./types";
 import {
   deserialize,
   newSave,
@@ -112,8 +113,7 @@ describe("saves", () => {
     expect(store.has("wa2web.autosave")).toBe(true);
   });
 
-  it("namespaces demo and pack saves away from the local build", async () => {
-    const { setSaveNamespace, readAutosave, readQuicksave, writeAutosave, writeQuicksave } = await import("./save");
+  it("namespaces demo and pack saves away from the local build", async () => {    const { setSaveNamespace, readAutosave, readQuicksave, writeAutosave, writeQuicksave } = await import("./save");
     const store = new Map<string, string>();
     const storage = {
       getItem: (k: string) => store.get(k) ?? null,
@@ -138,5 +138,106 @@ describe("saves", () => {
     writeSlot(storage, 0, newSave("local slot", { script: "1001", event: 0 }));
     expect(readSlot(storage, 0)?.name).toBe("local slot");
     expect(store.has("wa2web.slot.0")).toBe(true);
+  });
+
+  it("persists, reads back and clears the global profile", async () => {
+    const { clearProfile, readProfile, setSaveNamespace, writeProfile } = await import("./save");
+    setSaveNamespace("");
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() { return store.size; },
+    } as Storage;
+    expect(readProfile(storage)).toBeNull();
+    const p: SysProfile = {
+      version: 1,
+      fileName: "Sys.sav",
+      importedAt: "2026-11-13T10:00:00.000Z",
+      readKeys: ["1001:0", "1001:2"],
+      visited: ["1001"],
+      endings: ["cc-setsuna"],
+      seenPicks: { "2019-1484": [1, 2, 3] },
+      cg: [100100],
+      music: [1, 2],
+      movies: [0],
+      ero: [3],
+      gates: { replay: 1 },
+    };
+    expect(writeProfile(storage, p)).toBe(true);
+    expect(store.has("wa2web.profile")).toBe(true);
+    expect(readProfile(storage)).toEqual(p);
+    clearProfile(storage);
+    expect(readProfile(storage)).toBeNull();
+    expect(store.has("wa2web.profile")).toBe(false);
+  });
+
+  it("sanitizes a malformed stored profile instead of throwing", async () => {
+    const { readProfile } = await import("./save");
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() { return store.size; },
+    } as Storage;
+    store.set("wa2web.profile", "{not json");
+    expect(readProfile(storage)).toBeNull();
+    store.set("wa2web.profile", JSON.stringify({ version: 2, readKeys: ["x"] }));
+    expect(readProfile(storage)).toBeNull();
+    store.set("wa2web.profile", JSON.stringify({
+      version: 1,
+      readKeys: ["1001:0", 5, null],
+      visited: "nope",
+      endings: ["cc-mari", "cc-mari"],
+      seenPicks: { a: [2, "x", 0], b: "nope" },
+      cg: [100100, -1, "x"],
+      music: null,
+      movies: [2.5, 3],
+      ero: [7],
+      gates: { replay: 1, bad: "x" },
+      importedAt: 42,
+    }));
+    const fixed = readProfile(storage)!;
+    expect(fixed.version).toBe(1);
+    expect(fixed.readKeys).toEqual(["1001:0"]);
+    expect(fixed.visited).toEqual([]);
+    expect(fixed.endings).toEqual(["cc-mari"]);
+    expect(fixed.seenPicks).toEqual({ a: [2] });
+    expect(fixed.cg).toEqual([100100]);
+    expect(fixed.music).toEqual([]);
+    expect(fixed.movies).toEqual([3]);
+    expect(fixed.ero).toEqual([7]);
+    expect(fixed.gates).toEqual({ replay: 1 });
+    expect(fixed.importedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("keeps the profile under the active namespace", async () => {
+    const { readProfile, setSaveNamespace, writeProfile } = await import("./save");
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() { return store.size; },
+    } as Storage;
+    const p: SysProfile = {
+      version: 1, importedAt: new Date().toISOString(),
+      readKeys: [], visited: [], endings: [], seenPicks: {},
+      cg: [], music: [], movies: [], ero: [], gates: {},
+    };
+    setSaveNamespace("pack-abc");
+    writeProfile(storage, { ...p, visited: ["2019"] });
+    expect(store.has("wa2web.pack-abc.profile")).toBe(true);
+    setSaveNamespace("demo");
+    expect(readProfile(storage)).toBeNull();
+    setSaveNamespace("");
   });
 });

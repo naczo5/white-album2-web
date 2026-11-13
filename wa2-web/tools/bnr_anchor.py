@@ -68,6 +68,14 @@ def anchor_stmts(payload, next_ev: list[int]) -> list[int]:
     labeled line in stream order — anchoring them to 0 made event numbers
     non-monotonic and let a trailing sprClear/bak wipe scenes corpus-wide,
     e.g. 1004 showed no sprites at any event).
+
+    Out-of-range X (X >= len(next_ev)) comes from EN tail-overflow labels
+    the JP spine does not carry — MAO appends extra (4,131)-labeled
+    fragments past the last JP line (1001's ev-84 sync, 5000/5100 tails).
+    Such a label is unresolvable, so it is SKIPPED: the backward walk
+    keeps the previous (real) carry instead of resetting every earlier
+    statement onto `next_ev[-1]` (which collapsed 1001's airport/city
+    backdrops at ev 1/4/7/79 onto ev 80).
     """
     stmts = list(iter_statements(payload))
     n = len(stmts)
@@ -85,8 +93,12 @@ def anchor_stmts(payload, next_ev: list[int]) -> list[int]:
                 carry = 0
             elif x < len(next_ev):
                 carry = next_ev[x]
-            else:
+            elif carry is None:
+                # unresolvable label with nothing settled yet (stream tail
+                # past the last real line): clamp, but never after a real
+                # anchor has been established below it.
                 carry = next_ev[-1] if next_ev else 0
+            # else: keep the carry from the enclosing (lower) real label
         anchors[i] = carry
     if last_label_i is None:
         return [0] * n

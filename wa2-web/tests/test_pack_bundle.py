@@ -20,6 +20,34 @@ def _slice_from_ref(assets_dir, ref: str) -> tuple[bytes, str]:
     return data[start:end], suffix
 
 
+def test_staging_never_hardlinks_the_manifest(tmp_path):
+    """`assemble_pack` must copy manifest.json, not link it.
+
+    The optimizer and bundler rewrite the manifest in place; a shared
+    inode made the second pack run start from an already-bundled file
+    (`vpk/...#` refs, `.webp` names with the PNGs pruned) and pack no
+    audio at all.
+    """
+    import assemble_pack
+
+    src = tmp_path / "build" / "assets"
+    src.mkdir(parents=True)
+    (src / "manifest.json").write_text('{"version": 1}', encoding="utf-8")
+    (src / "bg").mkdir()
+    (src / "bg" / "a.png").write_bytes(b"png")
+    dst = tmp_path / "pack" / "assets"
+    assemble_pack.copy_tree_filtered(str(src), str(dst))
+
+    assert (dst / "manifest.json").read_text(encoding="utf-8") == '{"version": 1}'
+    # rewriting the staged copy must not touch the build copy
+    (dst / "manifest.json").write_text('{"version": 2}', encoding="utf-8")
+    assert (src / "manifest.json").read_text(encoding="utf-8") == '{"version": 1}'
+    assert os.stat(dst / "manifest.json").st_ino != \
+        os.stat(src / "manifest.json").st_ino
+    # ordinary media files may still be linked (the space win)
+    assert (dst / "bg" / "a.png").read_bytes() == b"png"
+
+
 def test_bundle_data_merges_scripts_and_prunes(tmp_path):
     data = tmp_path / "data"
     (data / "scripts").mkdir(parents=True)

@@ -71,6 +71,34 @@ def parse_gflag(blob: bytes) -> list[str]:
     return names
 
 
+GFLAG_RECORD_BYTES = 260
+GFLAG_SLOT_OFFSET = 256  # u32 flag-slot index at record +256
+
+
+def parse_gflag_slots(blob: bytes) -> list[dict]:
+    """GFLAG.dat records with their Region C slot index (`+256` u32).
+
+    The engine writes/reads Sys.sav's 1024-word global flag array by these
+    ids (`GetGameFlag`/`SetGameFlag`). The trailing record's slot field sits
+    at the very end of the blob, so the read is clamped: a short record
+    yields slot 0 instead of raising.
+    """
+    (count,) = struct.unpack_from("<I", blob, 0)
+    out = []
+    for i in range(count):
+        base = 8 + i * GFLAG_RECORD_BYTES
+        raw = blob[base:base + 120].split(b"\x00")[0]
+        try:
+            name = raw.decode("cp932")
+        except Exception:
+            name = ""
+        at = base + GFLAG_SLOT_OFFSET
+        slot = (struct.unpack_from("<I", blob, at)[0]
+                if at + 4 <= len(blob) else 0)
+        out.append({"name": name, "slot": slot})
+    return out
+
+
 def parse_fnc(blob: bytes) -> list[str]:
     (count,) = struct.unpack_from("<I", blob, 0)
     parts = re.split(rb"[\x00,]+", blob[4:])
@@ -159,16 +187,21 @@ def main() -> None:
         ir_dir = sys.argv[sys.argv.index("--ir") + 1]
     data = open(pak_path, "rb").read()
     vars_ = parse_vrb(get_entry(data, "Global.vrb"))
-    gflags = parse_gflag(get_entry(data, "GFLAG.dat"))
+    gflag_blob = get_entry(data, "GFLAG.dat")
+    gflags = parse_gflag(gflag_blob)
+    slots = parse_gflag_slots(gflag_blob)
     funcs = {"ex": parse_fnc(get_entry(data, "LFScriptFuncEx.fnc")),
              "base": parse_fnc(get_entry(data, "LFScriptFunc.fnc"))}
-    table = {"version": 1, "vars": vars_, "gflags": gflags, "funcs": funcs,
+    table = {"version": 1, "vars": vars_, "gflags": gflags,
+             "gflagSlots": slots, "funcs": funcs,
              "affection": AFFECTION, "routeKill": ROUTE_KILL,
              "choiceFlags": choice_flag_targets(vars_, ir_dir)}
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(table, f, ensure_ascii=False, indent=1)
     n_ver = sum(1 for v in table["choiceFlags"].values() if v["verified"])
-    print(f"flags: {len(vars_)} vars, {len(gflags)} gflags, "
+    n_slot = sum(1 for s in slots if s["slot"])
+    print(f"flags: {len(vars_)} vars, {len(gflags)} gflags "
+          f"({n_slot} with a flag slot), "
           f"ex {len(funcs['ex'])} + base {len(funcs['base'])} funcs, "
           f"{n_ver}/{len(table['choiceFlags'])} pick flags IR-verified "
           f"-> {out_path}")

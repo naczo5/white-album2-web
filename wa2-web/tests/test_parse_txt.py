@@ -101,16 +101,73 @@ def test_narration_does_not_latch():
 def test_latch_validation():
     assert P.valid_name("Haruki")
     assert P.valid_name("???")
+    assert P.valid_name("？？？")  # fullwidth unknown-speaker tag (JP spine)
     assert P.valid_name("Male Student 1")
+    assert P.valid_name("雪菜の母")
+    assert P.valid_name("雪菜の母＆孝宏")
+    assert P.valid_name("Voicemail Recording")
     assert not P.valid_name("And then~ she declared:")
     assert not P.valid_name("…")
     assert not P.valid_name("………")
     assert not P.valid_name("--")
     assert not P.valid_name("x" * 29)
+    # MAO quotes a narration beat with curly quotes; a quoted fragment is
+    # narration text, never a speaker latch.
+    assert not P.valid_name("“仮語”")
+    assert not P.valid_name("‘quietly’")
+    assert not P.valid_name("“仮語”の原因")
     assert P.census_name("Haruki")
     assert P.census_name("???")  # unambiguous ,???, marker
     assert not P.census_name("…")
     assert not P.census_name("--")
+
+
+def test_curly_quoted_narration_never_latches():
+    # The EN payload `“仮語”` sits where the JP spine has narration;
+    # latching it stole the following line's speaker for 3 events.
+    toks = P.split_tokens(enc('“仮語”,春希,"行くぞ…"'))
+    events, _ = P.parse_tokens(toks)
+    assert events[0] == {"t": "narrate", "tok": 0, "text": "“仮語”"}
+    assert events[1] == {"t": "latch", "name": "春希", "tok": 1}
+    assert events[2]["t"] == "say" and events[2]["speaker"] == "春希"
+
+
+def test_jp_narration_sentence_never_latches():
+    # JP narration rows carry 、。！？ and 「」 — a full sentence must never
+    # be latched as the speaker of the following dialogue.
+    assert not P.valid_name("あ、い。う？「え」")
+    assert not P.valid_name("『仮題』の検証、まだ続く。")
+    assert not P.valid_name("そして…隣の部屋。")
+    assert not P.valid_name("「仮の台詞」")
+    toks = P.split_tokens(enc(
+        'あ、い。う？「え」,春希,"行くぞ…"'))
+    events, _ = P.parse_tokens(toks)
+    assert events[0] == {"t": "narrate", "tok": 0,
+                         "text": "あ、い。う？「え」"}
+    assert events[1] == {"t": "latch", "name": "春希", "tok": 1}
+    assert events[2]["t"] == "say" and events[2]["speaker"] == "春希"
+
+
+def test_catch_never_swallows_unknown_name_tags():
+    # 1007 tok 1187 / 3012 tok 288: CATCH,CATCH3 followed by the fullwidth
+    # unknown-speaker tag. Consuming it as a jump arg dropped the latch and
+    # shifted every later event index.
+    toks = P.split_tokens(enc('CATCH,？？？,「なんだ？」'))
+    events, _ = P.parse_tokens(toks)
+    assert events[0] == {"t": "jump", "kind": "CATCH", "targets": [], "tok": 0}
+    assert events[1] == {"t": "latch", "name": "？？？", "tok": 1}
+    assert events[2]["t"] == "say" and events[2]["speaker"] == "？？？"
+
+    toks = P.split_tokens(enc('CATCH3,???,…'))
+    events, _ = P.parse_tokens(toks)
+    assert events[0]["targets"] == []
+    assert events[1]["t"] == "narrate"  # plain ASCII ??? text, not a target
+
+    # a real voice-context name is still consumed as the jump arg
+    toks = P.split_tokens(enc('CATCH,かずさ,「………」'))
+    events, _ = P.parse_tokens(toks)
+    assert events[0]["targets"] == ["かずさ"]
+    assert events[1]["t"] == "say" and events[1]["text"] == "………"
 
 
 def test_jp_brackets_dialogue():
@@ -120,7 +177,7 @@ def test_jp_brackets_dialogue():
     assert events[1]["t"] == "say" and events[1]["speaker"] == "武也" \
         and events[1]["text"] == "行くぞ"
     # unbalanced opener (F16 tail): still dialogue, never narration
-    toks = P.split_tokens('「知るかよ。\\n<F16…俺が誘ったのは一人だけだって～の」>'.encode("cp932"))
+    toks = P.split_tokens('「あ、い。\\n<F16…う～え」>'.encode("cp932"))
     events, _ = P.parse_tokens(toks)
     assert events[0]["t"] == "say"
 
@@ -131,7 +188,7 @@ def test_clean_frag_debris():
 
 
 def test_inline_markup_preserved_for_renderer():
-    toks = P.split_tokens(enc('"How should I know?\\n<F16…I only asked>"'))
+    toks = P.split_tokens(enc('"A?\\n<F16…B>"'))
     events, _ = P.parse_tokens(toks)
     assert "<F16" in events[0]["text"]  # renderer strips to whisper spans
 

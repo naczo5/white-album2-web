@@ -58,6 +58,9 @@ IMAGE = re.compile(r"^(.*)\.tga$", re.IGNORECASE)
 BGM = re.compile(r"^(.*)\.amp$", re.IGNORECASE)
 ANIM = re.compile(r"^(.*)\.ani$")
 CATCH = re.compile(r"^CATCH[23]?$")
+# Unattributed-speaker tags (ASCII from MAO en.pak, fullwidth from the JP
+# spine). They are display latches, never jump targets.
+UNKNOWN_NAMES = ("???", "？？？")
 FONT_TAG = re.compile(r"<F[0-9]+[^>]*>")
 # Whole-token engine style wrapper, angle or bracket form:
 #   <F16"Weren't you...">  [F16"..."]  <F14'...'>  (F12..F28 sizes;
@@ -168,7 +171,7 @@ def valid_name(tok: str) -> bool:
     t = tok.strip()
     if not t or len(t) > 28:
         return False
-    if t == "???":
+    if t in UNKNOWN_NAMES:
         return True  # explicit unknown-speaker tag (engine-real)
     import re as _re
     if not _re.search(r"[\w\u3040-\u30ff\u4e00-\u9faf]", t):
@@ -176,8 +179,13 @@ def valid_name(tok: str) -> bool:
         # line, never latches, never enters the census (audit B4)
         return False
     # sentence punctuation never appears in display names (audit B1:
-    # narration fragments like "And then~ she declared:" must not latch)
-    if _re.search(r"[~.,:;!?…～'\"\\<>\[\]]", t):
+    # narration fragments like "And then~ she declared:" must not latch).
+    # Japanese sentence punctuation is included too: a JP narration row
+    # such as `あ、い。` otherwise latches as a speaker and steals the
+    # following dialogue line's attribution. Curly quotes are MAO
+    # typography for a quoted narration beat (`“仮語”`) — a quoted beat is
+    # never a speaker name.
+    if _re.search(r"[~.,:;!?…～'\"“”‘’\\<>\[\]。、！？「」『』]", t):
         return False
     return True
 
@@ -307,10 +315,14 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
             # bare name token immediately followed by dialogue is a voice-
             # context arg (e.g. CATCH,Chikashi,"..."). Anything else is left
             # for the main loop so narration is never swallowed into targets.
+            # `???` / `？？？` are display latches, never targets: consuming
+            # them swallowed the speaker latch (1007 tok 1187, 3012 tok 288)
+            # and shifted every following event index.
             while j < n and classify_bare(toks[j]) == "script_id":
                 targets.append(toks[j])
                 j += 1
             if (j < n and toks[j] != "" and not is_dialogue(toks[j])
+                    and toks[j].strip() not in UNKNOWN_NAMES
                     and classify_bare(toks[j]) == "text"
                     and valid_name(toks[j])
                     and j + 1 < n and is_spoken(toks[j + 1])):
@@ -487,7 +499,8 @@ def resplit_mega(events: list[dict], names: set[str],
                 j = i + 1
                 while j < len(frags) and not frags[j].strip().strip(","):
                     j += 1
-                if j < len(frags) and frags[j].startswith("\x01"):
+                if (j < len(frags) and frags[j].startswith("\x01")
+                        and frags[j][1:].strip() not in UNKNOWN_NAMES):
                     merged.append(f + "\x00" + frags[j][1:])
                     merged.append(frags[j])
                     i = j + 1

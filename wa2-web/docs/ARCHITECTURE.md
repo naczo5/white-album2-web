@@ -35,12 +35,20 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
   tested.
 - `engine/native-save.ts` — original-PC `.sav` parser (fixed offsets for
   script id, current line, speaker, choice buffers, timestamp). The UI
-  maps the line/choices back to IR events; unsupported `Sys.sav` global
-  state is detected and reported, not silently guessed.
+  maps the line/choices back to IR events.
+- `engine/sys-save.ts` — `Sys.sav` global profile import: Region A read
+  bitmaps (one per script slot), Region B CG/extra counters, Region C
+  `u32` global flags (endings, unlocks). Slot meaning comes from
+  `data/sys-slots.json` (static WA2.exe table extraction,
+  `tools/build_sys_table.py`); the UI merges the profile into read state,
+  endings and the flowchart without touching the run save.
 - `ui/saves.ts` — quick save/load row, autosave load/export row, native
   import list, JSON slots; `reader.ts` exposes desktop Q.Save/Q.Load.
 - `engine/assets.ts` — manifest lookup with null fallback (text-first
   placeholders when assets are missing).
+- `engine/vtt.ts` — WebVTT parser for movie subtitles (two regions,
+  cue sanitising); `ui/movie.ts` renders the full-stage player (HUD,
+  CC toggle, missing-asset card).
 - `ui/` — title, reader (dialogue/choices/stage/backlog), flowchart
   (progress + spoiler modes + verification badges), guide (endings,
   recommended order, key choices), saves, settings.
@@ -63,7 +71,10 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
   scene-family namespace, split across main/ic paks); tools/build_voice.py
   maps records to events (data/voicemap.json) and the player auto-plays
   the clip (46k lines, ic-namespaced).
-- Movie `mvNN` cues resolve to `mvNN0`/`mvNN1` file pairs (transcoded MP4).
+- Movie `mvNN` cues resolve to `mvNN0`/`mvNN1` file pairs (transcoded MP4);
+  the player runs them full-stage with an optional WebVTT subtitle track
+  next to each movie (`mvNN.vtt`, BYOA: converted from the MAO Movie
+  Patcher `.ass` by `tools/extract_assets.py`).
 - `.AMP` cues are image color-grade LUTs, not music: exact 256-entry RGB
   curves ship in data/luts.json and render via SVG feComponentTransfer
   (CSS fallback); BGM track selection is .bnr opcode (4,158), decoded by

@@ -201,6 +201,74 @@ export interface NativeSaveMeta {
   candidateCount?: number;
 }
 
+/** Engine-side slot map for the native PC global save (`Sys.sav`), emitted by
+ * tools/build_sys_table.py from WA2.exe's static .data tables (see
+ * docs/PARSING.md). Committed functional metadata only: script ids, numeric
+ * flag slots and CG ids — never game text. */
+export interface SysSlotsTable {
+  version: number;
+  source?: Record<string, string>;
+  sysSav?: {
+    size?: number;
+    regions?: {
+      A?: {
+        start: number;
+        end: number;
+        slotBytes?: number;
+        slotBits?: number;
+        slotCount?: number;
+        format?: string;
+        excludedSlots?: number[];
+      };
+      B?: { start: number; end: number; format?: string };
+      C?: { start: number; end: number; format?: string };
+    };
+  };
+  /** 185 script ids: index i is the Region A read-bitmap slot. */
+  scripts: string[];
+  /** 23 choice scripts in the engine's choice order (== flow.json order). */
+  choiceTable: { scriptIds: string[]; base: number; stride: number; format?: string };
+  /** 168 gallery rows x 10 u32 CG ids (`part * 1_000_000 + cgId`). */
+  cgRows: number[][];
+  /** Region C flag slot (string key) -> endings.json id. */
+  endingSlots: Record<string, string>;
+  /** Per-slot decode confidence: only `high` may auto-unlock an ending. */
+  endingSlotsConfidence: Record<string, "high" | "hypothesis" | "reserved">;
+  gateSlots: Record<string, number>;
+  gflagAliasSlots?: number[];
+  openItems?: string[];
+}
+
+/** Global progress imported from `Sys.sav`, kept apart from a run save: it
+ * accumulates read lines, visited scripts, endings and unlock bands across
+ * every playthrough and every imported system save. */
+export interface SysProfile {
+  version: 1;
+  /** Original file name of the last imported system save. */
+  fileName?: string;
+  importedAt: string;
+  /** Read message lines as `script:event` keys (sequential say/narrate
+   * index within the scenario, never a raw token id). */
+  readKeys: string[];
+  /** Scripts with at least one read line. */
+  visited: string[];
+  /** Ending ids from `high`-confidence Region C slots only. */
+  endings: string[];
+  /** Flow node id -> 1-based option numbers ever seen (choice bitmasks). */
+  seenPicks: Record<string, number[]>;
+  /** Region B CG ids (`part * 1_000_000 + cgId`) unlocked in the gallery. */
+  cg: number[];
+  /** Music track ids (`slot - 100`). */
+  music: number[];
+  /** Movie ids (`slot - 200`). Id `0` is the slot-80 all-movies sentinel,
+   * not a real film, so display it as "+all" rather than a count. */
+  movies: number[];
+  /** Ero-scene flag ids (`slot - 300`). */
+  ero: number[];
+  /** Named gate flags (see `GATE_NAMES` in engine/sys-save.ts). */
+  gates: Record<string, number>;
+}
+
 export interface SaveData {
   version: 1;
   name: string;

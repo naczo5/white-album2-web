@@ -1,12 +1,13 @@
 import { loadManifest } from "./engine/assets";
 import { Router, chapterOfScript } from "./engine/router";
-import { newSave, readAutosave, readQuicksave, setSaveNamespace, writeAutosave, writeQuicksave } from "./engine/save";
-import type { SaveData } from "./engine/types";
+import { newSave, readAutosave, readProfile, readQuicksave, setSaveNamespace, writeAutosave, writeQuicksave } from "./engine/save";
+import type { SaveData, SysProfile } from "./engine/types";
 import { loadGameData, resolvePackBase, type GameData } from "./ui/data";
 import { renderFlowchart } from "./ui/flowchart";
 import { renderGuide, type GuideData } from "./ui/guide";
-import { installLutFilters, pushLog, renderReader, setBgmLookup, setBnrLookup, setScenarioLookup, setSpeakerLookup, setSkipping, setVoiceLookup, skipLatches } from "./ui/reader";
-import { renderSaves } from "./ui/saves";
+import { ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetPaintState, resetSkip, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
+import { stopMovie } from "./ui/movie";
+import { applyProfileToRun, renderSaves } from "./ui/saves";
 import "./style.css";
 
 type Screen = "title" | "read" | "flow" | "guide" | "special" | "saves" | "log" | "settings";
@@ -49,6 +50,7 @@ const settings: Settings = {
 };
 
 let skipState = { active: false };
+let toastTimer: number | null = null;
 
 function persistSettings(): void {
   try {
@@ -73,6 +75,9 @@ function clampFont(n: number): number {
 let data: GameData;
 let router: Router;
 let save: SaveData;
+/** Global progress imported from `Sys.sav` (read lines, endings, unlocks).
+ * Lives outside `save` so a new game or a slot load never erases it. */
+let profile: SysProfile | null = null;
 let screen: Screen = "title";
 /** External BYOA pack root configured via VITE_PACK_URL (main path for
  * decoupled hosting) or overridden via `?pack=`. Nothing copyrighted is
@@ -107,6 +112,11 @@ async function boot(): Promise<void> {
   data = await loadGameData(packBase);
   setSaveNamespace(dataNamespace());
   router = new Router(data.scenarios, data.flow, data.links, data.terminals);
+  // Global progress (Sys.sav import) is stored under the same namespace and
+  // is independent of any run save: load it once, seed the read set so
+  // skip-read honours imported lines, and keep it live for the screens.
+  profile = readProfile(localStorage);
+  if (profile && profile.readKeys.length > 0) ingestReadKeys(profile.readKeys);
   setScenarioLookup((script) => router.scripts.get(script));
   setBgmLookup((script) => data.bgm?.cues[script]);
   setBnrLookup((script) => data.bnr?.recs[script]);
@@ -151,6 +161,10 @@ async function boot(): Promise<void> {
     save = freshStart();
   }
   if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
+  // Global progress also feeds this run's visited/endings sets (the
+  // flowchart and guide read them), never the position, backlog or picks.
+  // No autosave write here: boot must not fabricate a "Continue" entry.
+  applyProfileToRun(save, profile);
   // Normalize boot position past any directive/latch runs so the first
   // paint shows text, then log the arrival line for the backlog.
   // Debug/deep-link: ?pos=script:event jumps straight into the reader.
@@ -176,22 +190,46 @@ async function boot(): Promise<void> {
   // starts/stops the reader's 120 ms advance loop WITHOUT re-rendering
   // (a re-render restarted the typewriter mid-line = the flicker bug).
   window.addEventListener("keydown", (e) => {
+    // Esc closes any overlay back to where it was opened.
     if (e.key === "Escape" && screen !== "title" && screen !== "read") {
-      // Esc leaves any overlay screen (log/chart/guide/saves/settings)
-      // back to wherever it was opened from.
-      screen = backTo;
-      render();
+      e.preventDefault();
+      go(backTo);
       return;
     }
     if (screen !== "read") return;
-    if (e.key === "Control" && !skipState.active) setSkipping(true);
-    if (e.code === "Enter" && !e.repeat) {
-      // A focused choice/HUD control owns Enter; only body focus advances.
+    // `H` (and Esc while reading) toggles the text-free stage; a second
+    // press restores it without advancing.
+    if ((e.key === "h" || e.key === "H" || e.key === "Escape") && !e.repeat) {
+      if (document.querySelector(".movie-mode")) return; // movie HUD owns Esc
       const active = document.activeElement as HTMLElement | null;
       if (active && active !== document.body &&
         active.closest("button, a, input, select, textarea, [role='button']")) return;
       e.preventDefault();
-      (document.getElementById("reader") as HTMLElement)?.click();
+      toggleText(document.querySelector(".reader") as HTMLElement | null);
+      return;
+    }
+    if (e.key === "Control" && !skipState.active && !e.repeat) {
+      // Ctrl-skip pauses while the film owns the stage. A key still held
+      // from before the film opened must not resurrect skip when the
+      // browser auto-repeats it: the reader released it at `onOpen`.
+      if (!document.querySelector(".movie-mode")) setSkipping(true);
+      return;
+    }
+    if ((e.code === "Enter" || e.code === "Space") && !e.repeat) {
+      // A focused choice/HUD control owns Enter/Space; only body focus
+      // advances (Space on a button must press the button).
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active !== document.body &&
+        active.closest("button, a, input, select, textarea, [role='button']")) return;
+      e.preventDefault();
+      const reader = document.querySelector(".reader") as HTMLElement | null;
+      if (!reader) return;
+      if (reader.classList.contains("text-hidden")) {
+        setTextHidden(false);
+        toggleText(reader, false);
+        return;
+      }
+      (reader as HTMLElement).click();
     }
   });
   window.addEventListener("keyup", (e) => {
@@ -200,12 +238,16 @@ async function boot(): Promise<void> {
   window.addEventListener("blur", () => {
     if (skipState.active) setSkipping(false);
   });
+  setReaderLive(screen === "read");
 }
 
 function freshStart(): SaveData {
   const first = data.scenarios[0]?.script ?? "demo-1";
   const s = newSave("Haruki", { script: first, event: 0 });
   s.visited.push(first);
+  // Global progress survives a new game: the flowchart still shows what the
+  // player has already read in the original build.
+  applyProfileToRun(s, profile);
   return s;
 }
 
@@ -217,7 +259,13 @@ function notify(msg: string): void {
   const t = document.getElementById("toast")!;
   t.textContent = msg;
   t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 2500);
+  // One owner per toast: rapid messages (Q.Save spam, ending + autosave)
+  // must not have an older timeout cut the newer message short.
+  if (toastTimer !== null) clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toastTimer = null;
+    t.classList.remove("show");
+  }, 2500);
 }
 
 /** Shared load path for slots, autosave, quick save and native imports. */
@@ -234,10 +282,16 @@ function loadSaveIntoGame(next: SaveData): void {
   save = next;
   save.position = skipLatches(router, save.position, save.flags);
   if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
+  // A loaded run still sees the global profile's visited/endings union.
+  applyProfileToRun(save, profile);
   pushLog(router, save);
   writeAutosave(localStorage, save);
-  screen = "read";
-  render();
+  stopMovie();
+  resetSkip();
+  resetPaintState();
+  skipState.active = false;
+  backTo = "title";
+  go("read");
 }
 
 function quickSave(): void {
@@ -264,8 +318,7 @@ const hooks = {
       return;
     }
     backTo = screen;
-    screen = s as Screen;
-    render();
+    go(s as Screen);
   },
   notify,
   quickSave,
@@ -320,6 +373,31 @@ function screenHead(title: string, sub: string): string {
   </div></header>`;
 }
 
+/** Every screen change goes through here: leaving the reader pauses Auto,
+ * releases skip, stops a playing film and (for the title) silences the mix
+ * so nothing keeps advancing or playing behind a menu. Entering the reader
+ * restores the mix and re-syncs BGM from the save. */
+function go(next: Screen): void {
+  const leavingRead = screen === "read" && next !== "read";
+  if (leavingRead) {
+    pauseReader();
+    resetSkip();
+    skipState.active = false;
+    // Suspend before closing the layer: stopMovie() would otherwise restore
+    // the BGM we are just about to silence (audible blip on the title).
+    if (next === "title") suspendAudio();
+    stopMovie();
+  }
+  if (next === "title" && screen !== "title" && !leavingRead) {
+    suspendAudio();
+  } else if (next === "read" && screen !== "read") {
+    resumeAudio();
+  }
+  screen = next;
+  setReaderLive(next === "read");
+  render();
+}
+
 function render(): void {
   if (screen === "title") {
     const autoNow = data.demo ? null : readAutosave(localStorage);
@@ -330,7 +408,9 @@ function render(): void {
     const primarySub = data.demo
       ? "Original placeholder scene · no game assets"
       : hasContinue
-        ? `${chapterLabel(at.position.script)} · ${escapeHtml(at.position.script)}:${at.position.event}`
+        ? (settings.dev
+          ? `${chapterLabel(at.position.script)} · ${escapeHtml(at.position.script)}:${at.position.event}`
+          : `${chapterLabel(at.position.script)} · continue where you left off`)
         : "Begin the story";
     app.innerHTML = `
       <div class="title">
@@ -369,14 +449,14 @@ function render(): void {
             save = freshStart();
             save.position = skipLatches(router, save.position, save.flags);
             writeAutosave(localStorage, save);
-            screen = "read";
-            render();
+            resetPaintState();
+            backTo = "title";
+            go("read");
           }
           return;
         }
         backTo = "title";
-        screen = m as Screen;
-        render();
+        go(m as Screen);
       }),
     );
     return;
@@ -396,6 +476,7 @@ function render(): void {
         voiceVol: settings.voiceVol,
         bgmVol: settings.bgmVol,
         skipRead: settings.skipRead,
+        dev: settings.dev,
       },
       skip: skipState,
       ...hooks,
@@ -411,15 +492,17 @@ function render(): void {
       links: data.links.links,
       terminals: data.terminals.terminals,
       dev: settings.dev,
+      profile,
       onJump: (script) => {
         save = newSave("debug", { script, event: 0 });
         save.visited.push(script);
         save.position = skipLatches(router, save.position, save.flags);
         writeAutosave(localStorage, save);
-        screen = "read";
-        render();
+        resetPaintState();
+        backTo = "flow";
+        go("read");
       },
-      onBack: () => { screen = backTo; render(); },
+      onBack: () => go(backTo),
     });
     return;
   }
@@ -429,7 +512,8 @@ function render(): void {
       app.querySelector(".screen") as HTMLElement,
       data.flow, data.endings as unknown as GuideData, save,
       settings.spoiler,
-      () => { screen = backTo; render(); },
+      () => go(backTo),
+      { profile, dev: settings.dev },
     );
     return;
   }
@@ -472,8 +556,9 @@ function render(): void {
         save.visited.push(id);
         save.position = skipLatches(router, save.position, save.flags);
         writeAutosave(localStorage, save);
-        screen = "read";
-        render();
+        resetPaintState();
+        backTo = "special";
+        go("read");
       };
       li.appendChild(b);
       list.appendChild(li);
@@ -481,7 +566,7 @@ function render(): void {
     if (specs.length === 0) {
       list.innerHTML = `<li class="dim">No extra scenarios in this build.</li>`;
     }
-    app.querySelector("[data-back]")?.addEventListener("click", () => { screen = backTo; render(); });
+    app.querySelector("[data-back]")?.addEventListener("click", () => go(backTo));
     return;
   }
   if (screen === "saves") {
@@ -489,8 +574,15 @@ function render(): void {
     renderSaves(app.querySelector(".screen") as HTMLElement, {
       router,
       save,
+      sysSlots: data.sysSlots,
+      flow: data.flow,
+      profile,
+      onProfileChange: (p) => {
+        profile = p;
+        if (applyProfileToRun(save, profile)) writeAutosave(localStorage, save);
+      },
       onLoad: loadSaveIntoGame,
-      onBack: () => { screen = backTo; render(); },
+      onBack: () => go(backTo),
       notify,
     });
     return;
@@ -498,12 +590,20 @@ function render(): void {
   if (screen === "log") {
     app.innerHTML = `<div class="screen">
       ${screenHead("Backlog", "Every line shown in this playthrough, oldest first.")}
-      <ol class="log">${save.log.map((l) =>
+      <ol class="log" id="log">${save.log.map((l) =>
         `<li>${l.speaker ? `<b>${escapeHtml(l.speaker)}</b> ` : ""}${escapeHtml(l.text)}</li>`).join("")}
       </ol>
       <button class="back" id="back">← Back</button>
     </div>`;
-    app.querySelector("#back")?.addEventListener("click", () => { screen = backTo; render(); });
+    // The backlog exists to re-read the last line: open at the newest
+    // entry, not at the top of a 500-line scroll.
+    const logEl = app.querySelector("#log") as HTMLElement | null;
+    if (logEl) logEl.scrollTop = logEl.scrollHeight;
+    app.querySelector("#back")?.addEventListener("click", () => go(backTo));
+    // Esc / wheel-down / a tap outside the list returns to the story too.
+    logEl?.addEventListener("click", (e) => {
+      if (e.target === logEl) go(backTo);
+    });
     return;
   }
   if (screen === "settings") {
@@ -611,7 +711,7 @@ function render(): void {
       if (out) out.textContent = `${Math.round(settings.bgmVol * 100)}%`;
       persistSettings();
     };
-    app.querySelector("#back")?.addEventListener("click", () => { screen = backTo; render(); });
+    app.querySelector("#back")?.addEventListener("click", () => go(backTo));
     return;
   }
 }

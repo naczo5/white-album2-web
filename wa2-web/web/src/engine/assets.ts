@@ -10,6 +10,9 @@ export interface AssetManifest {
   sfx: Record<string, string>;
   voice: Record<string, string>;
   movies: Record<string, string>;
+  /** Optional WebVTT tracks, keyed like movies (mv01, mv010, ...). BYOA
+   * supplied: the repo ships none. */
+  subtitles?: Record<string, string>;
 }
 
 let manifest: AssetManifest | null = null;
@@ -28,8 +31,9 @@ export async function loadManifest(url: string): Promise<AssetManifest | null> {
     // fetchable URL in both dev (public/) and build (dist/) layouts.
     const base = url.slice(0, url.lastIndexOf("/") + 1);
     for (const table of [manifest.images, manifest.bgm, manifest.sfx,
-      manifest.voice, manifest.movies]) {
-      for (const [k, v] of Object.entries(table ?? {})) {
+      manifest.voice, manifest.movies, manifest.subtitles]) {
+      if (!table) continue;
+      for (const [k, v] of Object.entries(table)) {
         if (!/^(https?:|data:|blob:|\/)/.test(v)) table[k] = base + v;
       }
     }
@@ -157,6 +161,17 @@ export function resolveMovieUrl(
 
 export function movieUrl(id: string): string | null {
   return resolveMovieUrl(manifest?.movies, id);
+}
+
+/** WebVTT track for a movie cue, if the pack ships one.
+ * Same key chain as the movie file (mv01 -> mv010 / mv011), and the
+ * `.mp4`-stripped form so `mv010.mp4.vtt`-style manifests also resolve. */
+export function subtitleUrl(id: string): string | null {
+  const key = id.toLowerCase();
+  return lookup(manifest?.subtitles, key) ??
+    lookup(manifest?.subtitles, `${key}0`) ??
+    lookup(manifest?.subtitles, `${key}1`) ??
+    lookup(manifest?.subtitles, `${key}.mp4`);
 }
 
 /**

@@ -6,10 +6,11 @@ Steps:
   1. extract .txt scenario sources (KCAP) from each en.pak
   2. parse to event IR JSON (two-pass corpus census for mega resolution)
   3. emit web data dir: build/data/{scripts/*.json, flow.json, endings.json,
-     links.json, terminals.json, sprites.json, bgm.json, bnr.json,
-     luts.json} (flow/links from IR; endings/terminals/sprites from data/;
-     bgm/bnr/voicemap from .bnr bytecode; luts from grp.pak with --game;
-     flags.json flag reference + .bnr choice gate need script.pak)
+     links.json, terminals.json, sprites.json, sys-slots.json, bgm.json,
+     bnr.json, luts.json} (flow/links from IR; endings/terminals/sprites/
+     sys-slots from data/; bgm/bnr/voicemap from .bnr bytecode; luts from
+     grp.pak with --game; flags.json flag reference + .bnr choice gate need
+     script.pak)
   4. run parity gates (all engine choices covered, option text exact)
 
 Install: cp -r build/data/* web/public/data/  (see docs/BYOA.md)
@@ -148,7 +149,8 @@ def main() -> None:
                     os.path.join(scripts_out, s + ".json"))
     with open(os.path.join(scripts_out, "index.json"), "w") as f:
         json.dump(index, f)
-    for name in ("endings.json", "terminals.json", "sprites.json"):
+    for name in ("endings.json", "terminals.json", "sprites.json",
+                 "sys-slots.json"):
         shutil.copy(os.path.join(HERE, "..", "data", name),
                     os.path.join(data_dir, name))
     # BGM timeline + presentation records from .bnr bytecode (static).

@@ -88,12 +88,53 @@ def test_anchor_stmts_label_144_and_double_131_form():
     assert anchors[2] == 2
 
 
-def test_anchor_stmts_out_of_range_x_clamps():
+def test_anchor_stmts_out_of_range_x_clamps_without_anchor():
+    # An unresolvable label at the very end of the stream (EN tail overflow
+    # past the last JP line) still clamps to the last event when nothing
+    # below it established a real anchor.
     events, _ = parse_txt.parse_tokens(
         parse_txt.split_tokens("Prose.,Haruki,\"No.\"".encode("cp932")))
     m = next_event_map(events)
     payload = lscr_payload(stmt([3, 999, 4, 131]))
     assert anchor_stmts(payload, m) == [2]
+
+
+def test_anchor_stmts_out_of_range_label_skipped_after_real_anchor():
+    """1001 shape: an EN-only extra label past the JP spine must not reset
+    earlier statements onto the last event.
+
+    Stream (bottom-up): real labels for tokens 1 and 2, then an EN-only
+    (3,80) label with only 3 events in the spine. Before the fix the
+    out-of-range label set carry = next_ev[-1] (2/ev 80) and every earlier
+    statement — including the airport/city backdrops at ev 1/4/7 — collapsed
+    onto it.
+    """
+    events, _ = parse_txt.parse_tokens(
+        parse_txt.split_tokens("A.,B.,C.".encode("cp932")))
+    m = next_event_map(events)
+    assert m == [0, 1, 2]
+    payload = lscr_payload(
+        stmt([3, 1, 4, 131]) +          # real label: tok 1 -> ev 1
+        stmt([3, 80, 4, 131, 4, 131]) +  # EN tail-overflow label, out of range
+        stmt([5, 3, 9, 4, 100]))         # trailing record
+    anchors = anchor_stmts(payload, m)
+    assert anchors[0] == 1        # rides the real label below it
+    assert anchors[1] == 2        # the unresolvable label clamps (nothing below)
+    assert anchors[2] == 2        # trailing record keeps stream order
+
+
+def test_anchor_stmts_keeps_real_anchors_before_overflow_labels():
+    """Two real labels under an overflow label keep their own anchors."""
+    events, _ = parse_txt.parse_tokens(
+        parse_txt.split_tokens("A.,B.,C.,D.".encode("cp932")))
+    m = next_event_map(events)
+    payload = lscr_payload(
+        stmt([3, 1, 4, 131]) +   # ev 1
+        stmt([3, 2, 4, 131]) +   # ev 2
+        stmt([3, 99, 4, 144]) +  # out of range: skipped
+        stmt([3, 3, 4, 131]))    # ev 3
+    anchors = anchor_stmts(payload, m)
+    assert anchors == [1, 2, 3, 3]
 
 
 def test_has_sync_detects_labels():

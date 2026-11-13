@@ -4,8 +4,8 @@
 // pure function (test-pinned): BFS depth columns, barycenter row ordering.
 
 import { chapterOfScript, type Spine } from "../engine/router";
-import { plainText } from "../engine/text";
-import type { FlowData, LinkSite, SaveData, TerminalsData } from "../engine/types";
+import { displayDate, plainText } from "../engine/text";
+import type { FlowData, LinkSite, SaveData, SysProfile, TerminalsData } from "../engine/types";
 
 export interface ChartGraph {
   nodes: { id: string; chapter: string }[];
@@ -134,8 +134,32 @@ export interface FlowHooks {
   spoiler: boolean;
   /** Dev mode: show a scene-jump button in the node detail panel. */
   dev?: boolean;
+  /** Global progress from an imported `Sys.sav`: visited scripts and choice
+   * history that exist outside the current run. */
+  profile?: SysProfile | null;
   onJump?(script: string): void;
   onBack(): void;
+}
+
+/** Scripts the chart lights up: this run's visited set unioned with the
+ * global profile (an imported `Sys.sav`), so a route read in the original
+ * build shows as read here too. */
+export function chartVisited(save: SaveData, profile?: SysProfile | null): Set<string> {
+  const visited = new Set(save.visited);
+  for (const s of profile?.visited ?? []) visited.add(s);
+  return visited;
+}
+
+/** Whether an option's text may be shown: picked in this run, seen in an
+ * imported choice bitmask, or spoilers are on. */
+export function optionSeen(
+  save: SaveData,
+  profile: SysProfile | null | undefined,
+  nodeId: string,
+  n: number,
+  spoiler: boolean,
+): boolean {
+  return save.picks[nodeId] === n || profile?.seenPicks?.[nodeId]?.includes(n) === true || spoiler;
 }
 
 export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
@@ -143,7 +167,7 @@ export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
     [...new Set([...h.spine.order])],
     h.spine, h.links, h.terminals,
   );
-  const visited = new Set(h.save.visited);
+  const visited = chartVisited(h.save, h.profile);
   const cur = h.save.position.script;
   const choicesByScript = new Map<string, typeof h.flow.nodes>();
   for (const n of h.flow.nodes) {
@@ -175,7 +199,7 @@ export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
     }[n.chapter] ?? "#8fb3b8";
     const choices = choicesByScript.get(n.id) ?? [];
     const nChoices = choices.length;
-    const date = choices.find((c) => c.date)?.date ?? n.chapter;
+    const date = displayDate(choices.find((c) => c.date)?.date, !!h.dev) || n.chapter;
     return `<g transform="translate(${p.x},${p.y})" data-node="${escapeAttr(n.id)}"
       class="fc-node" tabindex="0" role="button" aria-label="Scenario ${escapeAttr(n.id)}">
       <rect width="${NODE_W}" height="${NODE_H}" rx="2"
@@ -239,11 +263,11 @@ function showDetail(box: HTMLElement, script: string, h: FlowHooks, g: ChartGrap
   if (term?.action === "end") parts.push(`<div class="opt">Ending: ${escapeHtml(term.ending ?? "?")}</div>`);
   if (term?.action === "chain") parts.push(`<div class="opt">Chains to <code>${escapeHtml(term.to)}</code></div>`);
   for (const n of nodes) {
-    parts.push(`<div class="opt"><span class="date">${escapeHtml(n.date ?? "")}</span> <code>${escapeHtml(n.id)}</code>
+    parts.push(`<div class="opt"><span class="date">${escapeHtml(displayDate(n.date, !!h.dev) ?? "")}</span> <code>${escapeHtml(n.id)}</code>
       ${n.status === "EXPERT_SOURCED" ? '<span class="badge ok">sourced</span>' : '<span class="badge warn">unverified</span>'}</div>`);
     for (const o of n.options) {
       const picked = h.save.picks[n.id] === o.n;
-      const seen = picked || h.spoiler;
+      const seen = optionSeen(h.save, h.profile, n.id, o.n, h.spoiler);
       const label = seen ? escapeHtml(plainText(o.text)) : "Not seen yet";
       parts.push(`<div class="opt${picked ? " chosen" : ""}"><b>${o.n}.</b> ${label}${
         o.goto && seen ? ` <span class="dim">→ ${escapeHtml(o.goto)}</span>` : ""

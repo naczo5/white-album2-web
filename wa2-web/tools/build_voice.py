@@ -347,6 +347,64 @@ def load_mao_index(mao_dir: str) -> dict[str, str]:
     return out
 
 
+def manuscript_files(mao_files: dict[str, str], script: str) -> list[str]:
+    """Manuscript paths for a pak script: its own file, then _2, _3, ...
+
+    MAO splits long branch scripts into separate files (3906 -> coda-3906.json
+    + coda-3906_2.json; 1012_030 -> 1012_030 + 1012_030_2). Speaker votes
+    and text alignment must see the continuations or the tail's characters
+    (3906's 武也/朋) never reach speakers.json. Mirrors
+    build_ir.manuscript_lines.
+    """
+    paths: list[tuple[int, str]] = []
+    if script in mao_files:
+        paths.append((0, mao_files[script]))
+    for sid, path in mao_files.items():
+        m = re.match(re.escape(script) + r"_(\d+)$", sid)
+        if m:
+            paths.append((int(m.group(1)), path))
+    paths.sort()
+    return [p for _k, p in paths]
+
+
+def load_mao_lines(mao_files: dict[str, str], script: str) -> list[dict] | None:
+    """Manuscript rows for `script` including its _N continuations."""
+    rows: list[dict] = []
+    found = False
+    for path in manuscript_files(mao_files, script):
+        try:
+            j = json.load(open(path, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        found = True
+        rows.extend(j.get("lines") or [])
+    return rows if found else None
+
+
+def speaker_name_map(mao_lines: list[dict]) -> dict[str, str]:
+    """JP speaker -> manuscript EN speaker (script-scoped majority vote).
+
+    Returns only unambiguous mappings (>= 3 votes and >= 90% agreement):
+    a wrong displayed name is worse than the JP one. Pure; tested.
+    """
+    votes: dict[str, dict[str, int]] = {}
+    for l in mao_lines:
+        ja, en = l.get("speakerJa"), l.get("speakerEn")
+        if ja and en and en != ja:
+            votes.setdefault(ja, {})
+            votes[ja][en] = votes[ja].get(en, 0) + 1
+    name_map: dict[str, str] = {}
+    for ja, tally in votes.items():
+        en, n = max(tally.items(), key=lambda kv: kv[1])
+        total = sum(tally.values())
+        if n >= 3 and n >= 0.9 * total:
+            name_map[ja] = en
+    # The fullwidth unknown-speaker tag must never reach the UI as a JP
+    # string beside an EN cast list (1001/1007 latches).
+    name_map.setdefault("？？？", "???")
+    return name_map
+
+
 def main() -> None:
     argv = sys.argv[1:]
     ir_dir = jp_path = mao_dir = voice_dir = None
@@ -438,10 +496,9 @@ def main() -> None:
             jev = []
         mao = None
         if script in mao_files:
-            try:
-                mao = json.load(open(mao_files[script], encoding="utf-8"))
-            except OSError:
-                mao = None
+            mao_lines = load_mao_lines(mao_files, script)
+            if mao_lines:
+                mao = {"lines": mao_lines}
         placed_frac: dict[int, int] | None = None
         if mao:
             mao_lines = mao["lines"]
@@ -486,18 +543,7 @@ def main() -> None:
             # speakerEn) pairs; a JP name maps to the manuscript's EN
             # name via majority vote (script-scoped, no text matching —
             # a wrong displayed name is worse than a JP one)
-            votes: dict[str, dict[str, int]] = {}
-            for l in mao_lines:
-                ja, en = l.get("speakerJa"), l.get("speakerEn")
-                if ja and en and en != ja:
-                    votes.setdefault(ja, {})
-                    votes[ja][en] = votes[ja].get(en, 0) + 1
-            name_map = {}
-            for ja, tally in votes.items():
-                en, n = max(tally.items(), key=lambda kv: kv[1])
-                total = sum(tally.values())
-                if n >= 3 and n >= 0.9 * total:
-                    name_map[ja] = en
+            name_map = speaker_name_map(mao_lines)
             for i, _t in voiced:
                 sp = events[i].get("speaker")
                 if isinstance(sp, str) and sp in name_map:

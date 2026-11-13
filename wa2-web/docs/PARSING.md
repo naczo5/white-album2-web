@@ -23,6 +23,52 @@ Source: 205 + 49 Shift-JIS token streams from KCAP `en.pak` archives
 | `<Wn>`/`[Wn]` | per-char timing, stripped |
 | `[Rbase^reading]`, `[Rbase\|reading]` | ruby (both separators occur) |
 
+## Speaker latch validation (`valid_name`)
+
+A bare token immediately followed by a quoted line *may* be a speaker
+latch. Every candidate must pass `parse_txt.valid_name`, which rejects:
+
+- empty tokens and anything longer than 28 chars (a sentence, not a name);
+- **punctuation anywhere in the token** —
+  `~ . , : ; ! ? … ～ ' " “ ” ‘ ’ \ < > [ ] 。 、 ！ ？ 「 」 『 』`.
+  The Japanese set is required because JP narration rows
+  (e.g. `あ、い。う？「え」`) otherwise latch as the speaker and
+  steal the next line's attribution; the ASCII set covers MAO's narration
+  fragments (`And then~ she declared:`). The **curly quotes** `“”‘’` are
+  MAO typography for a quoted beat — a critic's quoted phrase arrives as
+  `“仮語”` and it must stay narration, never become a speaker name
+  for the three lines that follow;
+- tokens with no word character at all (`…`, `………`, `--`): pure pause
+  beats render as their own line and never enter the name census.
+
+`???` / `？？？` are the one punctuation-only exception: they are genuine
+unattributed-speaker tags (ASCII from MAO en.pak, fullwidth from the JP
+spine) and latch as themselves. `build_ir._replay_spine` normalizes the
+fullwidth form to ASCII `???` so the player never shows `？？？` beside an
+English cast list, and `parse_tokens` never consumes either form as a
+`CATCH` voice-context argument (that dropped the latch and shifted every
+later event index: 1007 tok 1187, 3012 tok 288).
+
+Speaker names come from the JP spine, not the EN payload. In the hybrid
+stream a latch event carries the EN name in `name`; only a hybrid event
+that is *itself* a latch may fall back to its `text`. A hybrid **narrate**
+event never donates text as a name — that was the "EN narration promoted
+to speaker" regression (`Someone had scolded me for no reason.`).
+
+## Curly quotes and `？？？` normalization
+
+MAO's manuscript typography reaches the IR through two paths:
+
+- `_QMAP` (build_ir) maps `“ ”` → `"` and `‘ ’` → `'` for **manuscript**
+  text, so displayed lines carry straight quotes;
+- EN **token** payloads are not remapped, so a curly-quoted beat still
+  arrives as `“仮語”` and is rejected by `valid_name` as punctuation.
+
+`？？？` → `???` happens in three places, all for display only: the latch
+name and speaker replay in `build_ir._replay_spine`, and the
+`speaker_name_map` default in `build_voice.py`. The engine tag itself is
+never rewritten in the JP txt — only in the emitted IR/speakers.json.
+
 ## Mega-tokens (the hard part)
 
 987 tokens across 153 files merge whole conversations (`"A~,B,"C",D,…`)
@@ -235,7 +281,10 @@ docs/QA.md verification log):
   condition, e.g. `FLG_第３部15条件２` proves the 3015 switch is gated).
   15/15 pick flags map to real scripts (tools/build_flags.py --ir).
 - `GFLAG.dat`: 62 slots × 260 B, `_GFLAG_EV_*` names — chapter clears,
-  `２周目以降` replay, novel clears, all route endings.
+  `２周目以降` replay, novel clears, all route endings. Each record also
+  stores the `Sys.sav` Region C `u32` flag slot at `+256` (record 61 is an
+  unassigned reservation at slot 0, and two records alias slot 210);
+  `build_flags.py` emits that as `gflagSlots` in `flags.json`.
 - `LFScriptFunc{,Ex}.fnc`: opcode vocabulary (SetGameFlag/GetGameFlag,
   SetSelect/SetSelectMess, LoadBmp/SetBmp*, GetReplayMode, EroMode).
   Group numbers in `(4,X)`/`(6,X)` statements are NOT .fnc indices.
@@ -268,13 +317,105 @@ The samples used for this map were user-supplied and are not committed.
   maps 11/11 sample saves. Identical repeated lines are returned as separate
   candidates; Save/Load shows them as option N/M instead of silently
   choosing a scene.
-- `Sys.sav`: **0x269480 bytes** (2,528,384), shared by all slots. It is
-  mostly a read/global bitmap plus a 4 KB flag table at `0x268480`
-  (0/1/3/7 words) and a sparse table around `0x98700`. The slot saves do
-  not contain the prior-choice/read profile, so importing it requires the
-  Sys.sav read/flag mapping; that is deliberately left as pending rather
-  than guessing. The Slot/Quick import works without it because the
-  shipped Router's choice destinations come from `flow.json`.
+- `Sys.sav`: **0x269480 bytes** (2,528,384), shared by all slots, with no
+  header, magic, version or checksum. Three fixed regions. Byte/bit layout
+  below is from static reads of `WA2.exe` plus the 2026-11-13 sample save;
+  `tools/build_sys_table.py` regenerates the committed id tables and
+  `data/sys-slots.json` holds them (functional ids only — no game text).
+
+  **Region A `0x000000..0x07FFFF`** — read-line bitmaps, 512 KB = 4096
+  slots × `0x200` bytes. Bit *i* is at byte `i >> 3` with mask
+  `0x80 >> (i & 7)` (MSB-first). The bit index is the **read-line counter**
+  within the script: one bit per message line, plus a trailing sentinel, so
+  a slot's bit count is at most `messageLines + 1`. Verified against the JP
+  `script.pak` scripts for the 2026-11-13 sample (`high`): no slot exceeds
+  `lines + 1`, and **82 fully-read slots equal exactly `lines + 1` with a
+  contiguous run from bit 0** (`1002`: 503 bits / 502 lines; `1003`:
+  380/379; `1004`: 357/356; `1007`: 1439/1438; `1008`: 297/296; …).
+  Counterexamples to the strong "always `t`" reading: partially read
+  scripts stop early (`1012_030`: 310 of 634 lines), and branching scripts
+  can leave gaps in the run (`2023`: 296 bits / 302 lines with a gap at
+  22→29; `2313`, `2401`, `2402`, `2504` likewise). The three `catch*`
+  helper scripts are image-only and set a single bit. So derive per-line
+  read state from the ordered message stream against this counter — never
+  from raw token ids.
+  Slot index = position in the 185-entry `char*` script table at `0x4be530`
+  (NULL-terminated). Slot 0 is **excluded/untrusted (`open`)**: the
+  script→slot resolver `0x40ea10` compares the incoming id against every
+  table entry (scan bound `0x400`) and falls back to index 0 when nothing
+  matches, so ids absent from the table (and internal callers) accumulate
+  there. The sample shows slot 0 with 1,710 bits, one 52-bit gap (63→115)
+  and a tail to bit 1760 while `1001` alone has only 85 message lines.
+  Treat slot 0 as reference data, never as a read profile.
+
+  **Region B `0x080000..0x26847F`** — 2,000,000 bytes, one byte per CG id,
+  index = `part * 1_000_000 + cgId` (`part 0` → `v%06d.tga`, `part 1` →
+  `h%06d.tga`). Writer `0x405290` stores exactly
+  `base[part * 0x0f4240 + cgId]`; `0x4c01b0` is the gallery table the
+  gallery UI indexes (168 rows × 10 `u32`, ends at `0x4c1bf0` where the
+  20-byte-stride ero-scene record list starts: 272 distinct CG ids).
+  Sample-save ids are a strict subset of that table.
+
+  **Region C `0x268480..0x26947F`** — 4,096 bytes = 1024 `u32` LE global
+  flags, the array behind `GetGameFlag`/`SetGameFlag` (the guarded setter
+  `0x405320` writes the in-memory copy at `0x521930`; `0x4760` flushes the
+  0x1000-byte block). Ids are assigned by `GFLAG.dat` (`script.pak`, 62
+  records × 260 B) whose record `+256` `u32` is the slot index — formerly
+  discarded by `build_flags.py`, now emitted as `gflagSlots`. Two shipped
+  records alias slot 210; record 61 is an unassigned reservation (`slot 0`)
+  and the final record's slot field sits at EOF (parsed with a clamp). Bands
+  (all `high` unless noted):
+
+  | slots | meaning |
+  | --- | --- |
+  | `1,2,3,10,20..25,30..33,80,99` | chapter/route clear + ending flags |
+  | `100 + trackId` | music unlocks (~`101..174` in the sample) |
+  | `200 + movieId` | movie unlocks (`201..213`, `220..224`), plus `80` |
+  | `300..322` | ero-scene unlocks |
+  | `900 + 4*choiceIdx + nodeIdx` | choice bitmasks (see below) |
+
+  - **Choice bitmasks** start at `900 + 4 * scriptIdx + nodeIdx`, where
+    `scriptIdx` is the position in the 23-entry `u32` choice table at
+    `0x4be4d0` (`0x7d3` = 2003 … `0xffffffff`-terminated). That order is
+    identical to the ordered unique scripts of `flow.json`. Bit `k`
+    (`1 << k`) means option `k + 1` was chosen at least once. The sample
+    save shows values `2/3/7` in that band, i.e. multi-bit option history.
+  - **`900` collides**: `GFLAG.dat` also names slot `900` for the last
+    ero-scene flag, so read the 23×4 choice band from the choice table
+    first and leave any other `900..991` bits unclassified (`open`).
+  - **Ending slots** map to `endings.json` ids: `21 cc-normal1`,
+    `22 cc-setsuna`, `23 cc-koharu`, `24 cc-chiaki-true`,
+    `25 cc-chiaki-normal`, `30 cc-mari`, `31 coda-normal`,
+    `32 coda-kazusa-true`, `33 coda-cheating` (all `high`), `1 ic-end`
+    (`hypothesis`: the slot records a prologue/IC clear, which implies the
+    intro ending), and `99 coda-setsuna-true` (`reserved`, see below).
+  - **Slot 99 is system-reserved.** `GFLAG.dat` assigns the coda-setsuna
+    ending record to slot 99, but the guarded setter `0x405320` rejects
+    that index: it prints a reserved-slot warning (string `0x4a2018`),
+    substitutes index `0`, and proceeds. So slot 99 is never observable as
+    set in `Sys.sav`; a zero there means "unknown", not "not cleared".
+    Write a correct implementation from another observable (`32/33` end
+    states, or the route flags) rather than trusting 99 (`open`).
+  - Gate slots used by the menu logic: `3` replay (2nd playthrough),
+    `2` Chiaki-normal (gates the Chiaki true-end option), `10` coda entered,
+    `22` cc-setsuna cleared (unlocks coda). `0x4138fb` resets the
+    replay/system words on new-game setup and calls the guarded setter;
+    `0x428200` is the gallery cell reader; `0x44e1d0` is the packed-bit
+    get/set helper (bit width 1/2/4 only), and `0x405410` builds the
+    `Sys.sav` path/state. Region C is mirrored at `0x521930` (the in-memory
+    array the setters write before `0x4760` flushes the 0x1000-byte block).
+
+  The slot saves do not contain this read/choice profile, so importing it
+  means reading `Sys.sav`. Consumed through the `sysSlots` bundle key;
+  the Slot/Quick import keeps working without it because the shipped
+  Router's choice destinations come from `flow.json`.
+- `save_XX.sav` also embeds a `Global.vrb` snapshot at `0x54cb0`
+  (`high`): `u32 totalBytes = 800` (the whole block, header included),
+  `u32 count = 29`, then 29 records of `u32 nameLen` (CP932 name incl. NUL),
+  name, `u32 type` (`3` = int), `u8 value`. Records occupy 792 bytes and the
+  block ends exactly at the file end `0x54fd0`. These are the same 29
+  variables `build_flags.py` reads from `script.pak`, so a save carries its
+  own live flag copy (affection, route-kill, per-choice pick flags).
 - Save thumbnails: `save.tga` is a separate screenshot file; the slot
   files also contain a 64×96 RGBA preview near `0x58`. Neither is used by
   the importer.

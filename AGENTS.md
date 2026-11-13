@@ -42,11 +42,13 @@ at build time.
   (orchestrator).
 - `wa2-web/data/` — hand-authored sources copied into builds: `flow.json`
   (choice routing + effects), `endings.json`, `terminals.json`,
-  `sprites.json` (speaker→asset prefix).
+  `sprites.json` (speaker→asset prefix), `sys-slots.json` (native `Sys.sav`
+  slot map from `build_sys_table.py`).
 - `wa2-web/web/src/` — player: `engine/router.ts` (flow), `engine/assets.ts`
   (manifest lookup — the single URL choke point), `engine/text.ts`
-  (projection), `ui/reader.ts` (stage/voice/choices), `ui/data.ts`
-  (loaders), `main.ts` (screens/settings).
+  (projection), `engine/sys-save.ts` (native global-save profile),
+  `ui/reader.ts` (stage/voice/choices), `ui/movie.ts` (full-stage movie
+  player), `ui/data.ts` (loaders), `main.ts` (screens/settings).
 - `wa2-web/docs/` — `ARCHITECTURE.md`, `PARSING.md` (token + opcode tables),
   `FLOW_GRAPH.md` (flag model), `QA.md` (gates + open items + log),
   `BYOA.md` (asset setup), `ONECLICK.md`, `PACKAGING.md`, `LEGAL.md`.
@@ -55,10 +57,15 @@ at build time.
 ## Commands
 
 ```sh
-cd wa2-web && python3 -m pytest tests/ -q   # 77 passed + 9 skipped
-cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 88 passed + 2 skipped
+cd wa2-web && python3 -m pytest tests/ -q   # 144 passed + 9 skipped
+cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 225 passed + 4 skipped
 python3 tools/build.py MAIN_EN_PAK [SPECIAL_EN_PAK] OUT [--game GAMEDIR] [--mao MAO_SCRIPT_DATA]
 ```
+
+With the game data present (`WA2_EN_PAK` / `--game`) the same gates grow:
+`WA2_EN_PAK=… pytest tests/ -q` → 151 passed + 2 skipped, and the BYOA save
+corpora (`WA2_NATIVE_SAVES`, `WA2_SYS_SAVES`, `WA2_DATA_DIR`) take vitest to
+229 passed + 0 skipped.
 
 `--game` unlocks the asset-dependent steps (luts, flags, bnr choice gate).
 Copy `OUT/data/*` → `web/public/data/`; assets via `extract_assets.py`

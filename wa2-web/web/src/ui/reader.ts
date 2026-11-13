@@ -1,10 +1,12 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
-import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, resolveAudioUrl, seUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
+import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, resolveAudioUrl, seUrl, subtitleUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
 import { Router, chapterOfScript } from "../engine/router";
-import { plainText, renderText, spanize } from "../engine/text";
+import { displayDate, plainText, renderText, spanize } from "../engine/text";
 import type { BgmData, BnrData, Position, SaveData, ScenarioEvent } from "../engine/types";
 import { storageKey, writeAutosave } from "../engine/save";
+import { newWheelState, normalizeWheelDelta, wheelGesture, type WheelState } from "../engine/wheel";
+import { moviePlaying, openMovie, preloadMovieAhead } from "./movie";
 
 export interface ReaderSettings {
   textSpeed: number; // chars per second, 0 = instant
@@ -13,6 +15,8 @@ export interface ReaderSettings {
   bgmVol: number; // 0..1
   /** Skip mode: "all" skips everything, "read" stops at unread lines. */
   skipRead: boolean;
+  /** Developer mode: mechanical labels, tooltips, scene ids. */
+  dev?: boolean;
 }
 
 let autoTimer: number | null = null;
@@ -28,6 +32,57 @@ function clearTimers(): void {
     typeTimer = null;
   }
 }
+
+/** True while the reader is the live screen. main.ts flips this on every
+ * screen change so Auto/skip can never advance behind a menu. */
+let readerLive = false;
+export function setReaderLive(live: boolean): void {
+  readerLive = live;
+}
+
+/** Pause Auto and release skip: called when an overlay (backlog, saves,
+ * chart, guide, settings) or the title takes the screen. A re-render on
+ * return must not resume a half-finished auto-advance. */
+export function pauseReader(): void {
+  clearAuto();
+  if (curHooks && curHooks.skip.active) {
+    curHooks.skip.active = false;
+    curHooks.onSkipStop();
+  }
+}
+
+/** Reset skip state and stop a running typewriter without losing the line
+ * (the text is completed in place by the next render's identity check). */
+export function resetSkip(): void {
+  if (curHooks) curHooks.skip.active = false;
+  clearAuto();
+}
+
+/** Last (script, event) pair fully painted in the box, plus the HTML used.
+ * Re-renders triggered by overlays/settings reuse it so a completed line is
+ * never re-typed from character 0 (the "back from backlog retypes" bug). */
+let lastPainted: { key: string; full: string; done: boolean } | null = null;
+
+/** Forget the painted line (new game, save load, screen jump): the next
+ * render must type the line even if the position string repeats. */
+export function resetPaintState(): void {
+  lastPainted = null;
+  textHidden = false;
+}
+
+/** Hide-text ("immersion") state: the dialogue plate and chrome fade out so
+ * only the art is visible; any tap/H reveals them again. */
+let textHidden = false;
+let idleTimer: number | null = null;
+
+/** Trackpad-safe backlog gesture state (one per reader). */
+let wheelState: WheelState = newWheelState();
+
+/** The current click/keyboard advance action for the displayed event. */
+let advanceHandler: (() => void) | null = null;
+
+/** Frame-size observer (one per reader skeleton). */
+let observer: ResizeObserver | null = null;
 
 // .AMP color-grade LUTs (sepia/nega/night/...) mapped to CSS filters.
 // Unknown filters render unfiltered (logged once in console).
@@ -73,17 +128,22 @@ function readStorageKey(): string {
   return storageKey(READ_KEY);
 }
 let readSet: Set<string> | null = null;
+/** Namespace the cached set was loaded for: switching packs/demo must not
+ * reuse another namespace's read lines (the key is namespace-derived). */
+let readSetFor: string | null = null;
 /** Whether the currently displayed line had been read before this render
  * (skip-read gate; see scheduleAuto). */
 let currentWasRead = true;
 
 function loadRead(): Set<string> {
-  if (readSet) return readSet;
+  const key = readStorageKey();
+  if (readSet && readSetFor === key) return readSet;
   try {
-    readSet = new Set(JSON.parse(localStorage.getItem(readStorageKey()) ?? "[]") as string[]);
+    readSet = new Set(JSON.parse(localStorage.getItem(key) ?? "[]") as string[]);
   } catch {
     readSet = new Set();
   }
+  readSetFor = key;
   return readSet!;
 }
 
@@ -94,13 +154,22 @@ function loadRead(): Set<string> {
 let readPersistTimer: number | null = null;
 let readPersistDirty = false;
 
-function persistRead(): void {
-  if (!readPersistDirty || !readSet) return;
+function persistRead(): boolean {
+  if (!readPersistDirty || !readSet) return true;
   readPersistDirty = false;
   try {
-    localStorage.setItem(readStorageKey(), JSON.stringify([...readSet]));
+    // Write to the namespace the set was loaded for: a namespace switch
+    // must never copy one pack's read lines into another pack's key.
+    localStorage.setItem(readSetFor ?? readStorageKey(), JSON.stringify([...readSet]));
+    return true;
   } catch {
-    /* quota: skip-read degrades to skip-all, harmless */
+    /* quota/disabled storage: skip-read degrades to skip-all for this
+     * session, but the caller must know the write failed so a profile
+     * import is never reported as persisted when it was not. Stay dirty so
+     * the next flush (or the pagehide writer) tries again once the caller
+     * has freed space. */
+    readPersistDirty = true;
+    return false;
   }
 }
 
@@ -133,9 +202,233 @@ function isRead(save: SaveData): boolean {
   return loadRead().has(`${save.position.script}:${save.position.event}`);
 }
 
+/** Merge imported read keys (a `Sys.sav` profile) into the read set and
+ * persist right away: the import must survive a page switch or reload
+ * without waiting for the debounced writer.
+ *
+ * `added` = how many keys were new; `persisted` = whether the flush
+ * actually reached `localStorage`. A full/disabled browser storage leaves
+ * the in-memory set (and therefore skip-read for this session) working, but
+ * the caller must not claim the import was saved. */
+export function ingestReadKeys(keys: Iterable<string>): { added: number; persisted: boolean } {
+  const set = loadRead();
+  let added = 0;
+  for (const key of keys) {
+    if (typeof key !== "string" || set.has(key)) continue;
+    set.add(key);
+    added++;
+  }
+  let persisted = true;
+  if (added > 0) {
+    // Flush synchronously: a profile import can add tens of thousands of
+    // keys, and losing them to a navigation would look like a failed import.
+    readPersistDirty = true;
+    persisted = persistRead();
+    // Repaint the skip-read gate for any line already on screen.
+    currentWasRead = true;
+  }
+  return { added, persisted };
+}
+
+/** Hide/show the dialogue plate + chrome ("immersion" mode). Returns the
+ * new state. Clicking an already-hidden stage restores the text via the
+ * same path — never as an advance. */
+export function toggleText(reader: HTMLElement | null, force?: boolean): boolean {
+  if (!reader) return false;
+  textHidden = force === undefined ? !textHidden : force;
+  reader.classList.toggle("text-hidden", textHidden);
+  return textHidden;
+}
+
+export function setTextHidden(v: boolean): void {
+  textHidden = v;
+}
+
+/** Idle cursor hiding: after 3 s without pointer/key activity the reader
+ * hides the cursor and dims the HUD, leaving the frame alone. */
+function trackIdle(el: HTMLElement): void {
+  const bump = () => {
+    const reader = el.querySelector(".reader") as HTMLElement | null;
+    if (!reader) return;
+    reader.classList.remove("stage-idle");
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(() => {
+      idleTimer = null;
+      const r = el.querySelector(".reader") as HTMLElement | null;
+      if (!r) return;
+      // Never hide the cursor over a choice or an open overlay.
+      if (r.querySelector(".choices .choice-btn")) return;
+      if (r.classList.contains("movie-mode")) return;
+      r.classList.add("stage-idle");
+    }, 3000);
+  };
+  el.addEventListener("pointermove", bump, { passive: true });
+  el.addEventListener("pointerdown", bump, { passive: true });
+  el.addEventListener("keydown", bump);
+}
+
+// ---- HUD "More" dropdown ------------------------------------------------
+// A popover has three ways out: pick an item, press Escape, or click
+// anywhere outside it. All three run through the same close so the
+// `aria-expanded` state can never drift from the visible menu.
+
+function setMoreOpen(wrap: HTMLElement | null, toggle: HTMLElement | null, open: boolean): void {
+  wrap?.classList.toggle("more-open", open);
+  toggle?.setAttribute("aria-expanded", String(open));
+}
+
+function closeMoreMenu(dock: HTMLElement | null): void {
+  if (!dock) return;
+  const toggle = dock.querySelector(".hud-expand") as HTMLElement | null;
+  // The class lives on the dock itself (`.hud-btns.more-open > .hud-more`).
+  setMoreOpen(dock, toggle, false);
+}
+
+/** Document-level dismissal, installed exactly once for the page. The dock
+ * is resolved from the live document on each event (never captured), so
+ * leaving and re-entering the reader — which rebuilds `#reader` — cannot
+ * stack listeners or leave one pointing at a detached element. */
+let dismissBound = false;
+function wireDismissListeners(): void {
+  if (dismissBound || typeof document === "undefined") return;
+  dismissBound = true;
+  const openDock = (): HTMLElement | null => {
+    const dock = document.querySelector(".reader .hud-btns") as HTMLElement | null;
+    return dock?.classList.contains("more-open") ? dock : null;
+  };
+  document.addEventListener("pointerdown", (e) => {
+    const dock = openDock();
+    if (!dock) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.closest(".hud-btns")) return; // inside the dock: its own handlers decide
+    closeMoreMenu(dock);
+  }, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const dock = openDock();
+    if (!dock) return;
+    // Escape closes the menu and nothing else (an open menu is the
+    // innermost layer, even over the reader's own Esc-to-hide binding).
+    e.preventDefault();
+    e.stopPropagation();
+    closeMoreMenu(dock);
+  }, true);
+}
+
+// ---- Click-vs-scroll/selection guard -----------------------------------
+// A click inside an overflowing dialogue plate must not count as "advance"
+// while the reader is dragging a selection or has not scrolled to the end
+// of the visible text. Clicks on plates that fit (the normal case) always
+// advance, exactly as before.
+
+let pointerDownAt: { x: number; y: number; scrollTop: number } | null = null;
+let pointerMoved = false;
+const DRAG_SLOP_PX = 6;
+
+function wirePointerTracking(el: HTMLElement): void {
+  if (el.dataset.pointerTrack === "1") return;
+  el.dataset.pointerTrack = "1";
+  el.addEventListener("pointerdown", (e) => {
+    pointerMoved = false;
+    const t = e.target as HTMLElement | null;
+    const scroller = t?.closest(".textbox-scroll") as HTMLElement | null;
+    pointerDownAt = { x: e.clientX, y: e.clientY, scrollTop: scroller?.scrollTop ?? 0 };
+  }, { passive: true });
+  el.addEventListener("pointermove", (e) => {
+    if (!pointerDownAt) return;
+    const dx = e.clientX - pointerDownAt.x;
+    const dy = e.clientY - pointerDownAt.y;
+    if (dx * dx + dy * dy > DRAG_SLOP_PX * DRAG_SLOP_PX) pointerMoved = true;
+  }, { passive: true });
+}
+
+/** Pure decision for a click inside the dialogue plate (test-pinned).
+ * Advancing is fine when the text fits, when it is scrolled to the end, or
+ * while it is still typing (that click must complete the line). It is NOT
+ * fine while the reader is dragging a selection, has scrolled the plate
+ * under the pointer, or has not reached the end of a clipped line. */
+export interface ClickGesture {
+  /** Content is taller than the plate (`.textbox-scroll` scrolls). */
+  overflowing: boolean;
+  /** The reader dragged more than the slop distance while the button was
+   * down (text selection). */
+  moved: boolean;
+  /** The scroller's `scrollTop` changed during the gesture. */
+  scrolled: boolean;
+  /** The scroller is at (or within a few px of) its end. */
+  atBottom: boolean;
+  /** The typewriter is still revealing this line. */
+  typing: boolean;
+}
+
+export function advanceBlockedByGesture(g: ClickGesture): boolean {
+  // A click on a half-typed line completes it; it never advances.
+  if (g.typing) return false;
+  // Text that fits needs no scroll: clicking anywhere advances, as always.
+  if (!g.overflowing) return false;
+  // Selection drag / wheel scroll inside the plate: not an advance.
+  if (g.moved || g.scrolled) return true;
+  // Still clipped: the reader has not read to the end of this line yet.
+  return !g.atBottom;
+}
+
+/** Should this click be swallowed instead of advancing? Reads the gesture
+ * state captured by `wirePointerTracking`. */
+export function clickBlockedByTextGesture(target: HTMLElement | null): boolean {
+  return textGestureVerdict(target) !== "advance";
+}
+
+export type TextClickVerdict = "advance" | "reveal" | "none";
+
+/** What a click on the dialogue plate should do:
+ *  - "advance": the line fits / is at its end / is still typing,
+ *  - "reveal":  the line is clipped and unread, so scroll the plate a page
+ *               forward instead of skipping unread text,
+ *  - "none":    the pointer already dragged/scrolled the plate; the reader
+ *               is positioning the view, not asking to move on. */
+export function textGestureVerdict(target: HTMLElement | null): TextClickVerdict {
+  const scroller = target?.closest(".textbox-scroll") as HTMLElement | null;
+  const downAt = pointerDownAt;
+  const moved = pointerMoved;
+  pointerDownAt = null;
+  pointerMoved = false;
+  if (!scroller) return "advance";
+  const scrolled = !!downAt && Math.abs(scroller.scrollTop - downAt.scrollTop) > 2;
+  const blocked = advanceBlockedByGesture({
+    overflowing: scroller.scrollHeight > scroller.clientHeight + 2,
+    moved,
+    scrolled,
+    atBottom: scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4,
+    typing: !!scroller.dataset.typing,
+  });
+  if (!blocked) return "advance";
+  // A drag or an in-flight scroll already moved the view: never move it
+  // again, the reader is in control of the position.
+  return moved || scrolled ? "none" : "reveal";
+}
+
+/** Next page offset for a clipped line (pure: test-pinned). One page is
+ * 85% of the plate, so a line of prose never jumps past a whole screenful. */
+export function nextTextPage(scrollTop: number, clientHeight: number, scrollHeight: number): number {
+  const page = Math.max(40, Math.round(Math.max(0, clientHeight) * 0.85));
+  const max = Math.max(0, scrollHeight - clientHeight);
+  return Math.min(Math.max(0, scrollTop) + page, max);
+}
+
+/** Reveal the next page of a clipped line (click on hidden text). */
+export function revealNextTextPage(scroller: HTMLElement): void {
+  scroller.scrollTop = nextTextPage(
+    scroller.scrollTop,
+    scroller.clientHeight,
+    scroller.scrollHeight,
+  );
+  syncOverflowEdges(scroller);
+}
+
 export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   clearTimers();
   curHooks = h;
+  readerLive = true;
   const { router, save } = h;
   const pos = save.position;
   const ev = router.at(pos);
@@ -148,7 +441,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   const where = sc
     ? `${chapterOfScript(pos.script)} · ${pos.script} · ${pct}%`
     : `unknown position ${pos.script}:${pos.event}`;
-  const sceneDate = router.flowNode(pos)?.date ?? "";
+  const sceneDate = displayDate(router.flowNode(pos)?.date, !!h.settings.dev);
 
   const chapter = pos.script.startsWith("demo") ? "Demo" : {
     intro: "Introductory chapter",
@@ -168,66 +461,165 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
             <span class="place"></span>
           </div>
           <span class="hud-btns" role="group" aria-label="Reader menu">
-            <button data-act="auto"></button>
+            <button data-act="auto" title="Auto-play"></button>
             <button data-act="log">Log</button>
-            <button data-quick="save" title="Quick save">Q.Save</button>
-            <button data-quick="load" title="Quick load">Q.Load</button>
+            <button data-quick="save" class="hud-quick" title="Quick save">Q.Save</button>
+            <button data-quick="load" class="hud-quick" title="Quick load">Q.Load</button>
             <button data-act="saves">Save</button>
-            <button data-act="flow">Chart</button>
-            <button data-act="guide">Guide</button>
-            <button data-act="title">Title</button>
+            <span class="hud-more" role="menu" aria-label="More actions">
+              <button data-act="flow" role="menuitem">Chart</button>
+              <button data-act="guide" role="menuitem">Guide</button>
+              <button data-quick="save" class="hud-more-quick" role="menuitem" title="Quick save">Quick save</button>
+              <button data-quick="load" class="hud-more-quick" role="menuitem" title="Quick load">Quick load</button>
+              <button data-act="hide" role="menuitem" title="Hide text (H)">Hide text</button>
+              <button data-act="title" role="menuitem">Title</button>
+            </span>
+            <button data-act="more" class="hud-expand" aria-haspopup="true" aria-expanded="false" aria-label="More menu">More</button>
           </span>
         </div>
         <div class="reader-bottom">
-          <div class="textbox" id="textbox"></div>
+          <div class="textbox" id="textplate"><div class="textbox-scroll" id="textbox"></div></div>
           <div class="choices" id="choices"></div>
-          <div class="advance-hint" id="hint">Click or Enter to continue · hold Ctrl to skip · scroll up for the backlog</div>
+          <div class="advance-hint" id="hint">Click, Enter or Space to continue · hold Ctrl to skip · H hides the text · scroll up for the backlog</div>
         </div>
       </div>`;
     el.querySelectorAll("[data-act]").forEach((b) =>
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        curHooks?.open((b as HTMLElement).dataset.act as string);
+        const act = (b as HTMLElement).dataset.act as string;
+        if (act === "more") {
+          // CSS shows the menu via `.hud-btns.more-open > .hud-more`, so the
+          // state lives on the dock (toggling the inner span did nothing).
+          const dock = b.closest(".hud-btns") as HTMLElement | null;
+          const open = !dock?.classList.contains("more-open");
+          setMoreOpen(dock, b as HTMLElement, open);
+          return;
+        }
+        // Any picked action folds the dropdown behind it.
+        const dock = b.closest(".hud-btns") as HTMLElement | null;
+        closeMoreMenu(dock);
+        if (act === "hide") {
+          toggleText(el.querySelector(".reader") as HTMLElement, true);
+          return;
+        }
+        curHooks?.open(act);
       }),
     );
     el.querySelectorAll("[data-quick]").forEach((b) =>
       b.addEventListener("click", (e) => {
         e.stopPropagation();
+        closeMoreMenu(el.querySelector(".hud-btns") as HTMLElement | null);
         if ((b as HTMLElement).dataset.quick === "save") curHooks?.quickSave?.();
         else curHooks?.quickLoad?.();
       }),
     );
-    // Standard VN convention: wheel-up opens the backlog.
+    wireDismissListeners();
+    wirePointerTracking(el);
+    // Overflow fades follow the scroll position, not just the paint: at
+    // scrollTop 0 the top fade must go away so the first line is not grey.
+    el.addEventListener("scroll", (e) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.classList.contains("textbox-scroll")) syncOverflowEdges(t);
+    }, true);
+    el.addEventListener("click", (e) => {
+      const t = e.target as HTMLElement | null;
+      // Chrome and choices own their own clicks.
+      if (t?.closest("button, a, input, select, textarea, [role='button']")) return;
+      if (moviePlaying()) return;
+      const verdict = textGestureVerdict(t);
+      if (verdict === "none") return;
+      const reader = el.querySelector(".reader") as HTMLElement;
+      if (textHidden) {
+        toggleText(reader, false);
+        return;
+      }
+      if (verdict === "reveal") {
+        // Clipped line: the click turns the page of text instead of
+        // skipping prose the reader has not seen yet.
+        const scroller = t?.closest(".textbox-scroll") as HTMLElement | null;
+        if (scroller) revealNextTextPage(scroller);
+        return;
+      }
+      advanceHandler?.();
+    });
+    // Middle-click hides the text (mouse-only convenience) without
+    // advancing, so the art can be looked at whole.
+    el.addEventListener("auxclick", (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      toggleText(el.querySelector(".reader") as HTMLElement, !textHidden);
+    });
+    // Standard VN convention: wheel-up opens the backlog — once per
+    // gesture, never from trackpad inertia, never over a scrolling pane.
+    // `deltaMode` matters: Firefox reports DOM_DELTA_LINE for a plain mouse
+    // notch, so a raw -3 would never reach the 50 px notch threshold.
     el.addEventListener("wheel", (e) => {
-      if (e.deltaY < 0) {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest(".choices, .textbox-scroll, .log, .fc-wrap, .slots, .settings, .movie-layer")) return;
+      const dy = normalizeWheelDelta(e.deltaY, e.deltaMode);
+      if (wheelGesture(wheelState, dy, performance.now())) {
         e.preventDefault();
         curHooks?.open("log");
       }
-    });
+    }, { passive: false });
+    trackIdle(el);
+    // The plate's height cap is relative to the actual frame (portrait
+    // readers are not 16:9), so publish it as a custom property.
+    const readerEl = el.querySelector(".reader") as HTMLElement;
+    const publishHeight = () => {
+      readerEl.style.setProperty("--reader-h", `${readerEl.clientHeight}px`);
+    };
+    publishHeight();
+    if (typeof ResizeObserver !== "undefined") {
+      // One observer per reader element: the skeleton is built once and
+      // reused, so this never stacks.
+      observer?.disconnect();
+      observer = new ResizeObserver(publishHeight);
+      observer.observe(readerEl);
+    }
   }
 
   const prog = el.querySelector(".reader-progress > i") as HTMLElement;
   prog.style.width = `${pct}%`;
   const whereEl = el.querySelector(".reader-where") as HTMLElement;
-  whereEl.title = where;
+  // Script ids are a build artifact, not story text: only tooltip them in
+  // dev mode (a hover revealing "2012_020:1171" breaks the fiction).
+  if (h.settings.dev) whereEl.title = where;
+  else whereEl.removeAttribute("title");
   (whereEl.querySelector(".chapter") as HTMLElement).textContent = chapter;
-  (whereEl.querySelector(".place") as HTMLElement).textContent = `${sceneDate ? ` · ${sceneDate}` : ""} · ${pct}%`;
+  (whereEl.querySelector(".place") as HTMLElement).textContent =
+    `${sceneDate ? ` · ${sceneDate}` : ""} · ${pct}%`;
   const autoBtn = el.querySelector('[data-act="auto"]') as HTMLButtonElement;
   const autoOn = h.settings.autoDelay > 0;
   autoBtn.setAttribute("aria-pressed", String(autoOn));
   autoBtn.classList.toggle("active", autoOn);
-  autoBtn.textContent = autoOn ? "Pause auto" : "Auto";
+  // Constant short label: the gold .active state plus aria-pressed carry
+  // the on/off meaning, and the dock stays narrow on phones.
+  autoBtn.textContent = "Auto";
+  autoBtn.title = autoOn ? "Auto-play on (click to pause)" : "Auto-play off";
 
-  paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol, !!h.demo);
+  paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol, !!h.demo, !!h.settings.dev, ev?.t === "movie");
   fireSe(save);
-  updateAmbient(save);
+  updateAmbient(save, ev?.t === "movie");
+  // Hide-text state survives a re-render (Auto toggle, settings) but never
+  // leaks in from another screen with no visible way to undo it.
+  const shell = el.querySelector(".reader") as HTMLElement;
+  shell.classList.toggle("text-hidden", textHidden);
+  const plate = el.querySelector("#textplate") as HTMLElement;
   const box = el.querySelector("#textbox") as HTMLElement;
   const ch = el.querySelector("#choices") as HTMLElement;
   const hint = el.querySelector("#hint") as HTMLElement;
   box.classList.remove("prompt-only");
+  plate.classList.remove("prompt-only", "movie-host");
   delete box.dataset.typing;
+  // A previous long line's overflow flags must not mask the next paint
+  // (a choice prompt is short, but it inherited the old fade).
+  delete box.dataset.overflow;
+  delete box.dataset.fadeTop;
+  delete box.dataset.fadeBottom;
   ch.innerHTML = "";
   hint.style.display = "";
+  advanceHandler = null;
 
   if (!ev) {
     // Past the end of a script: try to keep going (heals stale saves),
@@ -257,22 +649,34 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       h.open("title");
     };
     ch.appendChild(back);
-    el.onclick = null;
+    advanceHandler = null;
     return;
   }
 
   if (ev.t === "choice") {
     hint.style.display = "none";
+    plate.classList.add("prompt-only");
     box.classList.add("prompt-only");
+    if (idleTimer !== null) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+    el.querySelector(".reader")?.classList.remove("stage-idle");
     const node = router.flowNode(pos);
+    const choiceDate = displayDate(node?.date, !!h.settings.dev);
     box.innerHTML = `<div class="narrate choice-prompt">Choose${
-      node?.date ? ` <span class="dim">${escapeAttr(node.date)}</span>` : ""
+      choiceDate ? ` <span class="dim">${escapeAttr(choiceDate)}</span>` : ""
     }</div>`;
     for (const o of ev.options) {
       const gate = node?.gated?.[String(o.n)] ?? null;
       const b = document.createElement("button");
       b.className = "choice-btn";
-      b.innerHTML = renderText(o.text) + (gate ? ` <span class="lock">(${escapeAttr(gate)})</span>` : "");
+      // `(needs ...)` is a flow-annotation gate string: mechanics, not
+      // story. Hidden unless dev mode is on.
+      const gateHtml = gate && h.settings.dev
+        ? ` <span class="lock">(${escapeAttr(gate)})</span>`
+        : "";
+      b.innerHTML = renderText(o.text) + gateHtml;
       b.onclick = (e) => {
         e.stopPropagation();
         cutVoice();
@@ -290,16 +694,21 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       };
       ch.appendChild(b);
     }
-    el.onclick = null;
+    advanceHandler = null;
     return;
   }
 
   if (ev.t === "say" || ev.t === "narrate") {
-    playVoice(save, ev, h.settings.voiceVol);
+    const key = `${pos.script}:${pos.event}`;
+    const sameLine = lastPainted?.key === key;
+    // A re-render from the backlog/settings/chart, or an Auto toggle, must
+    // not re-type a line that was already fully shown.
+    const alreadyDone = sameLine && lastPainted!.done;
+    if (!alreadyDone) playVoice(save, ev, h.settings.voiceVol);
     // Capture whether this line was read BEFORE this display: markRead()
     // runs now, so checking isRead() later in scheduleAuto() always said
     // "read" and Ctrl-skip ignored the read-only setting entirely.
-    currentWasRead = isRead(save);
+    currentWasRead = sameLine ? currentWasRead : isRead(save);
     markRead(save);
     const cls = ev.t === "say" ? "say" : "narrate";
     const who = ev.t === "say" && displaySpeaker(save, ev)
@@ -310,52 +719,180 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const speed = h.skip.active || reduceMotion ? 0 : h.settings.textSpeed;
-    if (speed > 0) {
-      startTypewriter(box, full, ev.text, who, outer, speed, () => scheduleAuto(h));
-      el.onclick = () => {
-        if (completeTypewriter(box, full)) {
-          // A manual completion must still arm auto/skip, or the line sits
-          // forever in auto mode until another event re-renders.
-          scheduleAuto(h);
-          return; // first click completes
-        }
-        stepForward(h);
-      };
+    if (speed > 0 && !alreadyDone) {
+      lastPainted = { key, full, done: false };
+      startTypewriter(box, full, ev.text, who, outer, speed, () => {
+        lastPainted = { key, full, done: true };
+        resetBoxScroll(box);
+        scheduleAuto(h);
+      });
+      resetBoxScroll(box);
     } else {
+      // Instant reveal (speed 0) or a previously completed line.
       box.innerHTML = full;
-      el.onclick = () => stepForward(h);
+      lastPainted = { key, full, done: true };
+      resetBoxScroll(box);
       scheduleAuto(h);
     }
+    advanceHandler = () => {
+      if (!alreadyDone && completeTypewriter(box, full)) {
+        // A manual completion must still arm auto/skip, or the line sits
+        // forever in auto mode until another event re-renders.
+        lastPainted = { key, full, done: true };
+        scheduleAuto(h);
+        return; // first click completes
+      }
+      stepForward(h);
+    };
+    preloadMovieAhead(nextMovieUrl(h, pos));
     return;
   }
 
   if (ev.t === "movie") {
+    lastPainted = null;
+    // The film owns the stage: hide the dialogue plate entirely and let
+    // the movie layer render its own chrome (subtitles + HUD).
+    plate.classList.add("movie-host");
+    box.innerHTML = "";
+    hint.style.display = "none";
+    const movieKey = { script: pos.script, event: pos.event };
+    // P0/P1-1: capture the *save object* the film opened on, not just its
+    // position. `loadSaveIntoGame()` swaps `save` wholesale, and a save that
+    // happens to stand on the same script:event would still let a stale
+    // onended advance the newly loaded story one line.
+    const movieSave = save;
     const url = movieUrl(ev.id);
-    box.innerHTML = `<div class="narrate">Movie <b>${escapeAttr(ev.id)}</b>${
-      url ? "" : ' <span class="dim">(not installed, so this is a placeholder; install movies to watch)</span>'
-    }</div>`;
-    if (url) {
-      const v = document.createElement("video");
-      v.src = url;
-      v.controls = true;
-      v.className = "movie";
-      v.addEventListener("click", (e) => e.stopPropagation());
-      box.appendChild(v);
-    }
-    el.onclick = () => stepForward(h);
+    openMovie(el.querySelector(".reader") as HTMLElement, {
+      id: ev.id,
+      url,
+      subtitleUrl: url ? subtitleUrl(ev.id) : null,
+      volume: h.settings.bgmVol,
+      hooks: {
+        onOpen: () => {
+          duckForMovie(true);
+          // A Ctrl held into the movie must stop here: releasing skip means
+          // it cannot blast through the first post-film line when the film
+          // ends and the reader re-renders. main.ts clears its own flag via
+          // onSkipStop, so a still-held Ctrl needs a fresh keydown.
+          if (h.skip.active) {
+            h.skip.active = false;
+            h.onSkipStop();
+          }
+          clearAuto();
+        },
+        onClose: (advancing) => duckForMovie(false, advancing),
+        onFinish: () => {
+          // Idempotent inside the module, but a screen change (save load,
+          // backlog jump) may have moved the story on meanwhile: only
+          // advance if this is still the same save standing on the same
+          // movie event.
+          if (!currentSaveMatches(movieSave, save, movieKey)) return;
+          stepForward(h);
+        },
+      },
+    });
+    advanceHandler = null;
     return;
   }
 
+  lastPainted = null;
+  plate.classList.remove("movie-host");
   // Directives / latches auto-advance on click.
   const label =
     ev.t === "image" ? `Image ${ev.file} [${ev.layer ?? "?"}]` :
     ev.t === "filter" ? `Colour grade ${ev.file}` :
     ev.t === "anim" ? `Animation ${ev.file} [${ev.layer ?? "?"}]` :
-    ev.t === "latch" ? ev.name :
+    ev.t === "bgm" ? `Music ${ev.file}` :
+    ev.t === "latch" ? `Flag ${ev.name}` :
     ev.t === "jump" ? `Branch ${ev.kind} ${ev.targets.join(" ")}` :
     ev.t === "layer" ? `Layer ${ev.layer}` : "…";
-  box.innerHTML = `<div class="narrate dim">${escapeAttr(label)}</div>`;
-  el.onclick = () => stepForward(h);
+  // Mechanical labels are dev-only; for players the beat is instantaneous
+  // and silent, so an empty plate that fades is friendlier than jargon.
+  box.innerHTML = h.settings.dev
+    ? `<div class="narrate dim">${escapeAttr(label)}</div>`
+    : `<div class="narrate dim beat"></div>`;
+  advanceHandler = () => stepForward(h);
+  preloadMovieAhead(nextMovieUrl(h, pos));
+}
+
+/** Scroll a freshly painted line back to its first line, and flag whether
+ * the content overflows so the plate can show its subtle top/bottom fade.
+ * Long lines (400–1000+ chars) scroll inside the plate; the opening must
+ * always be visible, never clipped above the frame. Both the inner scroller
+ * and its portrait parent (`.reader-bottom` scrolls in flow layout) are
+ * reset, or a portrait reader keeps the previous line's offset. */
+function resetBoxScroll(box: HTMLElement): void {
+  box.scrollTop = 0;
+  const bottom = box.closest(".reader-bottom") as HTMLElement | null;
+  if (bottom) bottom.scrollTop = 0;
+  updateOverflowFlag(box);
+}
+
+function updateOverflowFlag(box: HTMLElement): void {
+  // Measured after layout: a synchronous read here forces one reflow per
+  // painted line, which is cheaper than a scrollbar that lies.
+  requestAnimationFrame(() => {
+    if (!box.isConnected) return;
+    const over = box.scrollHeight - box.clientHeight > 4;
+    if (over) box.dataset.overflow = "1";
+    else delete box.dataset.overflow;
+    syncOverflowEdges(box);
+  });
+}
+
+/** Publish which edges are actually clipped: the top fade must disappear at
+ * scrollTop 0 (otherwise the first line reads as greyed out) and the bottom
+ * fade at the end of the text. */
+function syncOverflowEdges(box: HTMLElement): void {
+  const data = box.dataset;
+  if (!data) return; // plain test double / exotic DOM: nothing to publish
+  if (!data.overflow) {
+    delete data.fadeTop;
+    delete data.fadeBottom;
+    return;
+  }
+  const top = box.scrollTop > 1;
+  const bottom = box.scrollTop + box.clientHeight < box.scrollHeight - 2;
+  if (top) data.fadeTop = "1";
+  else delete data.fadeTop;
+  if (bottom) data.fadeBottom = "1";
+  else delete data.fadeBottom;
+}
+
+/** Position guard for the movie finish hook. */
+export function currentPositionMatches(save: SaveData, at: { script: string; event: number }): boolean {
+  return save.position.script === at.script && save.position.event === at.event;
+}
+
+/** Full identity guard for a hook captured at render time: the same object
+ * must still be the live save AND still stand on the same script:event.
+ * `loadSaveIntoGame()` replaces the save object (even when the new save
+ * stands on the identical position), so reference equality is required to
+ * prove a stale movie/branch hook cannot advance a freshly loaded story. */
+export function currentSaveMatches(
+  captured: SaveData,
+  live: SaveData,
+  at: { script: string; event: number },
+): boolean {
+  return captured === live && currentPositionMatches(live, at);
+}
+
+/** Look ahead from the current position for the next movie cue and warm
+ * its metadata while the player reads. Bounded scan: a movie is usually a
+ * handful of events away, and a full-script scan on every render would
+ * cost more than the buffer it saves. The default window covers the longest
+ * directive run between two films (a scene change can be ~90 events), so a
+ * back-to-back chain (1013, mv08 -> mv09) still warms its second film. */
+export function nextMovieUrl(h: { router: Router; save: SaveData }, pos: Position, lookahead = 120): string | null {
+  const sc = h.router.scripts.get(pos.script);
+  if (!sc) return null;
+  const from = pos.event + 1;
+  const to = Math.min(sc.events.length, from + Math.max(0, lookahead));
+  for (let i = from; i < to; i++) {
+    const e = sc.events[i];
+    if (e.t === "movie") return movieUrl(e.id);
+  }
+  return null;
 }
 
 /** Progressive typewriter that preserves markup: reveal span by span. */
@@ -460,10 +997,14 @@ export function skipBlocked(active: boolean, skipRead: boolean, wasRead: boolean
  * Read-mode skip halts on the first unread line (never advances past it). */
 function scheduleAuto(h: ReaderHooks): void {
   clearAuto();
+  if (!readerLive) return;
   const delay = h.skip.active ? 120 : h.settings.autoDelay;
   if (delay <= 0) return;
   const ev = h.router.at(h.save.position);
   if (!ev || ev.t === "choice") return; // never auto-pick
+  // A playing film advances on its own `ended` (its own duration), and a
+  // missing-movie card waits for Continue. Auto must not skip past it.
+  if (ev.t === "movie" || moviePlaying()) return;
   if (skipBlocked(h.skip.active, h.settings.skipRead, currentWasRead)) {
     h.skip.active = false;
     h.onSkipStop();
@@ -471,6 +1012,7 @@ function scheduleAuto(h: ReaderHooks): void {
   }
   autoTimer = window.setTimeout(() => {
     autoTimer = null;
+    if (!readerLive) return;
     if (skipBlocked(h.skip.active, h.settings.skipRead, currentWasRead)) {
       h.skip.active = false;
       h.onSkipStop();
@@ -505,7 +1047,11 @@ function clearAuto(): void {
 
 export function stepForward(h: ReaderHooks): void {
   const { router, save } = h;
+  // Ctrl-skip must never blast through a movie: a 5-minute film would be
+  // over in 120 ms. The viewer presses Skip explicitly instead.
+  if (moviePlaying()) return;
   cutVoice();
+  lastPainted = null;
   const r = router.advance(save.position, save.flags);
   if (r.ended) {
     if (r.ending && !save.endings.includes(r.ending)) {
@@ -559,17 +1105,26 @@ export function pushLog(router: Router, save: SaveData): void {
   }
 }
 
-function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number, demo: boolean): void {
+function paintStage(
+  stage: HTMLElement,
+  save: SaveData,
+  bgmVol: number,
+  demo: boolean,
+  dev: boolean,
+  /** The position being rendered IS a movie: never start a BGM cue for the
+   * one frame before `openMovie` silences the mix (back-to-back films such
+   * as mv08 -> mv09 flashed the previous scene's music). */
+  movieNext = false,
+): void {
   const st = stageImageState(save);
   paintBackdrop(stage, st, bnrFadeAt(save));
   // The demo has no game assets; draw an original placeholder scene rather
-  // than a "no backdrop" label. It is removed as soon as a real backdrop or
-  // an engine clear takes over.
+  // than an empty stage. It is removed as soon as a real backdrop or an
+  // engine clear takes over.
   const demoScene = stage.querySelector(":scope > .demo-scene");
   if (demo && !st.url && !st.cleared) {
-    stage.style.backgroundImage = "";
-    stage.style.backgroundColor = "";
-    stage.querySelector(":scope > .stage-ph")?.remove();
+    stage.style.backgroundImage = "none";
+    stage.style.backgroundColor = "#000";
     if (!demoScene) {
       stage.insertAdjacentHTML("afterbegin", `<div class="demo-scene" aria-hidden="true">
         <div class="demo-moon"></div>
@@ -580,34 +1135,28 @@ function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number, demo: bo
   } else {
     demoScene?.remove();
   }
-  const prevPh = stage.querySelector(":scope > .stage-ph");
-  if (st.url) {
-    prevPh?.remove();
-  } else if (!(demo && !st.cleared)) {
-    if (st.cleared) {
-      // Engine clear-to-black (e.g. stage-play spotlight scenes): remove
-      // the CSS default gradient too, or the stage stays navy.
-      stage.style.backgroundImage = "none";
-      stage.style.backgroundColor = "#000";
-      prevPh?.remove();
-    } else {
-      stage.style.backgroundImage = "";
-      stage.style.backgroundColor = "";
-      if (!prevPh) {
-        const div = document.createElement("div");
-        div.className = "stage-ph";
-        stage.prepend(div);
-      }
-      const ph = stage.querySelector(":scope > .stage-ph") as HTMLElement;
-      ph.textContent = st.missingFile
-        ? `Backdrop not installed: ${st.missingFile}`
-        : "No backdrop yet";
+  // No cue at all (or an engine clear) is the game's own answer: a black
+  // screen. Nothing is written across it — a "no backdrop" label was the
+  // most immersion-breaking thing the old reader did. A missing install is
+  // only ever a tiny corner tag, and only in dev mode.
+  stage.classList.toggle("stage-black", !st.url && !(demo && !st.cleared));
+  const tag = stage.querySelector(":scope > .stage-tag") as HTMLElement | null;
+  const tagText = st.missingFile && dev ? `Missing ${st.missingFile}` : "";
+  if (tagText) {
+    if (tag) tag.textContent = tagText;
+    else {
+      const div = document.createElement("div");
+      div.className = "stage-tag";
+      div.textContent = tagText;
+      stage.appendChild(div);
     }
+  } else {
+    tag?.remove();
   }
   stage.style.filter = stageFilter(save);
   paintOverlay(stage, save);
   paintSprites(stage, save);
-  paintBgm(save, bgmVol);
+  paintBgm(save, bgmVol, movieNext);
 }
 
 /** Crossfade the backdrop with a two-layer <img> pair.
@@ -615,17 +1164,40 @@ function paintStage(stage: HTMLElement, save: SaveData, bgmVol: number, demo: bo
  * `background-image` cannot animate (the old `transition-duration` on the
  * stage was inert), and replacing a single <img> pops. Two layers let the
  * outgoing art fade under the incoming art; the engine's .bnr fade duration
- * is the transition time. A clear removes both layers (true black).
+ * is the transition time.
+ *
+ * A clear fades the last frame out to black over that same duration (the
+ * engine's own dissolve), then drops the element: hard-removing the <img>
+ * popped the stage to black in one frame on every spotlight scene.
  */
 function paintBackdrop(stage: HTMLElement, st: StageImageState, ms: number | null): void {
   const layers = [...stage.querySelectorAll(":scope > img.stage-bg")] as HTMLImageElement[];
   const active = layers.find((l) => l.dataset.active === "1") ?? null;
+  const duration = Math.max(0, ms ?? 0);
   if (!st.url) {
-    for (const l of layers) l.remove();
+    if (duration === 0) {
+      for (const l of layers) l.remove();
+      stage.style.backgroundImage = "none";
+      stage.style.backgroundColor = "#000";
+      return;
+    }
+    // Dissolve to black: keep the frame visible while it fades.
+    for (const l of layers) {
+      if (l.dataset.active !== "1") {
+        l.remove();
+        continue;
+      }
+      l.dataset.active = "";
+      l.style.transitionDuration = `${duration}ms`;
+      l.style.opacity = "0";
+      window.setTimeout(() => {
+        if (l.dataset.active !== "1") l.remove();
+      }, duration + 60);
+    }
     return;
   }
+  // A backdrop arriving after a clear: the old layers are already gone.
   if (active?.dataset.cur === st.url) return;
-  const duration = Math.max(0, ms ?? 0);
   // Reuse the inactive buffer; if both are absent create one.
   let next = layers.find((l) => l !== active) ?? null;
   if (!next) {
@@ -897,10 +1469,18 @@ export function setBgmLookup(fn: BgmLookup | null): void {
   bgmLookup = fn;
 }
 
-function paintBgm(save: SaveData, bgmVol: number): void {
+function paintBgm(save: SaveData, bgmVol: number, movieNext = false): void {
   const audio = document.getElementById("bgm") as HTMLAudioElement | null;
   if (!audio) return;
   audio.volume = Math.max(0, Math.min(1, bgmVol));
+  // A film or a menu owns the mix right now: track state, make no sound.
+  // `movieNext` covers the frame before a movie opens (the render that
+  // paints `ev.t === "movie"`): starting the previous scene's cue there
+  // made back-to-back films flicker stale BGM for one frame.
+  if (audioSuspended || moviePlaying() || movieNext) {
+    audio.pause();
+    return;
+  }
   // Loop pairs (engine strings _a/_b): play the intro once, then loop the
   // body. `data-cue` is the cue identity (so an already-advanced A->B pair
   // is not restarted); `data-cur` is the file actually loaded.
@@ -977,7 +1557,7 @@ function paintBgm(save: SaveData, bgmVol: number): void {
   // every render — the next advance is a user gesture and starts the track
   // instead of leaving the session silent forever.
   if (audio.dataset.cur && audio.paused) {
-    audio.play().catch(() => undefined);
+    if (!audioSuspended && !moviePlaying()) audio.play().catch(() => undefined);
   }
 }
 
@@ -1170,7 +1750,11 @@ function stopAllAmb(): void {
   for (const ch of [...ambEls.keys()]) stopAmbChannel(ch);
 }
 
-function updateAmbient(save: SaveData): void {
+function updateAmbient(save: SaveData, movieNext = false): void {
+  if (audioSuspended || moviePlaying() || movieNext) {
+    for (const a of ambElsPlaying()) a.pause();
+    return;
+  }
   if (ambScript !== null && ambScript !== save.position.script) {
     stopAllAmb();
   }
@@ -1412,10 +1996,97 @@ function paintSprites(stage: HTMLElement, save: SaveData): void {
 
 let voicePlaySeq = 0;
 
+/** ---- Global audio coordination ---------------------------------------- */
+// A movie carries its own score: BGM, voice and ambience must fall silent
+// while it plays. Returning to the title must silence everything too, and
+// returning to the reader must restore exactly what the save says belongs
+// on stage (never "whatever was playing before the menus").
+
+let audioSuspended = false;
+
+function ambElsPlaying(): HTMLAudioElement[] {
+  return [...ambEls.values()];
+}
+
+/** Pause every music/voice/ambience element, remembering which were live. */
+export function suspendAudio(): void {
+  audioSuspended = true;
+  const bgm = document.getElementById("bgm") as HTMLAudioElement | null;
+  if (bgm && !bgm.paused) bgm.dataset.wasPlaying = "1";
+  bgm?.pause();
+  cutVoice();
+  for (const a of ambElsPlaying()) {
+    if (!a.paused) a.dataset.wasPlaying = "1";
+    a.pause();
+  }
+}
+
+/** Resume what suspendAudio() paused (BGM re-syncs via paintBgm anyway). */
+export function resumeAudio(): void {
+  audioSuspended = false;
+  const bgm = document.getElementById("bgm") as HTMLAudioElement | null;
+  if (bgm?.dataset.wasPlaying) {
+    delete bgm.dataset.wasPlaying;
+    if (bgm.src) bgm.play().catch(() => undefined);
+  }
+  for (const a of ambElsPlaying()) {
+    if (a.dataset.wasPlaying) {
+      delete a.dataset.wasPlaying;
+      if (a.src) a.play().catch(() => undefined);
+    }
+  }
+}
+
+export function audioIsSuspended(): boolean {
+  return audioSuspended;
+}
+
+/** Movie open/close: duck the session audio and restore it afterwards.
+ * When the film *advances* the story, the restore is skipped — the next
+ * render paints whatever BGM the new position owns, and resuming the old
+ * cue first would audibly flash the previous scene's music. */
+function duckForMovie(enter: boolean, advancing = false): void {
+  if (enter) {
+    const bgm = document.getElementById("bgm") as HTMLAudioElement | null;
+    if (bgm && !bgm.paused) bgm.dataset.wasPlaying = "1";
+    bgm?.pause();
+    cutVoice();
+    for (const a of ambElsPlaying()) {
+      if (!a.paused) a.dataset.wasPlaying = "1";
+      a.pause();
+    }
+    return;
+  }
+  // Advancing: drop the remembered flags so nothing resumes behind the
+  // next line. paintBgm/updateAmbient start the right cue on the re-render.
+  if (advancing) {
+    const bgm = document.getElementById("bgm") as HTMLAudioElement | null;
+    if (bgm?.dataset.wasPlaying) delete bgm.dataset.wasPlaying;
+    for (const a of ambElsPlaying()) delete a.dataset.wasPlaying;
+    return;
+  }
+  if (audioSuspended) return;
+  const bgm = document.getElementById("bgm") as HTMLAudioElement | null;
+  if (bgm?.dataset.wasPlaying) {
+    delete bgm.dataset.wasPlaying;
+    if (bgm.src) bgm.play().catch(() => undefined);
+  }
+  for (const a of ambElsPlaying()) {
+    if (a.dataset.wasPlaying) {
+      delete a.dataset.wasPlaying;
+      if (a.src) a.play().catch(() => undefined);
+    }
+  }
+}
+
 /** Play the voice clip for a displayed line, if the archive has it. */
 function playVoice(save: SaveData, ev: ScenarioEvent, vol: number): void {
   const audio = document.getElementById("voice") as HTMLAudioElement | null;
   if (!audio) return;
+  if (moviePlaying()) {
+    cutVoice();
+    return;
+  }
   audio.volume = Math.max(0, Math.min(1, vol));
   const ch = chapterOfScript(save.position.script);
   const mapped = ev.t !== "say" && ev.t !== "narrate"

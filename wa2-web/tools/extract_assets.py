@@ -24,9 +24,22 @@ Post-process per inner type:
   mv*.pak    -> .mp4 (ffmpeg transcode H.264+AAC when available; ASF/WMV
                 sources are NOT browser-playable, so without ffmpeg the
                 movie is reported missing, never copied raw)
-Output: OUT_DIR/{bg, chara, cg, ui, bgm, se, voice, movie}/ + manifest.json
-mapping engine ids (b105300.tga, sepia.AMP, mv01, ...) -> relative URLs,
-plus missing.json (everything referenced by scenarios but not supplied).
+  *.ass      -> subs/<mvNNN>.vtt (MAO Movie Patcher subtitle sources;
+                auto-discovered as `<release>/Main Game/Movie Patcher/
+                assets/ass` beside --en-pak, or given with --ass-dir).
+                Style-level + inline \\i/\\b become <i>/<b>;
+                PlayRes + \\pos drive `line:` (top/bottom band) and
+                `position:` (off-centre columns); stale tracks pruned.
+Output: OUT_DIR/{bg, chara, cg, ui, bgm, se, voice, movie, subs}/ +
+manifest.json mapping engine ids (b105300.tga, sepia.AMP, mv01, ...) ->
+relative URLs, plus missing.json (everything referenced by scenarios but
+not supplied). `subtitles` maps movie ids (mv010) -> subs/mv010.vtt.
+
+Re-running only the subtitles: `extract_assets.py OUT --ass-dir DIR
+--subs-only` updates OUT/manifest.json + OUT/subs without touching the
+extracted paks or MP4s. It requires an existing OUT/manifest.json (a
+full extract must have run first): inventing one would blank the asset
+tables.
 
 Run `extract_assets.py --selftest` for a synthetic offline check (no game).
 """
@@ -37,6 +50,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -139,7 +153,10 @@ def handle_movie(pak_path: str, dst_mp4: str, name: str, missing: list,
            "-c:v", "libx264", "-preset", preset, "-crf", str(crf)]
     if height:
         cmd += ["-vf", f"scale=-2:{height}"]
-    cmd += ["-c:a", "aac", dst_mp4]
+    # faststart moves the moov atom to the head of the file so browsers can
+    # begin playback before the whole MP4 is fetched (essential for the
+    # 20-60 MB movie files served from a static host).
+    cmd += ["-c:a", "aac", "-movflags", "+faststart", dst_mp4]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if tmp:
         os.unlink(tmp)
@@ -148,6 +165,446 @@ def handle_movie(pak_path: str, dst_mp4: str, name: str, missing: list,
         return False
     _ = probe
     return True
+
+
+# ---------------------------------------------------------------------------
+# Movie subtitles: MAO Movie Patcher `.ass` -> WebVTT
+# ---------------------------------------------------------------------------
+
+_ASS_OVERRIDE = re.compile(r"\{([^}]*)\}")
+_ASS_AN = re.compile(r"\\an([1-9])")
+_ASS_POS = re.compile(r"\\pos\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)")
+_ASS_DRAWING = re.compile(r"\\p\d+")
+_ASS_TIME = re.compile(r"^\s*(\d+):(\d{1,2}):(\d{1,2})[.:](\d{1,3})\s*$")
+# All three switches in one pass so the emitted tag stream follows source
+# order (`\i0\b1` closes italic before opening bold). `\i`/`\b` take an
+# optional 0/1 (bare = on, the v4+ "last value" shorthand); `\r` resets to
+# the row's style, `\rOther` switches to another style row.
+_ASS_TOGGLE = re.compile(r"\\i(?P<i>[01]?)(?![\w.])|\\b(?P<b>[01]?)(?![\w.])"
+                         r"|\\r(?P<r>[^\\}]*)")
+# Rendered inline tags, stripped when measuring a cue's visible width.
+_ASS_TAG = re.compile(r"<[^>]*>")
+# Standard ASS v4+ Dialogue column order, used when a file omits `Format:`
+# inside `[Events]` (the spec default).
+_ASS_DEFAULT_FORMAT = ("layer", "start", "end", "style", "name", "marginl",
+                       "marginr", "marginv", "effect", "text")
+# Style rows (v4+) are comma-separated with the trailing Encoding field.
+_ASS_STYLE_KEYS = ("name", "fontname", "fontsize", "primarycolour",
+                   "secondarycolour", "outlinecolour", "backcolour", "bold",
+                   "italic", "underline", "strikeout", "scalex", "scaley",
+                   "spacing", "angle", "borderstyle", "outline", "shadow",
+                   "alignment", "marginl", "marginr", "marginv", "encoding")
+# Default frame size when a script omits PlayResX/PlayResY (ASS v4+ default
+# is 384x288; MAO's files always carry 1280x720 or 704x480).
+_ASS_DEFAULT_RES = (384, 288)
+# A cue whose anchor y (as a fraction of PlayResY) is above this line sits
+# in the upper band. 0.45 keeps mv010's `\an8\pos(640,410)` narrative at
+# 57% and mv240's `\an7\pos(90,562)` credits at 78% on the bottom, where
+# the actual text renders in the film.
+_ASS_TOP_FRACTION = 0.45
+# Horizontal anchor this far from the frame centre = a column caption
+# (profile side-by-side: mv081 x=67/387 of 704 = 10%/55%).
+_ASS_OFFCENTER = 0.08
+
+
+def ass_time_ms(stamp: str) -> int | None:
+    """`H:MM:SS.cc` (ASS centiseconds) -> milliseconds. None if malformed."""
+    m = _ASS_TIME.match(stamp or "")
+    if not m:
+        return None
+    h, mm, ss, frac = (int(m.group(1)), int(m.group(2)), int(m.group(3)),
+                       m.group(4))
+    # 2-digit fraction = centiseconds, 3-digit = milliseconds
+    ms = int(frac) * 10 if len(frac) == 2 else int(frac.ljust(3, "0")[:3])
+    return ((h * 60 + mm) * 60 + ss) * 1000 + ms
+
+
+def vtt_time(ms: int) -> str:
+    """Milliseconds -> `HH:MM:SS.mmm` (WebVTT timestamp)."""
+    ms = max(0, int(ms))
+    h, rem = divmod(ms, 3600000)
+    m, rem = divmod(rem, 60000)
+    s, milli = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}.{milli:03d}"
+
+
+def _ass_style(styles: dict[str, dict] | None, name: str) -> dict | None:
+    """Case-insensitive style row lookup (`\\rProfile` / `Style: profile`)."""
+    if not styles:
+        return None
+    key = (name or "").strip()
+    if not key:
+        return None
+    if key in styles:
+        return styles[key]
+    low = key.lower()
+    for k, v in styles.items():
+        if k.lower() == low:
+            return v
+    return None
+
+
+def _ass_flag(value: str) -> bool:
+    """ASS v4+ boolean: `-1` or `1` (any nonzero) means enabled."""
+    try:
+        return int((value or "0").strip() or 0) != 0
+    except ValueError:
+        return False
+
+
+def ass_header(ass_text: str) -> tuple[tuple[int, int], dict[str, dict]]:
+    """`[Script Info]` PlayRes + `[V4+ Styles]` rows, parsed before Events.
+
+    Returns ((PlayResX, PlayResY), {Name: {italic, bold, alignment,
+    fontsize}}). Missing PlayRes falls back to the ASS v4+ default 384x288;
+    a missing `[V4+ Styles]` section yields an empty table (cues then rely
+    on inline tags alone).
+    """
+    res_x, res_y = _ASS_DEFAULT_RES
+    styles: dict[str, dict] = {}
+    section = ""
+    fmt: list[str] | None = None
+    for raw in ass_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower()
+            fmt = None
+            continue
+        if section == "script info":
+            key, sep, val = line.partition(":")
+            if not sep:
+                continue
+            k = key.strip().lower()
+            try:
+                if k == "playresx":
+                    res_x = int(val.strip())
+                elif k == "playresy":
+                    res_y = int(val.strip())
+            except ValueError:
+                pass
+            continue
+        if section not in ("v4+ styles", "v4 styles", "v4 styles+"):
+            continue
+        if line.lower().startswith("format:"):
+            fmt = [f.strip().lower() for f in line.split(":", 1)[1].split(",")]
+            continue
+        if not line.lower().startswith("style:"):
+            continue
+        cols = fmt or list(_ASS_STYLE_KEYS)
+        vals = line.split(":", 1)[1].split(",", len(cols) - 1)
+        row = {c: (vals[i].strip() if i < len(vals) else "")
+               for i, c in enumerate(cols)}
+        name = row.get("name") or ""
+        if not name:
+            continue
+        try:
+            alignment = int(row.get("alignment") or 2)
+        except ValueError:
+            alignment = 2
+        try:
+            fontsize = float(row.get("fontsize") or 40)
+        except ValueError:
+            fontsize = 40.0
+        styles[name] = {"italic": _ass_flag(row.get("italic", "")),
+                        "bold": _ass_flag(row.get("bold", "")),
+                        "alignment": alignment,
+                        "fontsize": fontsize}
+    if res_x <= 0 or res_y <= 0:
+        res_x, res_y = _ASS_DEFAULT_RES
+    return ((res_x, res_y), styles)
+
+
+def ass_text_to_vtt(text: str, style: dict | None = None,
+                    styles: dict[str, dict] | None = None) -> tuple[str, bool]:
+    """ASS dialogue body -> (WebVTT cue text, is_drawing).
+
+    `\\N`/`\\n` become newlines; `\\i`/`\\b` switches map to WebVTT
+    `<i>`/`<b>`; every other `{...}` override block is dropped. The style
+    row's own `Italic`/`Bold` flags (MAO marks whole tracks: `Narrative`
+    and `Spoken` are italic, `Profile`/`Credit` bold) seed the state, so
+    an inline `\\i0` inside an italic style correctly closes the tag, and
+    `\\r` / `\\rStyleName` resets it. Tags are balanced and closed at the
+    end of the cue. Drawing blocks (`\\p1`) are reported through the second
+    element of the return: their body is vector art, not text.
+    """
+    base = style or {}
+    base_i, base_b = bool(base.get("italic")), bool(base.get("bold"))
+    cur_i, cur_b = base_i, base_b
+    open_tags: list[str] = []
+    out: list[str] = []
+
+    def sync() -> None:
+        # canonical nesting order (`<b><i>…</i></b>`) keeps the stream
+        # well-formed no matter which switch order the source used.
+        desired = (["b"] if cur_b else []) + (["i"] if cur_i else [])
+        while open_tags and open_tags != desired[:len(open_tags)]:
+            out.append(f"</{open_tags.pop()}>")
+        for tag in desired[len(open_tags):]:
+            out.append(f"<{tag}>")
+            open_tags.append(tag)
+
+    def emit(s: str) -> None:
+        """Append literal text, first flushing any pending tag change.
+
+        Deferring means a switch that governs no characters (`{\\i0}` at
+        the very start of an italic cue) never produces an empty `<i></i>`
+        pair — the tag stream only ever wraps real text.
+        """
+        if not s:
+            return
+        sync()
+        out.append(s)
+
+    def reset(name: str) -> None:
+        nonlocal cur_i, cur_b
+        target = _ass_style(styles, name) if name else None
+        if target:
+            cur_i, cur_b = bool(target.get("italic")), bool(target.get("bold"))
+        else:
+            cur_i, cur_b = base_i, base_b
+
+    pos = 0
+    for m in _ASS_OVERRIDE.finditer(text):
+        emit(text[pos:m.start()])
+        block = m.group(1)
+        if _ASS_DRAWING.search(block):
+            return ("", True)  # vector drawing, never a caption
+        for t in _ASS_TOGGLE.finditer(block):
+            if t.group("r") is not None:
+                reset(t.group("r").strip())
+                continue
+            if t.group("i") is not None:
+                cur_i = t.group("i") != "0"
+            else:
+                cur_b = t.group("b") != "0"
+        pos = m.end()
+    emit(text[pos:])
+    while open_tags:
+        out.append(f"</{open_tags.pop()}>")
+    body = "".join(out)
+    body = body.replace("\\N", "\n").replace("\\n", "\n")
+    body = body.replace("\r", "")
+    # ASS escapes: \h is a hard space, \{ \} are literal braces
+    body = body.replace("\\h", " ")
+    body = body.replace("\\{", "{").replace("\\}", "}")
+    lines = [ln.rstrip() for ln in body.split("\n")]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return ("\n".join(lines), False)
+
+
+def _ass_block_center(alignment: int, x: float, res_x: int, body: str,
+                      fontsize: float) -> float:
+    """Approximate horizontal centre (px) of the block anchored at `x`.
+
+    ASS `\\an1/4/7` anchor a block's LEFT edge at x and `\\an3/6/9` its
+    RIGHT edge, so the profile columns (`\\an7\\pos(387,134)` in a 704-wide
+    frame = 55%) occupy the right half even though the anchor itself is
+    only 5% past centre. The width estimate is 0.5 em per character of the
+    longest line — enough to classify a column, and the emitted
+    `position:` uses the raw anchor so the browser renders the same edge
+    ASS would.
+    """
+    longest = max((len(ln) for ln in _ASS_TAG.sub("", body or "").split("\n")),
+                  default=0)
+    half = min(res_x, longest * max(fontsize, 1.0) * 0.5) / 2.0
+    if alignment in (1, 4, 7):
+        return x + half
+    if alignment in (3, 6, 9):
+        return x - half
+    return x
+
+
+def _ass_cue_layout(style_name: str, style: dict, tag: str, res_x: int,
+                    res_y: int, body: str) -> tuple[bool, int | None]:
+    """(top, position%) placement for one cue.
+
+    Vertical: `[Script Info]` `PlayResY` turns `\\pos(x,y)` into a real
+    frame fraction. `< 45%` is the upper band; everything below is a
+    bottom cue — mv010's narrative block at y=410/720 (57%) and mv240's
+    credits at y=562/720 (78%) are bottom text even though they carry
+    `\\an8`/`\\an7`. `\\an` and the style's Alignment only decide the band
+    when there is no `\\pos` (WebVTT cannot express a pixel anchor).
+
+    Horizontal: an off-centre `\\pos` yields `position:<x>%` so the
+    side-by-side profile columns (mv020 122/704 of 1280, mv081 67/704 vs
+    387/704) stay in their own column instead of collapsing onto centre.
+    """
+    alignment = int(style.get("alignment") or 2)
+    for m in _ASS_AN.finditer(tag):
+        alignment = int(m.group(1))
+    x = y = None
+    for m in _ASS_POS.finditer(tag):
+        x, y = int(m.group(1)), int(m.group(2))
+    position: int | None = None
+    if x is not None and res_x > 0:
+        centre = _ass_block_center(alignment, x, res_x, body,
+                                   float(style.get("fontsize") or 40))
+        if abs(centre / res_x - 0.5) >= _ASS_OFFCENTER:
+            position = max(0, min(100, round(x / res_x * 100)))
+    if y is not None and res_y > 0:
+        top = (y / res_y) < _ASS_TOP_FRACTION
+    else:
+        top = alignment in (7, 8, 9) or style_name.strip().lower() == "songtop"
+    return (top, position)
+
+
+def ass_to_vtt(ass_text: str) -> str:
+    """One MAO `.ass` track -> a WebVTT document (pure, no I/O).
+
+    Parses `[Script Info]` (`PlayResX`/`PlayResY`) and `[V4+ Styles]`
+    (`Name`, `Bold`, `Italic`, `Alignment`) before `[Events]`, so cue
+    styling and placement survive the conversion. Cues are sorted
+    chronologically by (start, end) because the profile-caption tracks
+    interleave characters that are on screen at the same time. Placement
+    becomes WebVTT cue settings (`line:` band + `position:` column) instead
+    of pixel placement, so the player's own `<track>` styling decides the
+    look.
+    """
+    (res_x, res_y), styles = ass_header(ass_text)
+    fmt: list[str] | None = None
+    in_events = False
+    cues: list[tuple[int, int, str, str]] = []
+    for raw in ass_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            in_events = line.lower() == "[events]"
+            fmt = None
+            continue
+        if not in_events:
+            continue
+        if line.lower().startswith("format:"):
+            fmt = [f.strip().lower() for f in line.split(":", 1)[1].split(",")]
+            continue
+        if not line.lower().startswith("dialogue:"):
+            continue
+        # `Text` (last field) may itself contain commas: split with maxsplit
+        cols = fmt or list(_ASS_DEFAULT_FORMAT)
+        fields = line.split(":", 1)[1].split(",", len(cols) - 1)
+        if len(fields) < len(cols):
+            continue
+
+        def field(name: str, default: str = "") -> str:
+            if name not in cols:
+                return default
+            k = cols.index(name)
+            return fields[k].strip() if k < len(fields) else default
+
+        start = ass_time_ms(field("start"))
+        end = ass_time_ms(field("end"))
+        if start is None or end is None or end <= start:
+            continue
+        style_name = field("style")
+        style = _ass_style(styles, style_name) or {}
+        text_field = fields[len(cols) - 1]
+        tag = " ".join(_ASS_OVERRIDE.findall(text_field))
+        body, is_drawing = ass_text_to_vtt(text_field, style, styles)
+        if is_drawing or not body.strip():
+            continue
+        top, position = _ass_cue_layout(style_name, style, tag, res_x, res_y,
+                                        body)
+        settings = ["line:8%"] if top else []
+        if position is None:
+            settings.append("align:center")
+        else:
+            settings.append(f"position:{position}%")
+            settings.append("align:start")
+        cues.append((start, end, body, " ".join(settings)))
+    cues.sort(key=lambda c: (c[0], c[1]))
+
+    out = ["WEBVTT", ""]
+    for start, end, body, settings in cues:
+        out.append(f"{vtt_time(start)} --> {vtt_time(end)} {settings}")
+        out.append(body)
+        out.append("")
+    return "\n".join(out)
+
+
+def discover_ass_dir(en_paks: list[str]) -> str | None:
+    """Find MAO's `Movie Patcher/assets/ass` next to a supplied en.pak.
+
+    The v2.1.0 release ships
+    `<release>/Main Game/Windows/game files/en.pak` and the subtitle
+    sources at `<release>/Main Game/Movie Patcher/assets/ass`. Walk up
+    from each en.pak (and its ancestors' siblings) looking for that
+    shape; returns the first hit or None.
+    """
+    seen: set[str] = set()
+    for pak in en_paks:
+        here = os.path.dirname(os.path.abspath(pak))
+        for _ in range(5):
+            if not here or here in seen:
+                break
+            seen.add(here)
+            for cand in (
+                os.path.join(here, "Movie Patcher", "assets", "ass"),
+                os.path.join(os.path.dirname(here), "Movie Patcher",
+                             "assets", "ass"),
+            ):
+                if os.path.isdir(cand):
+                    return cand
+            parent = os.path.dirname(here)
+            if parent == here:
+                break
+            here = parent
+    return None
+
+
+def convert_subtitles(ass_dir: str, out_dir: str, manifest: dict,
+                      missing: list) -> int:
+    """`*.ass` in ass_dir -> `<out>/subs/<mvNNN>.vtt`, recorded in manifest.
+
+    Returns the number of tracks written. Existing manifest entries are
+    updated in place (the `--subs-only` path reuses a previous extract).
+    """
+    if not os.path.isdir(ass_dir):
+        missing.append(f"{ass_dir}: subtitle dir not found")
+        return 0
+    subs = os.path.join(out_dir, "subs")
+    os.makedirs(subs, exist_ok=True)
+    table = manifest.setdefault("subtitles", {})
+    written = 0
+    sources: set[str] = set()
+    for fn in sorted(os.listdir(ass_dir)):
+        if not fn.lower().endswith((".ass", ".ssa")):
+            continue
+        mvid = os.path.splitext(fn)[0].lower()
+        sources.add(mvid + ".vtt")
+        try:
+            with open(os.path.join(ass_dir, fn), "r", encoding="utf-8-sig",
+                      errors="replace") as f:
+                src = f.read()
+        except OSError as e:
+            missing.append(f"{fn}: unreadable ({e})")
+            continue
+        vtt = ass_to_vtt(src)
+        if vtt.strip() == "WEBVTT":
+            missing.append(f"{fn}: no dialogue cues")
+            continue
+        dst = os.path.join(subs, mvid + ".vtt")
+        with open(dst, "w", encoding="utf-8", newline="\n") as f:
+            f.write(vtt)
+        table[mvid] = f"subs/{mvid}.vtt"
+        written += 1
+    # Stale entries: a track the previous extract mapped must not outlive
+    # its `.ass` source (movies renumbered/dropped between releases), or
+    # the player asks for a caption file that is no longer produced.
+    for mvid in [k for k in table if k + ".vtt" not in sources]:
+        del table[mvid]
+    for fn in os.listdir(subs):
+        if fn.lower().endswith(".vtt") and fn not in sources:
+            try:
+                os.unlink(os.path.join(subs, fn))
+            except OSError as e:
+                missing.append(f"{fn}: stale .vtt not removed ({e})")
+    log(f"  subtitles: {written} .vtt tracks -> {subs}")
+    return written
 
 
 def _pak_tag(pak: str, game: str) -> str:
@@ -451,13 +908,27 @@ def main() -> None:
                     help="x264 preset (slow/slower = smaller at one CRF)")
     ap.add_argument("--movie-height", type=int, default=0,
                     help="downscale movies to this height (0 = keep; 720 web tier)")
+    ap.add_argument("--ass-dir",
+                    help="MAO Movie Patcher assets/ass dir (movie subtitles). "
+                         "Default: auto-discovered as '<release>/Main Game/"
+                         "Movie Patcher/assets/ass' relative to --en-pak.")
+    ap.add_argument("--subs-only", action="store_true",
+                    help="only (re)generate subs/*.vtt + update an existing "
+                         "OUT/manifest.json; skips pak/MP4 extraction")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
     if args.selftest:
         run_selftest()
         return
-    if not args.game or not args.out:
+    if args.subs_only:
+        # `extract_assets.py OUT --subs-only` (single positional = the pack
+        # dir to update) or `... GAME OUT --subs-only`.
+        if args.out is None and args.game is not None:
+            args.out, args.game = args.game, None
+        if not args.out:
+            ap.error("--subs-only needs OUT_DIR")
+    elif not args.game or not args.out:
         ap.error("game and out required (or --selftest)")
 
     # ffmpeg/python temp can exceed constrained /tmp quotas; keep temp on
@@ -471,8 +942,48 @@ def main() -> None:
 
     os.makedirs(args.out, exist_ok=True)
     manifest: dict = {"version": MANIFEST_VERSION, "images": {}, "bgm": {},
-                      "sfx": {}, "voice": {}, "movies": {}}
+                      "sfx": {}, "voice": {}, "movies": {}, "subtitles": {}}
     missing: list[str] = []
+
+    # Subtitle directories: an explicit --ass-dir wins; otherwise look for
+    # MAO's `Movie Patcher/assets/ass` beside any supplied en.pak.
+    ass_dir = args.ass_dir or discover_ass_dir(list(args.en_pak))
+    if ass_dir:
+        log(f"subtitles: {ass_dir}")
+
+    if args.subs_only:
+        mpath = os.path.join(args.out, "manifest.json")
+        compact = False
+        if not os.path.isfile(mpath):
+            # A subs-only run cannot invent an asset manifest: writing one
+            # with empty images/audio/bgm/movies tables would shadow the
+            # real extract and every asset in the game would look missing.
+            ap.error(f"--subs-only needs an existing {mpath}; run a full "
+                     "extract first")
+        try:
+            with open(mpath, encoding="utf-8") as f:
+                raw = f.read()
+            manifest = json.loads(raw)
+            # pack_bundle.py writes a compact manifest; keep it compact
+            # so a subs-only refresh does not bloat the packed file.
+            compact = "\n" not in raw
+        except (OSError, ValueError) as e:
+            ap.error(f"cannot read {mpath}: {e}")
+        if not isinstance(manifest, dict):
+            ap.error(f"{mpath}: not an object")
+        if not ass_dir:
+            ap.error("--subs-only needs --ass-dir (or an en.pak beside the "
+                     "MAO Movie Patcher dir)")
+        n = convert_subtitles(ass_dir, args.out, manifest, missing)
+        with open(mpath, "w", encoding="utf-8") as f:
+            if compact:
+                json.dump(manifest, f, separators=(",", ":"),
+                          ensure_ascii=False)
+            else:
+                json.dump(manifest, f, indent=1)
+        log(f"subs: {n} tracks, {len(manifest.get('subtitles') or {})} "
+            f"mapped -> {args.out}/subs")
+        return
 
     def emit(sub: str, stem: str, ext: str) -> str:
         d = os.path.join(args.out, sub)
@@ -650,6 +1161,12 @@ def main() -> None:
         os.makedirs(d, exist_ok=True)
         shutil.copy(subs, os.path.join(d, "subtitles"))
         manifest["cues"] = "cues/subtitles"
+
+    # 4. movie subtitles (.ass -> subs/*.vtt)
+    if ass_dir:
+        convert_subtitles(ass_dir, args.out, manifest, missing)
+    else:
+        log("subtitles: no --ass-dir and no Movie Patcher found; skipped")
 
     with open(os.path.join(args.out, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=1)
