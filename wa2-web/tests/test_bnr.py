@@ -23,6 +23,13 @@ def stmt(words: list[int]) -> list[int]:
     return words + [6, 30]
 
 
+def pushes(*vals: int) -> list[int]:
+    out: list[int] = []
+    for v in vals:
+        out.extend([5, 3, v & 0xFFFFFFFF])
+    return out
+
+
 def test_decode_lac_name_accepts_bgm_se_voice():
     assert decode_lac_name(xor_name("BGM_001_A.OGG")) == "BGM_001_A.OGG"
     assert decode_lac_name(xor_name("BGM_074.OGG")) == "BGM_074.OGG"
@@ -96,3 +103,100 @@ def test_pak_tag_finds_nested_ic_disc_layout():
     assert _pak_tag("/g/IC/BGM.PAK", "/g") == "ic"
     assert _pak_tag("/g/disc1/IC/BGM.PAK", "/g") == "ic"
     assert _pak_tag("/g/disc1/BGM.PAK", "/g") == ""
+
+
+def _decode_syn(*stmts: list[int]):
+    from unittest.mock import patch
+    import decode_bnr
+    payload = lscr_payload(sum((stmt(s) for s in stmts), []))
+    with patch.object(decode_bnr.kcap, "read_index", return_value=[]), patch.object(
+        decode_bnr, "load_bnr", return_value=(payload, None),
+    ):
+        return decode_bnr.decode_script(b"", "syn")
+
+
+def _img_row(recs, **kw):
+    rows = [r for r in recs if r.get("layer") in ("bak", "grp") and "stems" in r]
+    assert len(rows) == 1, recs
+    for k, v in kw.items():
+        assert rows[0][k] == v, rows[0]
+    return rows[0]
+
+
+def test_decode_img_op146_bak_sprclear_tod_default():
+    recs = _decode_syn(pushes(1, 1001, 0, 60, 0, 0, 0) + [4, 146])
+    _img_row(recs, layer="bak", sprClear=True, stems=["100100"])
+
+
+def test_decode_img_op147_bak_keeps_sprites():
+    recs = _decode_syn(pushes(1, 1001, 0, 60, 0, 0, 0) + [4, 147])
+    _img_row(recs, layer="bak", sprClear=False, stems=["100100"])
+
+
+def test_decode_img_op148_grp_sprclear():
+    recs = _decode_syn(pushes(1, 10010, 0, 60, 0, 0, 0) + [4, 148])
+    row = _img_row(recs, layer="grp", sprClear=True)
+    assert "100100" in row["stems"]
+
+
+def test_decode_tod170_push_list_sets_evening_stem():
+    recs = _decode_syn(
+        pushes(1) + [4, 170],
+        pushes(1, 1001, 0, 60, 0, 0, 0) + [4, 146],
+    )
+    _img_row(recs, stems=["100101"])
+
+
+def test_decode_tod170_via_bgm_stop_push():
+    recs = _decode_syn(
+        [4, 5, 3, 2, 4, 170],
+        pushes(1, 1033, 0, 30, 0, 0, 0) + [4, 146],
+    )
+    _img_row(recs, stems=["103302"])
+
+
+def test_decode_tod170_multiop_trailing_zero():
+    recs = _decode_syn(
+        pushes(447, 1600, 10, 0) + [6, 18, 6, 19, 4, 196, 4, 170, 6, 21],
+        pushes(1, 1001, 0, 60, 0, 0, 0) + [4, 146],
+    )
+    _img_row(recs, stems=["100100"])
+
+
+def test_decode_img_multiop_trailing_6_slice():
+    recs = _decode_syn(
+        pushes(9, 8, 1, 2001, 1, 45, 0, 0, 0)
+        + [6, 18, 6, 19, 4, 196, 4, 148, 6, 21],
+    )
+    row = _img_row(recs, layer="grp")
+    assert row["fade"] == 45
+    assert "200101" in row["stems"]
+
+
+def test_decode_img_trailing_4_132_drop():
+    recs = _decode_syn(
+        pushes(1, 1001, 0, 60, 0, 0, 0, 99) + [4, 146, 4, 132],
+    )
+    _img_row(recs, stems=["100100"])
+
+
+def test_decode_img_6_27_variant_slice():
+    recs = _decode_syn(
+        [2, 0, 6, 27, 6, 16]
+        + pushes(1, 2, 3, 9, 8, 4, 7, 0, 0, 0)
+        + [4, 148],
+    )
+    row = _img_row(recs, layer="grp")
+    assert row["fade"] == 7
+    assert "908" in row["stems"]
+
+
+def test_decode_img_3907_resolution_pushes():
+    zoom = struct.unpack("<I", struct.pack("<f", 1.0))[0]
+    recs = _decode_syn(
+        pushes(1, 5010, 2, 90, 0, 0, 0)
+        + [6, 23, 6, 18, 5, 4, zoom]
+        + pushes(1280, 720)
+        + [4, 146],
+    )
+    _img_row(recs, layer="bak", stems=["501020"], fade=90)

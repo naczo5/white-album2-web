@@ -181,9 +181,10 @@ tools/decode_bnr.py (fades/cams).
 | `(4,165)` + `[ch, se, fade_ms, loop, vol, ?]` | ambient channel SE play: ch 0-3, fade ms (0/30/60/120 common), loop flag (1: 955×, 0: 3528×), volume 0-255 (255/128/80/180/60 seen); thunk 0x40f400; 645/646 distinct ids are `SE_%04d` in SE.PAK (99%; only id 180 absent, sfx max 9801) | high (dispatch entry 37 → 0x40f400 + census) |
 | `(4,166)` + `[ch, V]` | channel volume set (V > 0) / channel stop (V ≤ 0 → emitted as `ambStop`) | high (0x40f590) |
 | `(4,168)` + `[ch, 0]` | channel stop guarded by engine skip-state check (0x40ad10) — NOT emitted (in normal play the engine keeps the channel; stopping it would be a wrong silence) | medium (documented only) |
-| `(4,146)` + `[M,X,Y,F,0,0,0]` | backdrop show: handler 0x454f30 passes **mode 0** to image primitive 0x4167e0 → filename `B%04d%1d%1d.tga` (.rdata 0x4a2a00; `b*` in our extraction). X=0 → bare fade F; X=-2 → clear; else stem `(str(X)+str(Y)).ljust(6,"0")` + `X+Y:02d` (1004,0 → 100400; 1008,2 → 100820+100802; 9900,0 → 990000). A missing b*-file leaves the previous backdrop standing (no cross-prefix fall-through) | high (handlers 0x454f30 vs 0x454fc0 differ only in the mode push; 2600+ statements) |
-| `(4,147)` + `[M,X,Y,F,…]` | **event-visual (CG) show, grp layer**: handler 0x454fc0 is byte-identical to 0x454f30 except `push $1` (0x455026) → primitive mode 1 → `v%06d.tga` (.rdata 0x4a2a1c). Previously mis-decoded as bak (CGs leaked through as backdrops, user-visible) | high (handler diff + .rdata format strings) |
-| `(4,148)` + `[M,X,Y,F,…]` | event-visual overlay, grp layer: handler 0x455050 also passes mode 1 (`push $1` at 0x455122/0x45515a) → `v%06d.tga`; stem `str(X)+str(Y)` (10010,0 → 100100), alt `X*100+Y` (1001000) | high (358 cues + handler mode push) |
+| `(4,146)` + `[…,X,Y,F,0,0,0]` | backdrop show (bak): handler **0x454f30** → image primitive **0x4167e0** with **arg2=0** (wipe sprites via 0x402680), **arg3=0** → `B%04d%1d%1d.tga` (.rdata 0x4a2a00; third digit = time-of-day from ds:0x5218ac, see `(4,170)`). X=0 → fade F; X=-2 → clear; else stem `f"{X:04d}{Y}{tod}"` (1001,0,tod 0 → 100100). Missing b* leaves prior backdrop (no b→v fall-through) | high (0x454f30 + 0x4167e0 + corpus) |
+| `(4,147)` + `[…,X,Y,F,…]` | backdrop show **keeping sprites**: handler **0x454fc0** — same as 146 except **arg2=1** (sprClear off); still **arg3=0** → same `B%04d%1d%1d.tga` bak stems (not grp / not `v%06d`). Was mis-read when arg2 was confused with arg3 | high (0x454fc0 push diff at 0x416833 vs 0x416919) |
+| `(4,148)` + `[…,X,Y,F,…]` | event-visual overlay (grp): handler **0x455050** → **arg2=0**, **arg3=1** → `v%06d.tga` (0x4a2a1c); stems `str(X)+str(Y)` padded + alt (10010,0 → 100100). **341/341** grp hits IC+Main | high (0x455050 + corpus) |
+| `(4,170)` + push / `[(4,5),(3,val),…]` | sets global **tod** at **ds:0x5218ac** (handler **0x455800** → 0x401870; default 0). Last int push when non-empty; else val after `(4,5),(3,val)` in ops. Drives the third digit in `B%04d%1d%1d.tga` (0..3) | high (0x41680c load + 0x41696c..97 format) |
 | `(4,176)` + `[slot,MODE,2,256,last]` | txt-named image driver (MODE 14 = `.tga` grp, 12/13 = bak/grp; JP toks in `(3,*)` ops match the image context) | high (1007/1008_030 controls) |
 | `(4,185)` + `[slot,1,0,0]` after multi-image shows | slot selector for txt-named event art (one per loaded image) | medium (positions unknown) |
 | `(4,208)` + `[99,0,0]`/`[99,3,1]`/`[1,1,1]` | choice-present marker (exactly on choice toks; `[99,3,1]` = goto-carrying option) | high (32/32 gate) |
@@ -253,15 +254,12 @@ docs/QA.md verification log):
   (handlers 0x4555e0/0x455640; mode 3 = the (4,157) constant form; corpus
   553+175 = 831 hides, all pids valid char ids). Plus the face==4000
   sentinel inside show ops (1 corpus occurrence, 1008_030 tail).
-- **A backdrop show/clear (mode 0, op 146) wipes ALL standing sprites.**
-  Disassembly of the shared image primitive `0x4167e0` shows the clear-all
-  slot call `0x402680` inside `if (param_3 == 0)` — only the backdrop path.
-  (4,147)/(4,148) pass mode 1 and therefore do NOT wipe sprites; CGs cover
-  them instead. Corpus confirmation for mode 0: every sprite burst re-shows
-  after a bak change; per-script max simultaneous sprites drop from ≤11 to
-  ≤5 (mostly ≤3), matching play observation. decode_bnr.py emits
-  `sprClear: true` only on bak recs, and resolveSprites applies recs in
-  statement order so same-event re-shows survive.
+- **Sprite wipe is arg2 on 0x4167e0, not the bak/grp format choice (arg3).**
+  arg2=0 on (4,146) and (4,148) reaches clear-all `0x402680`; (4,147) passes
+  arg2=1 and keeps standing sprites while updating the bak layer. arg3=0 on
+  146/147 → `B%04d%1d%1d.tga`; arg3=1 on 148 → `v%06d.tga` grp only.
+  decode_bnr.py emits `sprClear` on 146/148, not 147; resolveSprites applies
+  recs in statement order so same-event re-shows survive.
 - The player renders this timeline (web/src/ui/reader.ts
   resolveSprites, test-pinned): char-keyed state, hide/sprClear clear,
   x from the 0x4be0bc table, hypothesis recs ignored.

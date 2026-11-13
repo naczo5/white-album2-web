@@ -1252,8 +1252,9 @@ function stageImageState(save: SaveData): StageImageState {
  * (fractional indices). Latest resolvable cue at/before `event` wins;
  * a clear is a barrier (stage wiped — nothing older shows). Unresolvable
  * cues (assets not installed) fall through to older backdrops — that is
- * engine-true: op (4,146) builds "B%04d%1d%1d.tga" (mode 0 in primitive
- * 0x4167e0, exe .rdata 0x4a2a00), so a missing b*-file leaves the
+ * engine-true: ops (4,146)/(4,147) build "B%04d%1d%1d.tga" (arg3=0 in
+ * primitive 0x4167e0, .rdata 0x4a2a00; tod digit from ds:0x5218ac via
+ * (4,170)), so a missing b*-file leaves the
  * previous backdrop standing. Same-event cues apply in statement order:
  * the LAST statement at an event wins (handlers run sequentially).
  * resolveStageImageEx additionally reports WHY the stage is empty:
@@ -1302,10 +1303,10 @@ export function resolveStageImageEx(
       if (url) return { url, cleared: false };
       missingFile = c.file;
     } else if (c.stems) {
-      // Backdrop stems resolve to b* files ONLY: op (4,146) passes mode 0
-      // to primitive 0x4167e0 which builds "B%04d%1d%1d.tga" (0x4a2a00).
-      // No cross-prefix fall-through — the engine never loads a v* CG
-      // here (that is op (4,147), decoded into the grp layer).
+      // Backdrop stems resolve to b* files ONLY: (4,146) and (4,147) both
+      // pass arg3=0 to 0x4167e0 -> "B%04d%1d%1d.tga" (0x4a2a00); 146
+      // wipes standing sprites (arg2=0), 147 keeps them (arg2=1). No
+      // cross-prefix fall-through — grp uses (4,148) -> v%06d.tga.
       for (const stem of c.stems) {
         const url = imageUrl(`b${stem}.tga`, chapter);
         if (url) return { url, cleared: false };
@@ -1367,8 +1368,8 @@ export function resolveStageOverlay(
     if (c.reset) return null;
     const files = c.file
       ? [c.file]
-      // Overlay stems: ops (4,147)/(4,148) pass mode 1 to primitive
-      // 0x4167e0 -> "v%06d.tga" (0x4a2a1c). No b* fall-through — the
+      // Overlay stems: op (4,148) passes arg3=1 to primitive 0x4167e0
+      // -> "v%06d.tga" (0x4a2a1c). No b* fall-through — the
       // engine never loads a backdrop file into the overlay layer.
       : (c.stems ?? []).flatMap((s) => [`v${s}.tga`, `tv${s}.tga`]);
     for (const f of files) {
@@ -1910,9 +1911,9 @@ function displaySpeaker(save: SaveData, ev: ScenarioEvent): string {
  * hides decoded by tools/decode_bnr.py. Slot records are keyed by character
  * id (exe 0x402220 scans the 8 slot records by id): a show of the same char
  * replaces its pose/position; a hide clears the char; face 4000 hides too.
- * A backdrop show/clear wipes ALL standing sprites (exe: image primitive
- * 0x4167e0 reaches the clear-all slot loop 0x402680) — recs carry
- * sprClear on bak cues; recs are applied in statement order so same-event
+ * Ops (4,146)/(4,148) wipe standing sprites (0x4167e0 arg2=0 -> 0x402680);
+ * (4,147) keeps sprites (arg2=1). recs carry sprClear; applied in
+ * statement order so same-event
  * re-shows after the wipe survive. Draw order = show order (Map insertion
  * order), matching the engine's slot-allocation draw order.
  * Hypothesis-confidence recs are ignored. DOM-free; test-pinned. */

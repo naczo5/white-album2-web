@@ -115,28 +115,21 @@ is proven, what is assumed, and exactly how to close each gap.
    confirm the 3024 short path.
 14. **3023 `CATCH3 → {3201, 3101}`**: decoded as `3023-523` SWITCH,
    default 3101 (numeric play order); the 3201 short path is unconfirmed.
-15. **IC-chapter backdrop mismatch — ROOT-CAUSED (2026-10-08), fix staged**:
-    the "CG shown as backdrop" (e.g. 1002 ev 0 `100100` → CG v100100) was
-    two port bugs, not an IC-pak mystery: (a) ops (4,146) and (4,147)
-    decode identically but the engine builds `B%04d%1d%1d.tga` for 146
-    (backdrop) and `v%06d.tga` for 147 (full-screen CG event visual) —
-    the handlers differ by exactly one mode push to primitive 0x4167e0
-    (.rdata 0x4a2a00 / 0x4a2a1c). decode_bnr.py now emits 147 as grp.
-    (b) the port's b→v→tv stem fall-through let missing backdrops leak
-    CGs; the engine's failed image load keeps the previous backdrop.
-    Reader resolvers now resolve bak stems b-only, grp stems v-only, and
-    apply same-event cues in statement order (last statement wins —
-    1002's ev-0 cue 100400 classroom correctly supersedes 100100).
-    **Deployment note**: the corrected decode (147→grp, CGs as
-    full-screen overlays) is now live in the real JP-spine build
-    (2026-11-02); the resolver fix alone already killed the CG leak.
+15. **IC-chapter backdrop mismatch — RESOLVED (2026-11-13)**: root cause was
+    confusing **arg2** (sprite wipe) vs **arg3** (filename layer) on primitive
+    **0x4167e0**. Handlers **0x454f30** (146) and **0x454fc0** (147) both use
+    arg3=0 → `B%04d%1d%1d.tga` (bak); 147 alone sets arg2=1 (keep sprites).
+    Only **0x455050** (148) uses arg3=1 → `v%06d.tga` (grp). The interim
+    2026-10-08 fix that decoded 147 as grp was incorrect. Bak stems now include
+    the time-of-day digit from **ds:0x5218ac** via **(4,170)** / **0x455800**.
+    Reader resolvers remain per-layer (b-only / v-only) with statement-order
+    merge (1002 ev 0: last bak cue wins).
 16. **bak-cue resolver fall-through — RESOLVED (2026-10-08)**: replaced by
     the engine-proven per-layer prefixes above; see item 15.
-17. **147/148 sprite-clear semantics — RESOLVED (2026-11-02)**: static
-    disassembly of `FUN_004167e0` shows the clear-all call `0x402680`
-    inside `if (param_3 == 0)` — only the backdrop/146 path. Mode 1
-    (147/148) never wipes. `decode_bnr.py` now emits `sprClear` only for
-    `layer == "bak"`; the 1013 sprite-under-CG observation is consistent.
+17. **147/148 sprite-clear semantics — UPDATED (2026-11-13)**: `0x4167e0`
+    arg2=0 (146/148) triggers sprite clear `0x402680`; arg2=1 on 147 keeps
+    sprites. arg3 selects format, not wipe. `decode_bnr.py` emits
+    `sprClear` on 146 and 148 only; 147 bak updates leave sprites on stage.
 18. **Special Contents series termination — needs playtest**: terminals end
     5000/5100/5200/5300/5400 immediately while their bare-link runs continue
     through 5004/5104/5209/5303/5401; 4000-4009 and 6001-6005 have no
@@ -722,4 +715,17 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
   with the BYOA save corpora (`WA2_NATIVE_SAVES`, `WA2_SYS_SAVES`,
   `WA2_DATA_DIR=build/data`) → **229 passed, 0 skipped** (native slots
   11/11, real-data playthrough 183/221 scripts, `Sys.sav` profile).
+
+- 2026-11-13 (static RE: **(4,147) arg2 vs arg3** + **(4,170) tod**):
+  - Handlers **0x454f30** (146), **0x454fc0** (147), **0x455050** (148) →
+    **0x4167e0**: arg2=0 wipes sprites (0x402680), arg2=1 keeps them (147);
+    arg3=0 → `B%04d%1d%1d.tga` (146+147 bak), arg3=1 → `v%06d.tga` (148 grp).
+    **(4,170)** via **0x455800** → **ds:0x5218ac** supplies the third bak
+    digit (0x41680c / 0x41696c..97). `tools/decode_bnr.py`:
+    `_extract_img_args`, `_update_tod`, `bak_stem`; 147 decoded bak with
+    `sprClear: false`. `tests/test_bnr.py`: 10 synthetic LSCR cases;
+    `bgm.test.ts`: `sprClear:false` on 147-class bak cue. Docs: PARSING
+    image-op table + sprite wipe note; QA items 15/17. Gates:
+    `pytest tests/ -q` → **154 passed, 9 skipped**; `npx tsc --noEmit` clean;
+    `npx vitest run` → **226 passed, 4 skipped**.
 

@@ -54,6 +54,13 @@ describe("sprite timeline (bnr (4,154)/(4,155) shows + (4,156)/(4,157) hides)", 
     ];
     expect(resolveSprites(rs2, 5)).toEqual([{ id: 2, stem: "set001210", pos: 2 }]);
   });
+  it("bak cue with sprClear:false (op 147) keeps standing sprites", () => {
+    const rs: BnrRec[] = [
+      { ev: 1, spr: { id: 1, stem: "kaz001101", pos: 1 }, conf: "high" },
+      { ev: 3, layer: "bak", stems: ["100400"], sprClear: false, conf: "high" },
+    ];
+    expect(resolveSprites(rs, 3)).toEqual([{ id: 1, stem: "kaz001101", pos: 1 }]);
+  });
   it("an out-of-order (late-listed) sprClear is applied at its event, not list position", () => {
     // decode regression: tail statements were anchored to ev 0 at the END of
     // the rec list, wiping sprites at every event (1004 showed none). The
@@ -265,9 +272,8 @@ describe("merged stage timeline (txt images + bnr backdrops)", () => {
   });
 
   it("same-event bak cues apply in statement order: last wins (1002 ev0)", () => {
-    // Real 1002 start: cue 100100 (b* missing on disc) then 100400
-    // (classroom). The engine executes statements in order — the later
-    // cue wins even though the earlier one resolves.
+    // Real 1002 start: evening rooftop 100101 (tod=1) can precede daytime
+    // 100400 in raw decode order; statement order still picks the last cue.
     const bnr = [
       { ev: 0, layer: "bak" as const, stems: ["100100"], fade: 60, conf: "high" as const },
       { ev: 0, layer: "bak" as const, stems: ["100400"], fade: 60, conf: "high" as const },
@@ -286,7 +292,7 @@ describe("merged stage timeline (txt images + bnr backdrops)", () => {
     expect(resolveStageImage([], bnr, 8, "intro")).toBe("assets/ic/bg/b100400.png");
   });
 
-  it("grp stems never fall through to b* backdrops (ops 147/148 = v%06d.tga)", () => {
+  it("grp stems never fall through to b* backdrops (op 148 = v%06d.tga)", () => {
     const bnr = [{ ev: 460, layer: "grp" as const, stems: ["200101"], conf: "high" as const }];
     const txt = [txtEv({ t: "image", file: "g.tga", layer: "grp" }, 432)];
     // b200101 exists but a grp cue must not load it: older overlay wins.

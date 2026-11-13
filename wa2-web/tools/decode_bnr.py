@@ -52,6 +52,55 @@ from proto_bgm import find_se, iter_statements, load_bnr, s32  # noqa: E402
 JPGAME: bytes | None = None
 
 
+def _extract_img_args(
+    s: list[int], ops: list[tuple[int, int]],
+) -> tuple[int | None, int | None, int | None]:
+    """X/Y/fade for (4,146)/(4,147)/(4,148) from multi-op LSCR statements.
+
+    Trailing (4,132) or (6,0) appends one extra push (drop it). Variants
+    per exe handlers 0x454f30 / 0x454fc0 / 0x455050 -> primitive 0x4167e0.
+    """
+    args = list(s)
+    if any(o == 4 and a == 132 for o, a in ops) or (6, 0) in ops:
+        if args:
+            args = args[:-1]
+    if ops == [(4, 147)] and len(args) == 8:
+        return args[1], args[2], args[3]
+    if (len(args) == 9 and args[-2:] == [1280, 720]
+            and (6, 23) in ops and (6, 18) in ops):
+        return args[1], args[2], args[3]
+    if ((6, 27) in ops and len(args) >= 7
+            and args[-3:] == [0, 0, 0]):
+        return args[-7], args[-6], args[-4]
+    if len(args) >= 6:
+        return args[-6], args[-5], args[-4]
+    if len(args) >= 4:
+        return args[1], args[2], args[3]
+    return None, None, None
+
+
+def _update_tod(
+    s: list[int], ops: list[tuple[int, int]], tod: int,
+) -> int:
+    """Apply opcode (4,170) (handler 0x455800 -> ds:0x5218ac time-of-day)."""
+    if not any(o == 4 and a == 170 for o, a in ops):
+        return tod
+    if s:
+        return s[-1]
+    for i in range(len(ops) - 2):
+        o0, a0 = ops[i]
+        o1, a1 = ops[i + 1]
+        o2, a2 = ops[i + 2]
+        if o0 == 4 and a0 == 5 and o1 == 3 and o2 == 4 and a2 == 170:
+            return a1
+    return tod
+
+
+def bak_stem(x: int, y: int, tod: int) -> str:
+    """Backdrop stem for primitive 0x4167e0 mode 0: B%04d%1d%1d.tga."""
+    return f"{x:04d}{y}{tod}"
+
+
 def decode_script(data: bytes, script: str) -> list[dict]:
     payload, _ = load_bnr(data, script)
     # Exact anchors via the JP token spine (bnr_anchor): the stream's
@@ -89,6 +138,7 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             events = []
     m = len(events)
     recs: list[dict] = []
+    tod = 0
     n = 0
     last_ev = 0
     for idx, _off, _pushes, _ops, _raw, _floats in iter_statements(payload):
@@ -110,6 +160,7 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             ev = last_ev
         last_ev = ev
         s = [s32(x) for x in pushes]
+        tod = _update_tod(s, ops, tod)
         if idx in se_by_stmt:
             recs.append({"ev": ev, "se": [se_by_stmt[idx]],
                          "conf": "high"})
@@ -170,46 +221,39 @@ def decode_script(data: bytes, script: str) -> list[dict]:
         has157 = any(o == 4 and a == 157 for o, a in ops)
         if (has156 or has157) and s:
             recs.append({"ev": ev, "sprHide": s[0], "conf": "high"})
-        # Backdrops / event art: (4,146)/(4,147) [M,X,Y,F,...], (4,148).
-        # X==0: bare fade (transition timing); X==-2: clear; else filename
-        # stems (prefix resolved at lookup). Handlers 0x454f30 (146) and
-        # 0x454fc0 (147) are byte-identical except ONE push: 146 passes
-        # mode 0, 147 passes mode 1 to the image primitive 0x4167e0,
-        # which selects the filename format (exe .rdata 0x4a2a00/0x4a2a1c):
-        # mode 0 -> "B%04d%1d%1d.tga" (backdrop, b* files), mode 1 ->
-        # "v%06d.tga" (event visual, v* files). So 147 is a CG show
-        # (grp layer), not a backdrop; op 148 (0x455050) also passes
-        # mode 1 (push $1 at 0x455122/0x45515a) -> grp as decoded.
+        # Backdrops / event art: (4,146)/(4,147)/(4,148) -> 0x4167e0.
+        # arg2 (sprite clear): 0 on 146/148, 1 on 147 (0x416833 vs keep).
+        # arg3 (layer/mode): 0 on 146/147 -> "B%04d%1d%1d.tga" (bak, 0x4a2a00);
+        # 1 on 148 -> "v%06d.tga" (grp, 0x4a2a1c). Handlers 0x454f30,
+        # 0x454fc0, 0x455050. Time-of-day digit comes from ds:0x5218ac via
+        # (4,170) (0x455800); bak stems use (x, y, tod).
         has146 = any(o == 4 and a == 146 for o, a in ops)
         has147 = any(o == 4 and a == 147 for o, a in ops)
         has148 = any(o == 4 and a == 148 for o, a in ops)
-        if (has146 or has147 or has148) and len(s) >= 4:
-            _m, x, y, fade = s[0], s[1], s[2], s[3]
-            # 146 -> bak (mode 0, B%04d%1d%1d.tga); 147/148 -> grp (mode 1,
-            # v%06d.tga event visuals). Handlers differ only in that push.
-            layer = "bak" if (has146 and not has147 and not has148) else "grp"
-            if x == 0:
+        if has146 or has147 or has148:
+            x, y, fade = _extract_img_args(s, ops)
+            if x is None:
+                pass
+            elif x == 0:
                 if fade:
                     recs.append({"ev": ev, "fadeMs": fade, "conf": "high"})
             elif x == -2:
+                layer = "grp" if has148 else "bak"
+                spr_clear = has146 or has148
                 recs.append({"ev": ev, "clear": True,
                              "layer": layer,
-                             # Sprite wipe only for mode 0 (backdrop/146).
-                             # Disassembly of 0x4167e0: the clear-all call
-                             # 0x402680 sits inside `if (param_3 == 0)`, so
-                             # 147/148 (mode 1 event visuals) never wipe.
-                             "sprClear": layer == "bak",
+                             "sprClear": spr_clear,
                              "conf": "high"})
             elif x > 0:
+                layer = "grp" if has148 else "bak"
+                spr_clear = has146 or has148
+                stems = (stem_candidates(x, y) if layer == "grp"
+                         else [bak_stem(x, y, tod)])
                 recs.append({"ev": ev,
                              "layer": layer,
-                             "stems": stem_candidates(x, y),
-                             "fade": fade,
-                             # A backdrop show wipes standing sprites: the
-                             # image primitive 0x4167e0 reaches the clear-all
-                             # sprite loop 0x402680 only in mode 0 (see the
-                             # disassembly note above; 147/148 keep sprites).
-                             "sprClear": layer == "bak",
+                             "stems": stems,
+                             "fade": fade or 0,
+                             "sprClear": spr_clear,
                              "conf": "high"})
         # fade: mode push + 1000ms + CMD(6,16)
         if (6, 16) in op_set and 1000 in s:
@@ -249,13 +293,12 @@ SPRITE_PREFIXES = {
 
 
 def stem_candidates(x: int, y: int) -> list[str]:
-    """Backdrop/event-art filename stems for a (4,146/147/148) X/Y pair.
+    """Grp-layer stems for op (4,148) / v%06d.tga (primitive 0x4167e0 arg3=1).
 
     Verified against manifest hits: 6-digit zero-padded base from X+Y
     (1004,0 -> 100400; 1008,2 -> 100820; 10130,0 -> 101300; 20050,1 ->
     200501; 9900,0 -> 990000) plus the Y:02d form (1008,2 -> 100802).
-    Prefix (b/v/tv) and bak-vs-overlay choice happen at lookup: the player
-    tries candidates in order via the image manifest.
+    Bak-layer (4,146)/(4,147) use bak_stem(x,y,tod) instead — B%04d%1d%1d.
     """
     base = (str(x) + str(y)).ljust(6, "0")[:6]
     alt = str(x) + "%02d" % y
