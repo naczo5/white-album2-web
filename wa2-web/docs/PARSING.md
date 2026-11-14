@@ -149,6 +149,28 @@ MAO `speakerEn` by script-scoped name votes — never text position; a
 wrong displayed name is worse than a JP one). Events without NNN are
 unvoiced.
 
+### Control-flow offsets (corpus-validated)
+
+The `op==0` sub-codes decode as `2`=IF(else_off, end_off),
+`3`=ELSEIF(next_off), `4`=ELSE, `5`=FOR, `6`=WHILE(end_off),
+`7`=SWITCH, `12`=GOTO(target_off), and each offset is a **byte offset from
+the start of the entry's code**, pointing at an instruction start.
+
+This is validated structurally rather than by reading the interpreter: if
+any operand width in `decode_entry_insns` were wrong, the instruction grid
+would drift and jump targets would land mid-instruction. Over all 206
+`en_main.pak` `.bnr` files there are **2,147** IF/ELSEIF/WHILE/GOTO
+targets and **2,146 land exactly on an instruction boundary**.
+
+The single exception is retail-data damage, not a decode error:
+`2313.bnr` @`2212` has `GOTO 215304`, which is the *argument word* of the
+2-word `(4,143)` instruction at `215300` (raw words `0x4` then `0x8f`).
+Decoding around it is clean — neighbouring statements parse and terminate
+normally — and the compiled CFG for `2313` still bounds every `play` span
+to the script's 2,609 events, so it has no effect on output. It is pinned
+in `tests/test_build_cfg.py::test_corpus_jump_targets_land_on_instruction_boundaries`
+so a decoder regression cannot turn one anomaly into many.
+
 Comma-tok coincides with NNN only while a translation stays token-aligned
 (1008) and plays wrong-scene clips otherwise: 1002 comma-toks run to 558
 while NNN runs 0-353, and 1008 base toks 199-213 collide with 1008_020's

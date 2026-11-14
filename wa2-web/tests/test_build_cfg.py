@@ -16,6 +16,7 @@ TOOLS = os.path.join(ROOT, "tools")
 sys.path.insert(0, TOOLS)
 
 import build_cfg  # noqa: E402
+import kcap  # noqa: E402
 
 CACHE = os.path.join(ROOT, "..", ".cache")
 SCRIPT_PAK = os.environ.get("WA2_SCRIPT_PAK") or os.path.join(
@@ -792,3 +793,71 @@ def test_corpus_vm_special_scripts_reach_gotitle(corpus_env):
         assert (end_s, "0") in vm.visited
         if gflag_id is not None:
             assert vm.gflags.get(gflag_id) == 1
+
+
+@pytest.mark.skipif(not HAS_CORPUS, reason="BYOA game/EN archives not present")
+def test_corpus_jump_targets_land_on_instruction_boundaries():
+    """Every IF/ELSEIF/WHILE/GOTO offset must name a real instruction start.
+
+    This is the structural proof that the control-flow opcode semantics
+    (`op==0, a in {2,3,4,5,6,12}`) and their operand widths are decoded
+    correctly: if a width were wrong, the following offsets would drift and
+    targets would land mid-instruction. Measured over en_main.pak: 2146 of
+    2147 targets land exactly on a boundary for `(IF else, end)` /
+    `(ELSEIF next)` / `(WHILE end)` / `(GOTO target)`.
+
+    The single exception is retail-data damage, not a decode error:
+    2313.bnr @2212 `GOTO 215304` points at the *argument word* of the
+    2-word `(4,143)` instruction at 215300. Decoding around it is clean
+    (every neighbouring instruction parses and the statement terminators
+    line up), and the compiled CFG for 2313 still bounds all play spans to
+    the script's 2609 events, so the bad jump has no effect on output.
+    It is pinned here so a future decoder change cannot silently turn
+    this one anomaly into many.
+    """
+    known_bad = {("2313.bnr", 2212, 215304)}
+    seen_bad = set()
+    total = 0
+    on_boundary = 0
+
+    for pak in (EN_MAIN_PAK, EN_SPEC_PAK):
+        if not os.path.isfile(pak):
+            continue
+        data = open(pak, "rb").read()
+        for ent in kcap.read_index(data):
+            if not ent.name.endswith(".bnr"):
+                continue
+            try:
+                body = build_cfg._read_pak_entry(data, ent)
+                secs, _cs = build_cfg.parse_bnr_header(body)
+            except Exception:
+                continue
+            ordered = sorted(secs, key=lambda x: x[1])
+            for k, (eid, start) in enumerate(ordered):
+                end = ordered[k + 1][1] if k + 1 < len(ordered) else len(body)
+                ins = build_cfg.decode_entry_insns(body, start, end)
+                offs = {o for o, _ in ins}
+                for off, t in ins:
+                    if t[0] == "IF":
+                        targets = [t[1], t[2]]
+                    elif t[0] in ("ELSEIF", "WHILE", "GOTO"):
+                        targets = [t[1]]
+                    else:
+                        continue
+                    for tgt in targets:
+                        if tgt == 0:
+                            continue
+                        total += 1
+                        if tgt in offs or tgt == end:
+                            on_boundary += 1
+                        else:
+                            seen_bad.add((ent.name, off, tgt))
+
+    if total == 0:
+        pytest.skip("no control-flow instructions found")
+    assert seen_bad == known_bad, (
+        f"unexpected non-boundary jump targets: {sorted(seen_bad - known_bad)[:10]}"
+    )
+    # Guard the ratio so a systematic width bug (which would break thousands)
+    # cannot hide behind the one known exception.
+    assert total - len(seen_bad) >= 2000
