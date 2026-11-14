@@ -184,7 +184,7 @@ wsprintfA(buf, "%04d_%04d_%02d.ogg", script, line, take);
   address finds none, and both references (`0xe31d`, `0xe6c7`) are
   `cmp [0xa391fc],0` reads — so the flag stays at its `.data` default and
   the branch is dead. Consistent with retail `VOICE.PAK`/`IC/VOICE.PAK`
-  shipping **zero** `_a` clips (12,910 + 7,271 entry names checked).
+  shipping **zero** `_a` clips (0 of 46,007 entry names checked).
 - `voice\buf\%s` is the streaming copy target (`CopyFileA` at
   `0x40eda0+0x28`), not a second asset namespace.
 
@@ -199,10 +199,22 @@ Archive layout (both `VOICE.PAK` and `IC/VOICE.PAK`): `LAC\0`, u32 count,
 then `count × 40`-byte records — 32-byte XOR-0xFF name (NUL padded), u32
 size, u32 payload offset — payloads at `8 + count*40`. Verified exactly:
 main `38736 × 40 + 8 = 1549448` = first `OggS`, and the sum of entry sizes
-equals the byte length after that offset (`1447111922`). Main holds 38,736
-names (38,729 distinct line keys), IC holds 7,271 (7,267 keys); only 6 keys
-carry two takes and 2 names are malformed (`3012_9010_01\x81H.OGG`,
-`3204_0075126_02.OGG`) — both dropped, matching `extract_assets.py`.
+equals the byte length after that offset (`1447111922`). Exact inventories
+(measured from both archives):
+
+| | entries | canonical names | distinct line keys | malformed |
+|---|---|---|---|---|
+| `VOICE.PAK` | 38,736 | 38,734 | **38,728** | 2 |
+| `IC/VOICE.PAK` | 7,271 | 7,270 | **7,266** | 1 |
+
+Malformed names (dropped, matching `extract_assets.py`):
+`3012_9010_01\x81H.OGG`, `3204_0075126_02.OGG` (main) and
+`1012_03625_10.OGG` (IC) — all three have a take or token field that does
+not fit the engine's `%04d_%04d_%02d` format. Keys with two takes (first
+wins in the extractor): 6 in main (`2406_8000/9000/9001/9002`,
+`2411_0070/0330`) and 4 in IC (`1005_0838`, `1007_0364`, `1010_0779`,
+`1011_0629`). Only 2 keys exist in both archives; the union is 45,992
+distinct line keys.
 
 ## `.bnr` presentation bytecode (LSCR, decoded statically)
 
@@ -215,6 +227,38 @@ resolves them against the still-installed JP script.pak). Decoders:
 tools/proto_bgm.py (report:
 tools/proto_bgm_report.md), tools/build_bgm.py (timeline),
 tools/decode_bnr.py (fades/cams).
+
+### `(6,N)` sub-op table and its evidence
+
+`tools/build_cfg.py` maps the `(6,N)` sub-code to expression operators via
+`ASSIGN_OPS`/`BIN_OPS`. Corpus census over all 206 EN `en_main.pak` `.bnr`
+files (statement stream decoded with the project's own
+`decode_entry_insns`):
+
+| sub | 0 | 1 | 2 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 21 | 22 | 23 | 25 | 27 | 30 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| count | 1385 | 59 | 1 | 129 | 6 | 157 | 12 | 314 | 0 | 310 | 0 | 14632 | 251 | 556 | 500 | 41 | 119 | 11888 | 12 | 2804 | 300153 |
+
+`30` (300,153×) is the statement terminator, `27` (2,804×) the array-index
+op, `23` (11,888×) unary minus, `16` add. **13 and 15 never occur**, which
+is why `&&`/`||` at 13/14 cannot both be right — and the bytecode settles
+it: in `1010_020.bnr` entry 9999 the sequence
+
+```
+196 (4,205)   204 (6,14)   212 (4,206)   220 (6,14)   228 (0,13)
+```
+
+is two engine calls joined by `(6,14)`, with `(0,13)` opening the
+conditional block that consumes the combined boolean — i.e.
+`if (call(205) || call(206))`, so **14 = `||`** (310 uses; 13 = `&&` with
+0 uses, consistent — no `&&` anywhere in this corpus).
+Likewise `1002.bnr` @105528–105564 reads `(2,19)` array base,
+`(6,27)` index, then `(6,11)`, i.e. an index comparison ending in `<=`
+(sub 11), and `1010_020` entry 9994 @1336 applies `(6,12)` directly to a
+global gate, consistent with `>=`. Rows 12 and 14 are therefore
+**corpus-verified**; 8-10 and 17-22 remain `high` from the exe's dispatch
+(`0x41f990` family) but are exercised far less, so treat single-script
+divergence there as the first thing to re-check.
 
 | shape | meaning | confidence |
 |---|---|---|
@@ -257,7 +301,26 @@ occur exactly 2× each).
 Static findings from WA2.exe (.text 0x401000, .rdata 0x4a1000; see
 docs/QA.md verification log):
 
-- LSCR dispatch table: .data 0xc1010 (VA 0x4c2610), 112 handler thunks;
+- LSCR dispatch table: one contiguous pointer array based at **.data
+  VA `0x4c25c0`**; `PTR_LAB_004c2610` is simply `0x4c25c0 + 20*4`, i.e.
+  element 20 of the same table, not a separate table. The runtime dispatch
+  is `FUN_00453d30` @`0x453f8c`:
+  `mov eax,[esi+0x8b3c]` (current function id) → `cmp eax,0x80` →
+  `jge 0x453fda` for ids ≥ 128, and on the id-128 path
+  `mov ecx,[eax*4 + 0x4c25c0]` / `call ecx` (`8b 0c 85 c0 25 4c 00`).
+  Because the base is indexed by the **raw id**, and
+  `0x4c2610 + (id-128)*4 == 0x4c25c0 + id*4`, the documented
+  "entry = id − 128 into 0x4c2610" arithmetic is numerically right but the
+  mechanism is one table indexed by id; ids below 128 take an inlined
+  `if/else` chain (id 0 → `FUN_00452490`, id 1 → `FUN_00453c10`, id 2 →
+  `FUN_00453ca0`) before falling through to the table. Registry:
+  `FUN_004178f0`/`FUN_00417a40` call
+  `FUN_004505c0("LFScriptFuncEx.fnc", &PTR_LAB_004c2610)` after
+  `FUN_00452ae0(0,"script",9,0,0)` — this is the **`script` (index 9)
+  function table**. Handlers verified arithmetically: `(4,146)`→`0x454f30`,
+  `(4,147)`→`0x454fc0`, `(4,148)`→`0x455050`, `(4,170)`→`0x455800`, all
+  matching the `(4,14x)/(4,17x)` rows below, and `0x454f30` decompiles to a
+  `FUN_004167e0` call with **arg3 = 0** exactly as that row claims.
   **handler index = opcode − 128** (validated: entry 36 = op 164 = SE
   thunk 0x455720, entry 37 = op 165 = channel-SE 0x40f400). Push values
   reach handlers from ctx `+0x18 + 0x14*i` (push[i] at 0x18, 0x2c, 0x40…).
