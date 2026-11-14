@@ -17,7 +17,16 @@
 //  - End of script -> terminals (end/chain) or spine next (numeric order,
 //    variant-aware) or END.
 
+import {
+  type CfgChoiceOptionState,
+  type CfgExecOptions,
+  choiceOptionsAt,
+  pickCfg,
+  seekCfg,
+  stepCfg,
+} from "./cfg-vm";
 import type {
+  CfgData,
   FlowData,
   FlowNode,
   Flags,
@@ -84,12 +93,24 @@ export interface StepResult {
   pos: Position;
   ended: boolean;
   ending?: string;
+  unlockedEndings?: string[];
 }
 
 export interface PickResult {
   next: Position;
   node: FlowNode | null;
+  ended?: boolean;
   ending?: string;
+  unlockedEndings?: string[];
+}
+
+export interface RouterOptions {
+  cfg?: CfgData | null;
+  profileGameFlags?: Record<string, number>;
+  endingSlots?: Record<string, string>;
+  replay?: number;
+  unlockAllChoices?: boolean;
+  onGameFlag?: (id: number, val: number) => void;
 }
 
 export class Router {
@@ -97,12 +118,19 @@ export class Router {
   flow = new Map<string, FlowNode>(); // key: `${script}:${event}`
   terminals: TerminalsData["terminals"] = {};
   spine: Spine;
+  cfg: CfgData | null = null;
+  profileGameFlags?: Record<string, number>;
+  endingSlots?: Record<string, string>;
+  replay?: number;
+  unlockAllChoices = false;
+  onGameFlag?: (id: number, val: number) => void;
 
   constructor(
     scenarios: Scenario[],
     flowData: FlowData,
     _linksData?: LinksData,
     terminalsData?: TerminalsData,
+    options?: RouterOptions,
   ) {
     for (const s of scenarios) this.scripts.set(s.script, s);
     for (const n of flowData.nodes) {
@@ -113,6 +141,46 @@ export class Router {
     // QA reports and future flowchart conditional-branch display.
     this.terminals = terminalsData?.terminals ?? {};
     this.spine = buildSpine([...this.scripts.keys()]);
+    this.cfg = options?.cfg ?? null;
+    this.profileGameFlags = options?.profileGameFlags;
+    this.endingSlots = options?.endingSlots;
+    this.replay = options?.replay;
+    this.unlockAllChoices = options?.unlockAllChoices ?? false;
+    this.onGameFlag = options?.onGameFlag;
+  }
+
+  setProfileGameFlags(flags?: Record<string, number>): void {
+    this.profileGameFlags = flags;
+  }
+
+  setUnlockAllChoices(unlock: boolean): void {
+    this.unlockAllChoices = unlock;
+  }
+
+  setOnGameFlag(cb?: (id: number, val: number) => void): void {
+    this.onGameFlag = cb;
+  }
+
+  setReplay(replay?: number): void {
+    this.replay = replay;
+  }
+
+  private cfgExecOpts(picks?: Record<string, number>, preserveG?: boolean): CfgExecOptions {
+    return {
+      profileGameFlags: this.profileGameFlags,
+      endingSlots: this.endingSlots,
+      terminals: this.terminals,
+      replay: this.replay,
+      unlockAll: this.unlockAllChoices,
+      onGameFlag: this.onGameFlag,
+      picks,
+      preserveG,
+    };
+  }
+
+  private hasCfg(script: string): boolean {
+    const entries = this.cfg?.scripts[script];
+    return Boolean(entries && Object.keys(entries).length > 0);
   }
 
   at(pos: Position): ScenarioEvent | null {
@@ -121,8 +189,36 @@ export class Router {
     return sc.events[pos.event];
   }
 
+  /** Synchronize CFG VM runtime state (`flags.cfg`) to a loaded/jumped position. */
+  seek(pos: Position, flags: Flags, picks?: Record<string, number>): Position {
+    if (this.cfg && this.hasCfg(pos.script)) {
+      return seekCfg(this.cfg, pos, flags, this.cfgExecOpts(picks));
+    }
+    if (flags.cfg) delete flags.cfg;
+    return pos;
+  }
+
+  /** Choice option visibility & lock states (SetSelectMess flag gating). */
+  choiceOptions(pos: Position, flags: Flags): CfgChoiceOptionState[] {
+    if (this.cfg && this.hasCfg(pos.script)) {
+      const res = choiceOptionsAt(this.cfg, pos, flags, this.cfgExecOpts());
+      if (res.length > 0) return res;
+    }
+    const ev = this.at(pos);
+    if (!ev || ev.t !== "choice") return [];
+    return ev.options.map((o) => ({
+      n: o.n,
+      unlocked: true,
+      visible: true,
+      rawUnlocked: true,
+    }));
+  }
+
   /** Advance one event; returns new position (same pos if choice blocks). */
   advance(pos: Position, flags: Flags): StepResult {
+    if (this.cfg && this.hasCfg(pos.script)) {
+      return stepCfg(this.cfg, pos, flags, this.cfgExecOpts());
+    }
     const ev = this.at(pos);
     if (!ev) return this.spineAdvance(pos, flags);
     if (ev.t === "choice") return { pos, ended: false }; // UI must pick
@@ -166,6 +262,16 @@ export class Router {
     const node = this.flow.get(key) ?? null;
     const opt = ev.options.find((o) => o.n === n);
     if (!opt) throw new Error(`option ${n} not present`);
+    if (this.cfg && this.hasCfg(pos.script)) {
+      const res = pickCfg(this.cfg, pos, n, flags, this.cfgExecOpts());
+      return {
+        next: res.next,
+        node,
+        ended: res.ended,
+        ending: res.ending,
+        unlockedEndings: res.unlockedEndings,
+      };
+    }
     const flowOpt = node?.options.find((o) => o.n === n);
     applyEffects(flags, node, n);
     const dest = flowOpt?.play ?? opt.goto;

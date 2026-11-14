@@ -1,10 +1,10 @@
 // Flowchart graph builder: pure layout (tsukiweb-style chart), test-pinned.
 
 import { describe, expect, it } from "vitest";
-import { buildChartGraph, chartVisited, NODE_H, NODE_W, optionSeen } from "./flowchart";
+import { buildChartGraph, chartVisited, NODE_H, NODE_W, optionSeen, sceneLabel } from "./flowchart";
 import { guideEndings, guideOptionSeen } from "./guide";
 import { buildSpine } from "../engine/router";
-import type { LinkSite, SaveData, SysProfile, TerminalsData } from "../engine/types";
+import type { CfgData, FlowData, LinkSite, SaveData, SysProfile, TerminalsData } from "../engine/types";
 
 const link = (script: string, targets: string[]): LinkSite => ({
   id: `${script}-x`, engine: { script, events: [0] },
@@ -160,5 +160,63 @@ describe("global profile in the guide", () => {
     expect(guideOptionSeen(save(), p, "2019-1512", 2, false)).toBe(true);
     expect(guideOptionSeen(save(), p, "2019-1512", 1, false)).toBe(false);
     expect(guideOptionSeen(save(), null, "2019-1512", 1, true)).toBe(true);
+  });
+});
+
+describe("CFG flowchart graph and sceneLabel", () => {
+  it("builds edges from CFG sload/scall + terminals and omits spine.next edges", () => {
+    const scripts = ["1001", "1002", "1003", "1004"];
+    const spine = buildSpine(scripts);
+    const cfg: CfgData = {
+      version: 1,
+      vars: [],
+      scripts: {
+        "1001": {
+          "0": [
+            {
+              t: "if",
+              branches: [
+                { cond: 1, ops: [{ t: "sload", script: "1002", entry: 0 }] },
+                { cond: null, ops: [{ t: "scall", script: "1003", entry: 10 }] },
+              ],
+            },
+          ],
+        },
+        "1002": { "0": [{ t: "gotitle" }] },
+        "1003": { "10": [{ t: "ret" }] },
+        "1004": { "0": [{ t: "gotitle" }] },
+      },
+    };
+    // 1004 is in spine.next["1003"] but unreachable via CFG/terminals!
+    const g = buildChartGraph(scripts, spine, [], {}, cfg);
+    expect(g.nodes.map((n) => n.id)).toEqual(["1001", "1002", "1003"]);
+    expect(g.edges).toEqual([
+      { from: "1001", to: "1002", kind: "link" },
+      { from: "1001", to: "1003", kind: "chain" },
+    ]);
+  });
+
+  it("renders player-friendly sceneLabel vs dev script IDs", () => {
+    const flow: FlowData = {
+      version: 1,
+      nodes: [
+        {
+          id: "2019-1",
+          engine: { script: "2019", event: 1 },
+          options: [],
+          date: "12/24 ROUTER",
+          effects: {},
+          gated: {},
+          walkthrough: null,
+          status: "EXPERT_SOURCED",
+        },
+      ],
+    };
+    expect(sceneLabel("2019", flow, { dev: true, visited: false })).toBe("2019");
+    expect(sceneLabel("2019", flow, { dev: false, visited: false, spoiler: false })).toBe("Closing · ???");
+    expect(sceneLabel("2019", flow, { dev: false, visited: true })).toBe("Closing · 12/24");
+    expect(sceneLabel("2019", flow, { dev: false, visited: false, spoiler: true })).toBe("Closing · 12/24");
+    expect(sceneLabel("1001", flow, { dev: false, visited: true })).toBe("Introductory");
+    expect(sceneLabel("demo-1", flow, { dev: false, visited: true })).toBe("Demo");
   });
 });

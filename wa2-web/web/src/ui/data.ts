@@ -3,7 +3,7 @@
 // Built data lives in /data (emitted by tools/build.py) and is gitignored;
 // demo content below is original placeholder text, not game content.
 
-import type { BgmData, BnrData, FlowData, LinksData, Scenario, SpeakersData, SysSlotsTable, TerminalsData, VoiceMapData } from "../engine/types";
+import type { BgmData, BnrData, CfgData, FlowData, LinksData, Scenario, SpeakersData, SysSlotsTable, TerminalsData, VoiceMapData } from "../engine/types";
 import committedSysSlots from "../../../data/sys-slots.json";
 
 export type LutMap = Record<string, { r: number[]; g: number[]; b: number[] }>;
@@ -14,6 +14,8 @@ export interface GameData {
   links: LinksData;
   terminals: TerminalsData;
   endings: { endings: { id: string; name: string; unlock: string }[] };
+  /** Compiled LSCR CFG AST (built by tools/build_cfg.py); null = legacy router fallback. */
+  cfg: CfgData | null;
   /** BGM timeline (built by tools/build_bgm.py); null = no music data. */
   bgm: BgmData | null;
   /** Presentation records (built by tools/decode_bnr.py); null = none. */
@@ -128,6 +130,7 @@ interface BundlePayload {
   links?: LinksData | null;
   terminals?: TerminalsData | null;
   endings?: GameData["endings"] | null;
+  cfg?: CfgData | null;
   bgm?: BgmData | null;
   bnr?: BnrData | null;
   voicemap?: VoiceMapData | null;
@@ -188,12 +191,16 @@ export async function loadGameData(base = ""): Promise<GameData> {
       const sysSlots = bundleSys
         ?? usableSysSlots(await tryFetch<SysSlotsTable>(`${prefix}data/sys-slots.json`))
         ?? DEFAULT_SYS_SLOTS;
+      const cfg = bundle.cfg !== undefined
+        ? (bundle.cfg ?? null)
+        : (await tryFetch<CfgData>(`${prefix}data/cfg.json`)) ?? null;
       return {
         scenarios,
         flow: sanitizeFlow(bundle.flow),
         links: bundle.links ?? { version: 1, links: [] },
         terminals: bundle.terminals ?? { version: 1, terminals: {} },
         endings: bundle.endings ?? { endings: [] },
+        cfg,
         bgm: bundle.bgm ?? null,
         bnr: bundle.bnr ?? null,
         voicemap: bundle.voicemap ?? null,
@@ -205,13 +212,14 @@ export async function loadGameData(base = ""): Promise<GameData> {
       };
     }
   }
-  const [index, flow, endings, links, terminals, bgm, bnr, voicemap, speakers, sysSlotsRaw] =
+  const [index, flow, endings, links, terminals, cfg, bgm, bnr, voicemap, speakers, sysSlotsRaw] =
     await Promise.all([
       tryFetch<string[]>(`${prefix}data/scripts/index.json`),
       tryFetch<FlowData>(`${prefix}data/flow.json`),
       tryFetch<GameData["endings"]>(`${prefix}data/endings.json`),
       tryFetch<LinksData>(`${prefix}data/links.json`),
       tryFetch<TerminalsData>(`${prefix}data/terminals.json`),
+      tryFetch<CfgData>(`${prefix}data/cfg.json`),
       tryFetch<BgmData>(`${prefix}data/bgm.json`),
       tryFetch<BnrData>(`${prefix}data/bnr.json`),
       tryFetch<VoiceMapData>(`${prefix}data/voicemap.json`),
@@ -242,6 +250,7 @@ export async function loadGameData(base = ""): Promise<GameData> {
         links: links ?? { version: 1, links: [] },
         terminals: terminals ?? { version: 1, terminals: {} },
         endings: endings ?? { endings: [] },
+        cfg: cfg ?? null,
         bgm, bnr, voicemap, speakers, luts: null,
         sysSlots,
         demo: false,
@@ -255,6 +264,7 @@ export async function loadGameData(base = ""): Promise<GameData> {
     links: { version: 1, links: [] },
     terminals: { version: 1, terminals: {} },
     endings: { endings: [] },
+    cfg: null,
     bgm: null, bnr: null, voicemap: null, speakers: null, luts: null,
     sysSlots: DEFAULT_SYS_SLOTS,
     demo: true,

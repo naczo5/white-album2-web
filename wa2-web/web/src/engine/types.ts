@@ -176,9 +176,81 @@ export interface SpriteData {
   speakers: Record<string, { prefix: string }>;
 }
 
+export type CfgExpr =
+  | number
+  | { t: "G"; idx: number }
+  | { t: "L"; idx: number; off?: CfgExpr }
+  | { t: "Lbase"; idx: number }
+  | { t: "gflag"; id: CfgExpr }
+  | { t: "replay" }
+  | { t: "un"; op: string; x: CfgExpr }
+  | { t: "bin"; op: string; l: CfgExpr; r: CfgExpr }
+  | { t: "tok"; tok: number }
+  | { t: "call"; id: number; args: CfgExpr[] };
+
+export interface CfgChoiceOption {
+  n: number;
+  tok?: number;
+  flagId: CfgExpr;
+  cmp: CfgExpr;
+  showWhenLocked: boolean;
+}
+
+export type CfgOp =
+  | { t: "play"; from: number; to: number }
+  | { t: "setG"; idx: number; op: string; val: CfgExpr }
+  | { t: "setL"; idx: number; op: string; val: CfgExpr }
+  | { t: "setGFlag"; id: CfgExpr; val: CfgExpr }
+  | { t: "if"; branches: { cond: CfgExpr | null; ops: CfgOp[] }[] }
+  | { t: "choice"; ev: number; nodeIdx: number; into?: { t: "L"; idx: number } | null; options: CfgChoiceOption[] }
+  | { t: "sload"; script: string; entry: number }
+  | { t: "scall"; script: string; entry: number }
+  | { t: "ret" }
+  | { t: "gotitle" };
+
+export interface CfgVarDef {
+  idx: number;
+  name: string;
+  init: number;
+}
+
+export interface CfgData {
+  version: number;
+  vars: CfgVarDef[];
+  scripts: Record<string, Record<string, CfgOp[]>>;
+}
+
+export interface CfgStackFrame {
+  path: number[];
+  idx: number;
+}
+
+export interface CfgCallFrame {
+  script: string;
+  entry: string;
+  l: number[];
+  pcStack: CfgStackFrame[];
+  event: number;
+  executedRanges: [number, number][];
+  spanEnd?: number;
+}
+
+export interface CfgRuntimeState {
+  script: string;
+  entry: string;
+  l: number[];
+  pcStack: CfgStackFrame[];
+  callStack: CfgCallFrame[];
+  executedRanges: [number, number][];
+  spanEnd?: number;
+}
+
 export interface Flags {
   aff: Record<string, number>;
   set: Record<string, boolean>;
+  g?: number[];
+  gflags?: Record<string, number>;
+  cfg?: CfgRuntimeState;
 }
 
 /** Metadata for a save imported from the original PC build. The native
@@ -267,6 +339,8 @@ export interface SysProfile {
   ero: number[];
   /** Named gate flags (see `GATE_NAMES` in engine/sys-save.ts). */
   gates: Record<string, number>;
+  /** Nonzero Region C slots `0..899` (GetGameFlag / SetGameFlag). */
+  gameFlags?: Record<string, number>;
 }
 
 export interface SaveData {

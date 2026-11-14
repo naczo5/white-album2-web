@@ -5,7 +5,7 @@
 
 import { chapterOfScript, type Spine } from "../engine/router";
 import { displayDate, plainText } from "../engine/text";
-import type { FlowData, LinkSite, SaveData, SysProfile, TerminalsData } from "../engine/types";
+import type { CfgData, CfgOp, FlowData, LinkSite, SaveData, SysProfile, TerminalsData } from "../engine/types";
 
 export interface ChartGraph {
   nodes: { id: string; chapter: string }[];
@@ -23,13 +23,53 @@ export const NODE_H = 38;
 const GAP_X = 46;
 const GAP_Y = 14;
 
+const CHAPTER_SHORT: Record<string, string> = {
+  intro: "Introductory",
+  closing: "Closing",
+  coda: "Coda",
+  special: "Special",
+};
+
+/** Story-facing scene label for flowchart nodes, save slots, and Continue.
+ * Dev mode surfaces raw script IDs; player mode hides them behind chapter,
+ * story date (from flow.json), and `???` when neither visited nor spoiled. */
+export function sceneLabel(
+  script: string,
+  flow: FlowData | null | undefined,
+  opts: { spoiler?: boolean; dev?: boolean; visited?: boolean } = {},
+): string {
+  if (opts.dev) return script;
+  if (script.startsWith("demo")) return "Demo";
+  const ch = CHAPTER_SHORT[chapterOfScript(script)] ?? "Special";
+  if (!opts.visited && !opts.spoiler) return `${ch} · ???`;
+  const rawDate = flow?.nodes.find((n) => n.engine.script === script && n.date)?.date;
+  const date = displayDate(rawDate, false);
+  return date ? `${ch} · ${date}` : ch;
+}
+
+function collectCfgEdges(
+  ops: CfgOp[],
+  from: string,
+  add: (from: string, to: string, kind: ChartGraph["edges"][number]["kind"]) => void,
+): void {
+  for (const op of ops) {
+    if (op.t === "sload") add(from, op.script, "link");
+    else if (op.t === "scall") add(from, op.script, "chain");
+    else if (op.t === "if") {
+      for (const br of op.branches) collectCfgEdges(br.ops, from, add);
+    }
+  }
+}
+
 /** Build the route graph: reachable scripts from the first scenario
- * (1001 in the real set; callers pass a sorted list). */
+ * (1001 in the real set; callers pass a sorted list). When `cfg` is
+ * supplied, engine `sload`/`scall` edges replace `links` and `spine.next`. */
 export function buildChartGraph(
   scripts: string[],
   spine: Spine,
   links: LinkSite[],
   terminals: TerminalsData["terminals"],
+  cfg?: CfgData | null,
 ): ChartGraph {
   const root = scripts[0] ?? "1001";
   const out = new Map<string, { to: string; kind: ChartGraph["edges"][number]["kind"] }[]>();
@@ -39,22 +79,29 @@ export function buildChartGraph(
     if (!list.some((e) => e.to === to)) list.push({ to, kind });
     out.set(from, list);
   };
-  for (const l of links) {
-    for (const t of l.targets) add(l.engine.script, t, "link");
-  }
-  for (const [sc, t] of Object.entries(terminals)) {
-    if (t.action === "chain") add(sc, t.to, "chain");
-  }
-  for (const [sc, nxt] of Object.entries(spine.next)) {
-    if (nxt) add(sc, nxt, "spine");
+  if (cfg) {
+    for (const [sc, entries] of Object.entries(cfg.scripts)) {
+      for (const ops of Object.values(entries)) {
+        collectCfgEdges(ops, sc, add);
+      }
+    }
+    for (const [sc, t] of Object.entries(terminals)) {
+      if (t.action === "chain") add(sc, t.to, "chain");
+    }
+  } else {
+    for (const l of links) {
+      for (const t of l.targets) add(l.engine.script, t, "link");
+    }
+    for (const [sc, t] of Object.entries(terminals)) {
+      if (t.action === "chain") add(sc, t.to, "chain");
+    }
+    for (const [sc, nxt] of Object.entries(spine.next)) {
+      if (nxt) add(sc, nxt, "spine");
+    }
   }
 
-  // Reachability closure: one worklist over link/chain edges AND spine
-  // successors. A single spine-fill pass is not enough — scripts reached
-  // late (e.g. 2001 via 1013's cross-chapter link) must still propagate
-  // their spine successors (2002 -> 2003 -> ...), or whole chapters drop
-  // out of the chart. Branch depth: every edge gives child = parent + 1;
-  // link edges run before the spine successor so decoded branches win.
+  // Reachability closure: one worklist over link/chain edges (and spine
+  // successors only when cfg is absent).
   const depth: Record<string, number> = { [root]: 0 };
   const queue = [root];
   const reached = new Set([root]);
@@ -66,11 +113,13 @@ export function buildChartGraph(
       depth[e.to] = depth[cur]! + 1;
       queue.push(e.to);
     }
-    const sp = spine.next[cur];
-    if (sp && !reached.has(sp)) {
-      reached.add(sp);
-      depth[sp] = depth[cur]! + 1;
-      queue.push(sp);
+    if (!cfg) {
+      const sp = spine.next[cur];
+      if (sp && !reached.has(sp)) {
+        reached.add(sp);
+        depth[sp] = depth[cur]! + 1;
+        queue.push(sp);
+      }
     }
   }
 
@@ -131,6 +180,7 @@ export interface FlowHooks {
   spine: Spine;
   links: LinkSite[];
   terminals: TerminalsData["terminals"];
+  cfg?: CfgData | null;
   spoiler: boolean;
   /** Dev mode: show a scene-jump button in the node detail panel. */
   dev?: boolean;
@@ -165,7 +215,7 @@ export function optionSeen(
 export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
   const g = buildChartGraph(
     [...new Set([...h.spine.order])],
-    h.spine, h.links, h.terminals,
+    h.spine, h.links, h.terminals, h.cfg,
   );
   const visited = chartVisited(h.save, h.profile);
   const cur = h.save.position.script;
@@ -199,24 +249,27 @@ export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
     }[n.chapter] ?? "#8fb3b8";
     const choices = choicesByScript.get(n.id) ?? [];
     const nChoices = choices.length;
-    const date = displayDate(choices.find((c) => c.date)?.date, !!h.dev) || n.chapter;
+    const label = sceneLabel(n.id, h.flow, { spoiler: h.spoiler, dev: h.dev, visited: seen });
+    const sub = h.dev
+      ? `${displayDate(choices.find((c) => c.date)?.date, true) || n.chapter}${nChoices ? ` · ${nChoices} choice${nChoices === 1 ? "" : "s"}` : ""}`
+      : `${nChoices ? `${nChoices} choice${nChoices === 1 ? "" : "s"}` : seen ? "Visited" : "Unvisited"}`;
     return `<g transform="translate(${p.x},${p.y})" data-node="${escapeAttr(n.id)}"
-      class="fc-node" tabindex="0" role="button" aria-label="Scenario ${escapeAttr(n.id)}">
+      class="fc-node" tabindex="0" role="button" aria-label="${escapeAttr(label)}">
       <rect width="${NODE_W}" height="${NODE_H}" rx="2"
         fill="${seen ? "#0f3d49" : "#082630"}"
         stroke="${isCur ? "#f0dc9a" : seen ? "#2d7d87" : "#17434f"}"
         stroke-width="${isCur ? 2 : 1}"/>
       ${isCur ? `<rect width="${NODE_W}" height="${NODE_H}" rx="2" fill="#f0dc9a" opacity="0.1"/>` : ""}
-      <text x="9" y="16" font-size="12" fill="${chColor}" font-family="Georgia, 'Times New Roman', serif">${escapeHtml(n.id)}</text>
+      <text x="9" y="16" font-size="12" fill="${chColor}" font-family="Georgia, 'Times New Roman', serif">${escapeHtml(label)}</text>
       <text x="9" y="30" font-size="10" fill="${
         seen ? "#8fb3b8" : "#4f7279"
-      }" font-family="Georgia, 'Times New Roman', serif">${escapeHtml(date)}${nChoices ? ` · ${nChoices} choice${nChoices === 1 ? "" : "s"}` : ""}</text>
+      }" font-family="Georgia, 'Times New Roman', serif">${escapeHtml(sub)}</text>
     </g>`;
   }).join("");
 
   el.innerHTML = `
     <header class="screen-head"><div><h2>Flowchart</h2>
-    <p class="screen-sub">Each box is a scenario script. The lit path is where
+    <p class="screen-sub">Each box is a scenario scene. The lit path is where
     you have been; the gold outline is your current position.
     ${h.spoiler ? "Spoilers are on, so unvisited options are shown." : "Spoilers are off; unvisited options stay hidden."}</p></div></header>
     <div class="fc-wrap"><svg class="fc-svg" width="${g.width + pad * 2}" height="${g.height + pad * 2}">
@@ -235,6 +288,7 @@ export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
       (nd as HTMLElement).dataset.node!,
       h,
       g,
+      visited,
     );
     nd.addEventListener("click", open);
     nd.addEventListener("keydown", (ev) => {
@@ -255,28 +309,50 @@ export function renderFlowchart(el: HTMLElement, h: FlowHooks): void {
   el.querySelector("[data-back]")?.addEventListener("click", h.onBack);
 }
 
-function showDetail(box: HTMLElement, script: string, h: FlowHooks, g: ChartGraph): void {
+function showDetail(
+  box: HTMLElement,
+  script: string,
+  h: FlowHooks,
+  g: ChartGraph,
+  visited: Set<string>,
+): void {
   const nodes = h.flow.nodes.filter((n) => n.engine.script === script);
   const outs = g.edges.filter((e) => e.from === script);
   const term = h.terminals[script];
-  const parts: string[] = [`<div class="fc-detail-h"><code>${escapeHtml(script)}</code> <span class="dim">${g.depth[script] !== undefined ? `depth ${g.depth[script]}` : ""}</span></div>`];
-  if (term?.action === "end") parts.push(`<div class="opt">Ending: ${escapeHtml(term.ending ?? "?")}</div>`);
-  if (term?.action === "chain") parts.push(`<div class="opt">Chains to <code>${escapeHtml(term.to)}</code></div>`);
+  const seenScript = visited.has(script);
+  const headLabel = sceneLabel(script, h.flow, { spoiler: h.spoiler, dev: h.dev, visited: seenScript });
+  const parts: string[] = [
+    `<div class="fc-detail-h">${h.dev ? `<code>${escapeHtml(script)}</code>` : `<b>${escapeHtml(headLabel)}</b>`} <span class="dim">${g.depth[script] !== undefined ? `depth ${g.depth[script]}` : ""}</span></div>`,
+  ];
+  if (term?.action === "end" && (seenScript || h.spoiler || h.dev)) {
+    parts.push(`<div class="opt">Ending: ${escapeHtml(term.ending ?? "?")}</div>`);
+  }
+  if (term?.action === "chain" && (h.dev || seenScript || h.spoiler)) {
+    const toLabel = sceneLabel(term.to, h.flow, { spoiler: h.spoiler, dev: h.dev, visited: visited.has(term.to) });
+    parts.push(`<div class="opt">Chains to <code>${escapeHtml(toLabel)}</code></div>`);
+  }
   for (const n of nodes) {
-    parts.push(`<div class="opt"><span class="date">${escapeHtml(displayDate(n.date, !!h.dev) ?? "")}</span> <code>${escapeHtml(n.id)}</code>
-      ${n.status === "EXPERT_SOURCED" ? '<span class="badge ok">sourced</span>' : '<span class="badge warn">unverified</span>'}</div>`);
+    parts.push(`<div class="opt"><span class="date">${escapeHtml(displayDate(n.date, !!h.dev) ?? "")}</span>${
+      h.dev ? ` <code>${escapeHtml(n.id)}</code> ${n.status === "EXPERT_SOURCED" ? '<span class="badge ok">sourced</span>' : '<span class="badge warn">unverified</span>'}` : ""
+    }</div>`);
     for (const o of n.options) {
       const picked = h.save.picks[n.id] === o.n;
       const seen = optionSeen(h.save, h.profile, n.id, o.n, h.spoiler);
       const label = seen ? escapeHtml(plainText(o.text)) : "Not seen yet";
+      const gotoLabel = o.goto && seen
+        ? sceneLabel(o.goto, h.flow, { spoiler: h.spoiler, dev: h.dev, visited: visited.has(o.goto) })
+        : "";
       parts.push(`<div class="opt${picked ? " chosen" : ""}"><b>${o.n}.</b> ${label}${
-        o.goto && seen ? ` <span class="dim">→ ${escapeHtml(o.goto)}</span>` : ""
+        gotoLabel ? ` <span class="dim">→ ${escapeHtml(gotoLabel)}</span>` : ""
       }</div>`);
     }
   }
   if (outs.length) {
     parts.push(`<div class="dim note">Links out</div>`);
-    for (const e of outs) parts.push(`<div class="opt dim">→ ${escapeHtml(e.to)}${e.kind !== "link" ? ` (${escapeHtml(e.kind)})` : ""}</div>`);
+    for (const e of outs) {
+      const toLabel = sceneLabel(e.to, h.flow, { spoiler: h.spoiler, dev: h.dev, visited: visited.has(e.to) });
+      parts.push(`<div class="opt dim">→ ${escapeHtml(toLabel)}${h.dev && e.kind !== "link" ? ` (${escapeHtml(e.kind)})` : ""}</div>`);
+    }
   }
   if (!nodes.length && !outs.length && !term) parts.push(`<div class="dim note">No decoded choices or links here.</div>`);
   if (h.dev && h.onJump) {

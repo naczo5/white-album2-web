@@ -1496,12 +1496,21 @@ ruby rt {
     background-color 150ms ease;
 }
 
-.choice-btn:hover,
-.choice-btn:focus-visible {
+.choice-btn:hover:not(:disabled),
+.choice-btn:focus-visible:not(:disabled) {
   border-color: var(--cyan-soft);
   color: #042126;
   background:
     linear-gradient(100deg, rgb(183 250 245 / 0.9), rgb(82 227 221 / 0.94) 58%, rgb(20 150 160 / 0.94));
+}
+
+.choice-btn.locked,
+.choice-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  border-color: rgb(150 244 240 / 0.25);
+  color: var(--ink-dim);
+  background: rgb(5 24 32 / 0.78);
 }
 
 .lock {

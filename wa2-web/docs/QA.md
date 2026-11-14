@@ -7,12 +7,13 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit + data (tools) | `pytest tests/` | 144 passed + 9 skipped |
-| web unit | `cd web && vitest run` | 225 passed + 4 BYOA-skipped |
-| real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | 183/221 scripts, no throw/stall (BYOA) |
-| types+build | `tsc --noEmit && npm run build` | clean (~69 KB JS + 29 KB CSS, asset-free) |
-| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 151 passed + 2 skipped (7 corpus tests; 517 en.pak entries, zero parser warnings) |
-| save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 229 passed + 0 skipped (native slots 11/11, `Sys.sav` profile) |
+| unit + data (tools) | `pytest tests/` | 165 passed + 9 skipped |
+| web unit | `cd web && vitest run` | 242 passed + 5 BYOA-skipped |
+| real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | all 11 endings + special scenarios + branch ranges (BYOA) |
+| types+build | `tsc --noEmit && npm run build` | clean (`tsc --noEmit` 0 errors) |
+| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 172 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
+| save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 247 passed + 0 skipped (native slots 11/11 + 29 `Global.vrb` vars, `Sys.sav` profile) |
+| CFG VM & bytecode | `pytest tests/test_build_cfg.py`; `vitest run cfg-vm playthrough` | 221 `.bnr` scripts compiled into `cfg.json`, zero overlapping `play` spans, `SCall`/`SetSelectMess` parity |
 | movie subtitles | `pytest tests/test_subtitles.py`; `vitest run vtt` | ASS→VTT conversion + cue/region parsing pinned (`test_subtitles.py`, `vtt.test.ts`) |
 | movie player | `vitest run reader-movie` | HUD/CC/skip/autoplay-fallback/missing-card behaviour, no DOM leak (`reader-movie.test.ts`) |
 | `Sys.sav` compatibility | `pytest tests/test_sys_sav.py tests/test_build_sys_table.py`; `vitest run sys-save` | slot map + region decode + read-line bitmap + profile merge (`sys-save.test.ts`, `sys-save.corpus.test.ts`) |
@@ -729,3 +730,28 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     `pytest tests/ -q` → **154 passed, 9 skipped**; `npx tsc --noEmit` clean;
     `npx vitest run` → **226 passed, 4 skipped**.
 
+- 2026-11-14 (Phase 1 static RE: **LSCR CFG compiler**, **multi-part MAO alignment**, **GFLAG off-by-one fix**, & **route attribution**):
+  - **Multi-part MAO alignment + JP speaker leaks** (`tools/build_ir.py`,
+    `tools/build_voice.py`): independent per-part anchor matching
+    (`match_jp_to_mao_parts` / `manuscript_parts`) eliminates ~5,500 stale JP
+    lines across the 14 interleaved H-scene scripts (`2031`, `2312`, `2313`,
+    `2401`, `2402`, `2504`, `2507`, `2511`, `3001`, `3015`, `3210`, `3902`,
+    `3906`, `3907`), passes `jp_events` to `_choice_pass` so canonical MAO
+    manuscript choice text resolves even against older EN `.pak` tokens
+    (`2016`), and clears all JP speaker leaks (`speakers.json`: 0 overrides).
+  - **LSCR CFG compiler (`tools/build_cfg.py`)**: compiles all 221 scripts
+    into `cfg.json` v1 (`Global.vrb` 29 vars, `play` spans `[from, to)`,
+    `setG`/`setL`/`setGFlag`/`if`/`choice`/`sload`/`scall`/`ret`/`gotitle`),
+    integrated into `tools/build.py` and bundled as `bundle.json["cfg"]` via
+    `tools/pack_bundle.py`. Zero overlapping `play` spans across all scripts;
+    32/32 choices covered with exact `SetSelectMess` gates.
+  - **`GFLAG.dat` +1 off-by-one fix & route correction**
+    (`tools/build_flags.py`, `tools/build_sys_table.py`,
+    `data/sys-slots.json`, `data/endings.json`, `data/terminals.json`,
+    `tools/annotate_flow.py`, `data/flow.json`, `tools/simulate.py`):
+    `GFLAG.dat` records are `(u32 slot, char[256] name)` after a 4-byte count,
+    so all 11 ending slots (`0, 20..25, 30..33`) are `high`-confidence, slot
+    `99` is the `SetSelectMess` choice-system placeholder, and `2019`/`3016`
+    route attributions (`24xx`=Chiaki, `25xx`=Mari, `23xx`=Koharu,
+    `3901`=Kazusa Cheating, `31xx`=Kazusa True, `32xx`=Setsuna True) match
+    `.bnr` `SLoad` ground truth.

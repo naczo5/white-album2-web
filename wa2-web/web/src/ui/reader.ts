@@ -1,9 +1,10 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
 import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, resolveAudioUrl, seUrl, subtitleUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
+import { isEventInExecutedRanges } from "../engine/cfg-vm";
 import { Router, chapterOfScript } from "../engine/router";
 import { displayDate, plainText, renderText, spanize } from "../engine/text";
-import type { BgmData, BnrData, Position, SaveData, ScenarioEvent } from "../engine/types";
+import type { BgmData, BnrData, Flags, Position, SaveData, ScenarioEvent } from "../engine/types";
 import { storageKey, writeAutosave } from "../engine/save";
 import { newWheelState, normalizeWheelDelta, wheelGesture, type WheelState } from "../engine/wheel";
 import { moviePlaying, openMovie, preloadMovieAhead } from "./movie";
@@ -621,23 +622,32 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   hint.style.display = "";
   advanceHandler = null;
 
+  const recordEndings = (unlocked?: readonly string[], ending?: string, verb = "Ending recorded"): boolean => {
+    const ids = [...(unlocked ?? []), ...(ending ? [ending] : [])];
+    let added = false;
+    for (const id of ids) {
+      if (!id || save.endings.includes(id)) continue;
+      save.endings.push(id);
+      h.notify(`${verb}: ${id}`);
+      added = true;
+    }
+    return added;
+  };
+
   if (!ev) {
     // Past the end of a script: try to keep going (heals stale saves),
     // else offer wayfinding instead of stranding the player.
     const cont = router.advance(pos, save.flags);
+    const added = recordEndings(cont.unlockedEndings, cont.ending);
     if (!cont.ended) {
-      save.position = skipLatches(router, cont.pos, save.flags);
+      save.position = skipLatches(router, cont.pos, save.flags, (id) => recordEndings([id]));
       if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
       pushLog(router, save);
       writeAutosave(localStorage, save);
       h.onChange();
       return;
     }
-    if (cont.ending && !save.endings.includes(cont.ending)) {
-      save.endings.push(cont.ending);
-      writeAutosave(localStorage, save);
-      h.notify(`Ending recorded: ${cont.ending}`);
-    }
+    if (added) writeAutosave(localStorage, save);
     box.innerHTML = `<div class="narrate">End of ${escapeAttr(pos.script)}</div>
       <div class="dim">The story continues in another file; use the chart or title.</div>`;
     hint.style.display = "none";
@@ -667,26 +677,37 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     box.innerHTML = `<div class="narrate choice-prompt">Choose${
       choiceDate ? ` <span class="dim">${escapeAttr(choiceDate)}</span>` : ""
     }</div>`;
+    const optStates = new Map(router.choiceOptions(pos, save.flags).map((s) => [s.n, s]));
     for (const o of ev.options) {
+      const st = optStates.get(o.n);
+      if (st && !st.visible) continue;
+      const locked = st ? !st.unlocked : false;
       const gate = node?.gated?.[String(o.n)] ?? null;
       const b = document.createElement("button");
-      b.className = "choice-btn";
+      b.className = locked ? "choice-btn locked" : "choice-btn";
+      if (locked) b.disabled = true;
       // `(needs ...)` is a flow-annotation gate string: mechanics, not
       // story. Hidden unless dev mode is on.
-      const gateHtml = gate && h.settings.dev
-        ? ` <span class="lock">(${escapeAttr(gate)})</span>`
-        : "";
-      b.innerHTML = renderText(o.text) + gateHtml;
+      const lockHtml = locked
+        ? ` <span class="lock">(${gate && h.settings.dev ? `Locked · ${escapeAttr(gate)}` : "Locked"})</span>`
+        : gate && h.settings.dev
+          ? ` <span class="lock">(${escapeAttr(gate)})</span>`
+          : "";
+      b.innerHTML = renderText(o.text) + lockHtml;
       b.onclick = (e) => {
         e.stopPropagation();
+        if (locked) return;
         cutVoice();
         const r = router.pick(pos, o.n, save.flags);
         save.picks[node?.id ?? `${pos.script}:${pos.event}`] = o.n;
-        if (r.ending && !save.endings.includes(r.ending)) {
-          save.endings.push(r.ending);
-          h.notify(`Ending recorded: ${r.ending}`);
+        recordEndings(r.unlockedEndings, r.ending);
+        if (r.ended) {
+          writeAutosave(localStorage, save);
+          h.notify(r.ending ? `Ending reached: ${r.ending}` : "Route end reached.");
+          h.open("title");
+          return;
         }
-        save.position = skipLatches(router, r.next, save.flags);
+        save.position = skipLatches(router, r.next, save.flags, (id) => recordEndings([id]));
         if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
         pushLog(router, save);
         writeAutosave(localStorage, save);
@@ -1052,8 +1073,14 @@ export function stepForward(h: ReaderHooks): void {
   if (moviePlaying()) return;
   cutVoice();
   lastPainted = null;
+  const recordEnding = (id: string, verb = "Ending recorded") => {
+    if (!id || save.endings.includes(id)) return;
+    save.endings.push(id);
+    h.notify(`${verb}: ${id}`);
+  };
   const r = router.advance(save.position, save.flags);
   if (r.ended) {
+    for (const id of r.unlockedEndings ?? []) recordEnding(id, "Ending reached");
     if (r.ending && !save.endings.includes(r.ending)) {
       save.endings.push(r.ending);
     }
@@ -1062,7 +1089,8 @@ export function stepForward(h: ReaderHooks): void {
     h.open("title");
     return;
   }
-  save.position = skipLatches(router, r.pos, save.flags);
+  for (const id of r.unlockedEndings ?? []) recordEnding(id);
+  save.position = skipLatches(router, r.pos, save.flags, (id) => recordEnding(id));
   if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
   pushLog(router, save);
   writeAutosave(localStorage, save);
@@ -1070,17 +1098,28 @@ export function stepForward(h: ReaderHooks): void {
 }
 
 /** Skip consecutive latch/directive events so the box shows text first. */
-export function skipLatches(router: Router, pos: Position, flags: { aff: Record<string, number>; set: Record<string, boolean> }): Position {
+export function skipLatches(
+  router: Router,
+  pos: Position,
+  flags: Flags,
+  onEnding?: (ending: string) => void,
+): Position {
   let p = { ...pos };
   for (let i = 0; i < 200; i++) {
     const ev = router.at(p);
     if (!ev) break;
-    if (ev.t === "latch" || ev.t === "image" || ev.t === "filter" || ev.t === "bgm" || ev.t === "anim" || ev.t === "layer") {
-      p = { script: p.script, event: p.event + 1 };
-      continue;
-    }
-    if (ev.t === "jump") {
+    if (
+      ev.t === "latch" ||
+      ev.t === "image" ||
+      ev.t === "filter" ||
+      ev.t === "bgm" ||
+      ev.t === "anim" ||
+      ev.t === "layer" ||
+      ev.t === "jump"
+    ) {
       const r = router.advance(p, flags);
+      for (const id of r.unlockedEndings ?? []) onEnding?.(id);
+      if (r.ending) onEnding?.(r.ending);
       if (r.ended) break;
       if (r.pos.script === p.script && r.pos.event === p.event) break;
       p = r.pos;
@@ -1232,18 +1271,42 @@ export function setScenarioLookup(fn: typeof scenarioLookup): void {
   scenarioLookup = fn;
 }
 
+export function activeExecutedRanges(save: SaveData): [number, number][] | undefined {
+  return save.flags.cfg && save.flags.cfg.script === save.position.script
+    ? save.flags.cfg.executedRanges
+    : undefined;
+}
+
+function cueInExecutedRanges(
+  ranges: readonly [number, number][] | undefined,
+  ev: number,
+  curEvent: number,
+): boolean {
+  if (!ranges) return true;
+  const idx = Math.floor(ev);
+  return idx === curEvent || isEventInExecutedRanges(ranges, idx);
+}
+
 function eventsBefore(save: SaveData): ScenarioEvent[] {
   const sc = scenarioLookup?.(save.position.script);
   if (!sc) return [];
   return sc.events.slice(0, save.position.event);
 }
 
+function indexedEventsBefore(save: SaveData): { e: ScenarioEvent; i: number }[] {
+  const ranges = activeExecutedRanges(save);
+  return eventsBefore(save)
+    .map((e, i) => ({ e, i }))
+    .filter(({ i }) => !ranges || isEventInExecutedRanges(ranges, i));
+}
+
 function stageImageState(save: SaveData): StageImageState {
   return resolveStageImageEx(
-    eventsBefore(save).map((e, i) => ({ e, i })),
+    indexedEventsBefore(save),
     bnrLookup?.(save.position.script) ?? null,
     save.position.event,
     chapterOfScript(save.position.script),
+    activeExecutedRanges(save),
   );
 }
 
@@ -1271,11 +1334,13 @@ export function resolveStageImageEx(
   bnr: BnrData["recs"][string] | null | undefined,
   event: number,
   chapter: string,
+  executedRanges?: readonly [number, number][],
 ): StageImageState {
   type Cue = { ev: number; file?: string; stems?: string[]; clear?: boolean; rank: number; seq: number };
   const cues: Cue[] = [];
   let seq = 0;
   for (const { e, i } of txt) {
+    if (executedRanges && !isEventInExecutedRanges(executedRanges, i)) continue;
     // txt `<file>.tga` + `grp` is event art (overlay), not a backdrop: the
     // engine's txt image driver routes grp to the overlay layer. Treating a
     // grp image as a backdrop let CGs become the stage floor when the
@@ -1287,6 +1352,7 @@ export function resolveStageImageEx(
   }
   for (const r of bnr ?? []) {
     if (r.conf !== "high" || r.ev > event) continue;
+    if (!cueInExecutedRanges(executedRanges, r.ev, event)) continue;
     if (r.layer !== "bak") continue;
     if (r.clear) cues.push({ ev: r.ev, clear: true, rank: 1, seq: seq++ });
     else if (r.stems?.length) cues.push({ ev: r.ev, stems: r.stems, rank: 1, seq: seq++ });
@@ -1322,8 +1388,9 @@ export function resolveStageImage(
   bnr: BnrData["recs"][string] | null | undefined,
   event: number,
   chapter: string,
+  executedRanges?: readonly [number, number][],
 ): string | null {
-  return resolveStageImageEx(txt, bnr, event, chapter).url;
+  return resolveStageImageEx(txt, bnr, event, chapter, executedRanges).url;
 }
 
 /** Latest grp-layer overlay at/before position (event CGs, spotlights).
@@ -1331,10 +1398,11 @@ export function resolveStageImage(
  * any bak cue (txt or .bnr) or clear resets the overlay slate. */
 function stageOverlayHint(save: SaveData): string | null {
   return resolveStageOverlay(
-    eventsBefore(save).map((e, i) => ({ e, i })),
+    indexedEventsBefore(save),
     bnrLookup?.(save.position.script) ?? null,
     save.position.event,
     chapterOfScript(save.position.script),
+    activeExecutedRanges(save),
   );
 }
 
@@ -1343,17 +1411,20 @@ export function resolveStageOverlay(
   bnr: BnrData["recs"][string] | null | undefined,
   event: number,
   chapter: string,
+  executedRanges?: readonly [number, number][],
 ): string | null {
   type Cue = { ev: number; file?: string; stems?: string[]; reset?: boolean; rank: number; seq: number };
   const cues: Cue[] = [];
   let seq = 0;
   for (const { e, i } of txt) {
+    if (executedRanges && !isEventInExecutedRanges(executedRanges, i)) continue;
     if (e.t !== "image") continue;
     if (e.layer === "bak") cues.push({ ev: i, reset: true, rank: 0, seq: seq++ });
     else if (e.layer === "grp") cues.push({ ev: i, file: e.file, rank: 0, seq: seq++ });
   }
   for (const r of bnr ?? []) {
     if (r.conf !== "high" || r.ev > event) continue;
+    if (!cueInExecutedRanges(executedRanges, r.ev, event)) continue;
     if (r.layer === "bak") cues.push({ ev: r.ev, reset: true, rank: 1, seq: seq++ });
     else if (r.layer === "grp") {
       if (r.clear) cues.push({ ev: r.ev, reset: true, rank: 1, seq: seq++ });
@@ -1414,14 +1485,19 @@ export function bgmCueAt(save: SaveData): { kind: "play"; url: string; loopUrl?:
   if (!cues || cues.length === 0) return { kind: "sustain" };
   const ch = chapterOfScript(save.position.script);
   let track: number | null = null;
-  const cue = resolveBgmCue(cues, save.position.event, (t) => {
-    const intro = bgmIntroUrl(t, ch);
-    const loop = bgmLoopUrl(t, ch);
-    const solo = intro || loop ? null : bgmSoloUrl(t, ch);
-    if (!intro && !loop && !solo) return null;
-    track = t;
-    return { url: intro ?? loop ?? solo!, loopUrl: intro ? (loop ?? intro) : (loop ?? solo!) };
-  });
+  const cue = resolveBgmCue(
+    cues,
+    save.position.event,
+    (t) => {
+      const intro = bgmIntroUrl(t, ch);
+      const loop = bgmLoopUrl(t, ch);
+      const solo = intro || loop ? null : bgmSoloUrl(t, ch);
+      if (!intro && !loop && !solo) return null;
+      track = t;
+      return { url: intro ?? loop ?? solo!, loopUrl: intro ? (loop ?? intro) : (loop ?? solo!) };
+    },
+    activeExecutedRanges(save),
+  );
   if (cue.kind === "play" && track !== null) {
     return { ...cue, track };
   }
@@ -1436,10 +1512,12 @@ export function resolveBgmCue(
   cues: { ev: number; track?: number; stop?: boolean; missing?: boolean }[],
   event: number,
   resolve: (track: number) => { url: string; loopUrl?: string } | null,
+  executedRanges?: readonly [number, number][],
 ): { kind: "play"; url: string; loopUrl?: string } | { kind: "stop" } | { kind: "sustain" } {
   let pending: { kind: "play"; url: string; loopUrl?: string } | { kind: "stop" } | null = null;
   for (const c of cues) {
     if (c.ev > event) break;
+    if (!cueInExecutedRanges(executedRanges, c.ev, event)) continue;
     if (c.stop) {
       pending = { kind: "stop" };
     } else if (c.track !== undefined && !c.missing) {
@@ -1457,11 +1535,17 @@ export function resolveBgmTimeline(
   cues: { ev: number; track?: number; stop?: boolean; missing?: boolean }[],
   event: number,
   resolve: (track: number) => string | null,
+  executedRanges?: readonly [number, number][],
 ): { kind: "play"; url: string } | { kind: "stop" } | { kind: "sustain" } {
-  return resolveBgmCue(cues, event, (t) => {
-    const url = resolve(t);
-    return url ? { url } : null;
-  });
+  return resolveBgmCue(
+    cues,
+    event,
+    (t) => {
+      const url = resolve(t);
+      return url ? { url } : null;
+    },
+    executedRanges,
+  );
 }
 
 type BgmLookup = (script: string) => BgmData["cues"][string] | undefined;
@@ -1568,18 +1652,20 @@ function paintBgm(save: SaveData, bgmVol: number, movieNext = false): void {
 export function bnrFadeAt(save: SaveData): number | null {
   const recs = bnrLookup?.(save.position.script);
   if (!recs) return null;
-  return resolveFade(recs, save.position.event);
+  return resolveFade(recs, save.position.event, activeExecutedRanges(save));
 }
 
 /** Pure fade resolver (DOM-free; test-pinned). */
 export function resolveFade(
   recs: { ev: number; fadeMs?: number; fade?: number | null; stems?: string[]; clear?: boolean; se?: number[]; cam?: unknown; conf: string }[],
   event: number,
+  executedRanges?: readonly [number, number][],
 ): number | null {
   const cap = (v: number) => Math.max(0, Math.min(2000, v));
   let pending: number | null = null;
   for (const r of recs) {
     if (r.ev > event || r.conf !== "high") continue;
+    if (!cueInExecutedRanges(executedRanges, r.ev, event)) continue;
     if (r.fadeMs) {
       pending = cap(r.fadeMs);
     } else if (r.stems?.length || r.clear) {
@@ -1609,10 +1695,12 @@ export function resolveSeIds(
   recs: { ev: number; se?: number[]; conf: string }[],
   from: number,
   to: number,
+  executedRanges?: readonly [number, number][],
 ): number[] {
   const out: number[] = [];
   for (const r of recs) {
     if (r.conf !== "high" || !r.se?.length) continue;
+    if (!cueInExecutedRanges(executedRanges, r.ev, to)) continue;
     if (r.ev > from && r.ev <= to) out.push(...r.se);
   }
   return out;
@@ -1677,7 +1765,7 @@ function fireSe(save: SaveData): void {
   // load / backward seek: fire only the current event.
   const from = cur && cur.script === script && ev > cur.ev ? cur.ev : ev - 1;
   const ch = chapterOfScript(script);
-  for (const id of resolveSeIds(recs, from, ev)) {
+  for (const id of resolveSeIds(recs, from, ev, activeExecutedRanges(save))) {
     const url = seUrl(id, ch);
     if (url) playSeUrl(url);
   }
@@ -1721,11 +1809,13 @@ export type AmbTimelineEntry =
 export function resolveAmbientTimeline(
   recs: { ev: number; amb?: AmbCue; ambStop?: number; conf: string }[],
   event: number,
+  executedRanges?: readonly [number, number][],
 ): Map<number, AmbTimelineEntry> {
   const out = new Map<number, AmbTimelineEntry>();
   const ordered = [...recs].sort((a, b) => a.ev - b.ev);
   for (const r of ordered) {
     if (r.conf !== "high" || r.ev > event) continue;
+    if (!cueInExecutedRanges(executedRanges, r.ev, event)) continue;
     if (r.amb) out.set(r.amb.ch, { kind: "play", cue: r.amb });
     else if (r.ambStop !== undefined) out.set(r.ambStop, { kind: "stop" });
   }
@@ -1762,7 +1852,7 @@ function updateAmbient(save: SaveData, movieNext = false): void {
   ambScript = save.position.script;
   const recs = bnrLookup?.(save.position.script);
   if (!recs) return;
-  const timeline = resolveAmbientTimeline(recs, save.position.event);
+  const timeline = resolveAmbientTimeline(recs, save.position.event, activeExecutedRanges(save));
   const ch = chapterOfScript(save.position.script);
   // A backward seek/load may land before a channel's cue: anything the
   // timeline does not keep alive must stop (engine channel state is
@@ -1818,9 +1908,9 @@ function updateAmbient(save: SaveData, movieNext = false): void {
  * Exact engine LUTs via SVG feComponentTransfer when available
  * (data/luts.json), else the CSS approximation table. */
 function stageFilter(save: SaveData): string {
-  const evs = eventsBefore(save);
+  const evs = indexedEventsBefore(save);
   for (let i = evs.length - 1; i >= 0; i--) {
-    const e = evs[i];
+    const e = evs[i]!.e;
     if (e.t === "filter") {
       const stem = e.file.replace(/\.[^.]+$/, "").toLowerCase();
       if (lutAvailable(stem)) return `url(#wa2lut-${stem})`;
@@ -1920,6 +2010,7 @@ function displaySpeaker(save: SaveData, ev: ScenarioEvent): string {
 export function resolveSprites(
   recs: BnrData["recs"][string] | null | undefined,
   event: number,
+  executedRanges?: readonly [number, number][],
 ): { id: number; stem: string; pos: number | null }[] {
   const active = new Map<number, { stem: string; pos: number | null }>();
   // Event numbers are non-decreasing in statement order (engine invariant,
@@ -1928,6 +2019,7 @@ export function resolveSprites(
   const ordered = [...(recs ?? [])].sort((a, b) => a.ev - b.ev);
   for (const r of ordered) {
     if (r.conf !== "high" || r.ev > event) continue;
+    if (!cueInExecutedRanges(executedRanges, r.ev, event)) continue;
     if (r.sprClear) active.clear();
     if (r.spr) active.set(r.spr.id, { stem: r.spr.stem, pos: r.spr.pos ?? null });
     else if (r.sprHide !== undefined) active.delete(r.sprHide);
@@ -1953,6 +2045,7 @@ function paintSprites(stage: HTMLElement, save: SaveData): void {
   const active = resolveSprites(
     bnrLookup?.(save.position.script),
     save.position.event,
+    activeExecutedRanges(save),
   );
   const chapter = chapterOfScript(save.position.script);
   const seen = new Set<number>();

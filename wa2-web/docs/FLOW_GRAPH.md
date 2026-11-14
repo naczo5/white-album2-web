@@ -1,57 +1,61 @@
 # FLOW_GRAPH — how the game flows (engine evidence + walkthrough join)
 
-## Spine (numeric file order, chapter-aware)
+## Authoritative CFG (`cfg.json`, compiled by `tools/build_cfg.py`)
 
-Intro `1001→1013` (linear, 0 choices) —`1013→2001` auto-transition→
+`tools/build_cfg.py` compiles every `.bnr` LSCR bytecode stream into structured
+control-flow ASTs (`play`, `setG`, `setL`, `setGFlag`, `if`, `choice`, `sload`,
+`scall`, `ret`, `gotitle`) backed by `Global.vrb` (29 variables) and `GFLAG.dat`.
+This supersedes linear `terminals.json` guesses whenever `cfg.json` is loaded.
+
+## Spine (`.bnr` SLoad + conditional branches)
+
+Intro `1001→1013` (linear, 0 choices; IC replay variants `1008_020..1012_030`
+entered via `scall`/`sload` when `GFlag 0` or `GFlag 1` is set) —`1013` sets
+`GFlag 0` (`ic-end`) and `SLoad 2001`→
+
 Closing common `2001→2019` → four file-lines:
 
-- Chiaki: `2301→2322` (via 2019 work/stay opt2 + `play: 2301`)
-- Mari: `2401→2413` (via router opt2, gated mari aff)
-- Common/Koharu/Setsuna/Normal: `2501→2517`
-- Setsuna: `2020→2033` (fall-through) —`2033→3001` bridge→ Coda
+- **Chiaki**: `2401→2402→2413` (Chiaki Normal, sets `GFlag 1` + `GFlag 24`) /
+  `2401→2412` (Chiaki True, gated `GFlag 1` at `2003-242` opt1, sets `GFlag 23`) —
+  via `2019-1484` opt1 (`Call Chiaki`, gated `G[9]>=3 && !G[12]`).
+- **Mari**: `2501→2517` (sets `GFlag 25`) — via `2019-1484` opt2 (`Stop by the
+  editorial office`, gated `G[10]>=3`).
+- **Koharu**: `2301→2322` (sets `GFlag 22`) — via `2019-1484` opt3 fall-through
+  to `2019-1512` opt1 (`Go to work`, gated `G[8]>=3 && !G[11]`).
+- **Setsuna / CC Normal**: `2019-1512` opt2 (`Stay alone`) falls through to
+  `2020`. `2020..2023` exit early to `2025` (`cc-normal1`, `GFlag 20`) if Setsuna
+  requirements fail; otherwise `2020→2024→2026→2033` (`cc-setsuna`, `GFlag 21`)
+  —`2033` loads `3001`→ Coda.
 
-Coda common `3001→3016` → split at 3016 (`Turn my face away` → `3901`
-Kazusa side `3901→3909`; fall-through → `3017→3024→3101→3111→3201→3211`).
-Special Contents (`4000s/5200s/6000s/7000s`) = menu-gated extras.
+Coda common `3001→3016`:
+- `3016-822` opt1 (`Let go of her hands`, gated `G[27]==0`) → `SLoad 3901→3909`
+  (`coda-cheating`, `GFlag 32`).
+- `3016-822` opt2 (`Turn my face away`) falls through to `3016-859`:
+  - opt1 (`I love Setsuna`): if `s_flag` (`G[27]==0`) → `3024` (`coda-normal`,
+    `GFlag 30`); if `G[27]==1` → `3017→3023→3201→3211` (`coda-setsuna-true`,
+    `GFlag 33`).
+  - opt2 (`I can't lie to Kazusa`, gated `G[5]>=6`) → `3017→3023→3101→3111`
+    (`coda-kazusa-true`, `GFlag 31`).
+
+Special Contents (`4000..4009`, `5000..5004`, `5100..5104`, `5200..5209`,
+`5300..5303`, `5400..5401`, `6001..6005`, `6101..6104`, `7000..7300`) =
+menu-gated extras, each ending at `GoTitle` (`terminals.json`).
 
 ## Choice semantics
 
-- **Inline** (27 of 32): attitude/affection picks, shared linear
-  continuation (proven: 2004 decline-then-accept reversal). Engine records
-  the pick into the flag model and continues. No gotos.
-- **Router** (2019 12/24, 3-way): bare-id gotos `2401`/`2501`/fall-through.
-- **Work/stay** (2019, 2-way): the only CATCH-adjacent choice; opt2 jumps
-  file (`play: 2301`), opt1 continues. Evidence: parallel Dec-25-morning
-  openings of 2301 vs 2020.
-- **Final** (3016 1/29): bare goto `3901` on opt2; opt1 skips to cheating.
-
-## Flag model (walkthrough-derived, NEEDS_PLAYTEST thresholds)
-
-CC: `aff.{setsuna,koharu,mari,chiaki}` + route flags + `chiaki_true`
-unlock (12/1 opt1 locked until Chiaki Normal cleared). Coda:
-`aff.{s,k}`, `uwaki`, `s_flag`, `s_honest`. Gating is ADVISORY in v1
-(shown with lock reasons, never hard-locks) until in-game verification
-fixes the numbers. 12/24 + 12/31 + 2/14 dummies documented per node.
-
-Caveat: every effect map below (including `EXPERT_SOURCED` ones like
-`2013 flag_off: mari`, `2016 clear: chiaki`, `2017 aff_if_mari`, all Coda
-`uwaki` splits) is a walkthrough derivation — but it now has engine
-vocabulary behind it: script.pak `Global.vrb` names the live affection,
-cheat, route-kill, and per-choice pick flags (15/15 mapped to real
-scripts, tools/build_flags.py), and `GFLAG.dat` holds the 62
-ending/chapter/replay slots. What save-state diffing still owes us is the
-numeric layer (pick→delta amounts, gate thresholds), not the flag
-identities. Advisory gating stays until the numbers confirm.
-
-## Variants (43 files: `2031_2`, `2312_2`, `3001_2`, …)
-
-Flag/replay-gated alternates (H-scenes, Chiaki-true extras, route
-versions). v1 plays base files; every variant is listed in sim reports
-for play-test mapping. `selectVariant()` is the seam.
+- **Inline** (28 of 32): attitude/affection/route-flag picks; `.bnr` `IF` blocks
+  branch directly inside the script (`2003`, `3014`, `3016-859`, etc.).
+- **12/24 Router** (`2019-1484`, 3-way): opt1 → `2401` (Chiaki), opt2 → `2501`
+  (Mari), opt3 → fall-through to `2019-1512`.
+- **Work/stay** (`2019-1512`, 2-way): opt1 (`Go to work`) → `2301` (Koharu),
+  opt2 (`Stay alone`) → fall-through to `2020`.
+- **1/29 Final** (`3016-822`, 2-way): opt1 (`Let go of her hands`) → `3901`
+  (Kazusa Cheating), opt2 (`Turn my face away`) → fall-through to `3016-859`.
 
 ## Statuses
 
-`EXPERT_SOURCED` (walkthrough consensus, 30 nodes) / `NEEDS_PLAYTEST`
-(2019-1516 routing frame, 3013-805 mapping; event indices shift as the parser improves — always cite current flow.json ids) / `ENGINE_EVIDENCED`
-(1013→2001, 2033→3001). Flowchart/guide render badges; nothing claims
-in-game verification it doesn't have.
+`VERIFIED_IN_GAME` (2 nodes with `.bnr`-verified `goto` overrides: `2019-1484`,
+`3016-822`) / `EXPERT_SOURCED` (29 nodes) / `NEEDS_PLAYTEST` (`3013-801` label
+assignment) / `ENGINE_EVIDENCED` (`endings.json` & `terminals.json` backed by
+`.bnr` `SLoad`/`GoTitle`/`SetGameFlag`).
+

@@ -5,8 +5,9 @@ spine). Reports coverage + stalls. See docs/QA.md.
 
     python3 simulate.py IR_DIR FLOW_JSON LINKS_JSON TERMINALS_JSON [strategy]
 
-Strategies: first | routers (prefer untaken engine gotos) | chiaki (2019
-opt1/opt2 path) | mari (2019 opt2) | koharu (2019 opt3).
+Strategies: first | routers (prefer untaken engine gotos, then fall-through) |
+chiaki (2019 opt1 -> 2401) | mari (2019 opt2 -> 2501) |
+koharu (2019 opt3 -> 2019-1512 opt1 -> 2301) | special.
 """
 
 from __future__ import annotations
@@ -128,21 +129,26 @@ def main() -> int:
         key = (pos[0], pos[1])
         if strategy in ("mari", "koharu", "chiaki", "routers"):
             taken = script_picks.get(key, set())
+            want = {"chiaki": {"2401"}, "mari": {"2501"},
+                    "koharu": {"2301"}}.get(strategy, ROUTER_TARGETS)
             for o in node["options"]:
                 dest = o.get("play") or o.get("goto")
-                want = {"mari": {"2401"}, "koharu": {"2501"},
-                        "chiaki": {"2301"}}.get(strategy, ROUTER_TARGETS)
                 if dest in want and dest not in taken:
                     taken.add(dest)
                     script_picks[key] = taken
                     return o["n"]
-        if strategy == "chiaki":
-            return 2 if key == ("2019", 1516) else 1
+            # If no wanted/untaken branch exists here, pick the fall-through
+            # option (no jump) when present so downstream routers (e.g.
+            # 2019:1512, 3016:859) remain reachable.
+            for o in node["options"]:
+                if (o.get("play") or o.get("goto")) is None:
+                    return o["n"]
         return 1
 
-    starts = {"first": ["1001"], "routers": ["1001", "2019", "2019", "2019",
-              "3001", "3016", "3016", "3016"],
-              "chiaki": ["1001", "2019", "2019"], "mari": ["1001", "2019"],
+    starts = {"first": ["1001"],
+              "routers": ["1001", "2019", "2019", "2019", "2019", "3001",
+                          "3016", "3016"],
+              "chiaki": ["1001", "2019"], "mari": ["1001", "2019"],
               "koharu": ["1001", "2019"],
               "special": ["4000", "5000", "5001", "5101", "5200", "5201",
                           "5301", "5401", "6001", "6101", "7000",

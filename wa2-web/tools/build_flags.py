@@ -71,30 +71,30 @@ def parse_gflag(blob: bytes) -> list[str]:
     return names
 
 
+GFLAG_HEADER_BYTES = 4
 GFLAG_RECORD_BYTES = 260
-GFLAG_SLOT_OFFSET = 256  # u32 flag-slot index at record +256
+GFLAG_SLOT_OFFSET = 0   # u32 flag-slot index at record +0
+GFLAG_NAME_OFFSET = 4   # 256-byte NUL-terminated CP932 name at record +4
 
 
 def parse_gflag_slots(blob: bytes) -> list[dict]:
-    """GFLAG.dat records with their Region C slot index (`+256` u32).
+    """GFLAG.dat records with their Region C slot index (`+0` u32, `+4` name).
 
-    The engine writes/reads Sys.sav's 1024-word global flag array by these
-    ids (`GetGameFlag`/`SetGameFlag`). The trailing record's slot field sits
-    at the very end of the blob, so the read is clamped: a short record
-    yields slot 0 instead of raising.
+    Each 260-byte record starts immediately after the 4-byte u32 count header
+    at `4 + i * 260`: u32 slot at `+0`, 256-byte CP932 name at `+4`.
+    Reads clamp cleanly if a synthetic test blob is truncated.
     """
     (count,) = struct.unpack_from("<I", blob, 0)
     out = []
     for i in range(count):
-        base = 8 + i * GFLAG_RECORD_BYTES
-        raw = blob[base:base + 120].split(b"\x00")[0]
+        base = GFLAG_HEADER_BYTES + i * GFLAG_RECORD_BYTES
+        slot = (struct.unpack_from("<I", blob, base + GFLAG_SLOT_OFFSET)[0]
+                if base + GFLAG_SLOT_OFFSET + 4 <= len(blob) else 0)
+        raw = blob[base + GFLAG_NAME_OFFSET:base + GFLAG_RECORD_BYTES].split(b"\x00")[0]
         try:
             name = raw.decode("cp932")
         except Exception:
             name = ""
-        at = base + GFLAG_SLOT_OFFSET
-        slot = (struct.unpack_from("<I", blob, at)[0]
-                if at + 4 <= len(blob) else 0)
         out.append({"name": name, "slot": slot})
     return out
 

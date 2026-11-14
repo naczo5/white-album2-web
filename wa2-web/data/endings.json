@@ -8,119 +8,134 @@
   "voice_message": "unlocked by clearing ALL endings"
  },
  "version": 1,
- "status_note": "Endings join walkthrough consensus to engine file ranges. File->ending mapping is approximate until play-tested (see docs/QA.md). Statuses mirror flow.json.",
+ "status_note": "Endings join walkthrough consensus to engine-verified .bnr SLoad + GFLAG.dat SetGameFlag targets.",
  "endings": [
   {
    "id": "ic-end",
    "chapter": "intro",
    "name": "Introductory Chapter End",
    "files": [
-    "1001-1013 + replay variants"
+    "1001-1013 + replay variants (1008_020..1012_030)"
    ],
    "choices": 0,
-   "unlock": "read to end; linear",
-   "status": "EXPERT_SOURCED"
+   "unlock": "read to end; 1013 sets GFlag 0 and chains into 2001",
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "cc-normal1",
    "chapter": "closing",
    "name": "CC Normal End (common bad end)",
    "files": [
-    "25xx line"
+    "2020-2023 -> 2025"
    ],
-   "unlock": "Avoid all heroine flags; 2019-1484 opt3, then stay-alone path without Setsuna affinity",
-   "status": "NEEDS_PLAYTEST"
+   "unlock": "Avoid heroine lock-ins; 2019-1484 opt3 -> 2019-1512 opt2 (Stay alone) -> 2020..2023 short-exit to 2025 (sets GFlag 20)",
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "cc-koharu",
    "chapter": "closing",
    "name": "Sugiura Koharu End",
    "files": [
-    "25xx line"
+    "2301-2322"
    ],
-   "unlock": "Koharu-favoring chain (2005/2009 accompany, 2018 opt2) + 2019-1484 opt3",
+   "unlock": "Koharu-favoring chain (2005/2009 opt1, 2018 opt2) -> 2019-1484 opt3 -> 2019-1512 opt1 (Go to work, gated G[8]>=3 && !G[11]) -> 2301..2322 (sets GFlag 22)",
    "epilogue": true,
-   "status": "EXPERT_SOURCED"
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "cc-mari",
    "chapter": "closing",
    "name": "Kazaoka Mari End",
    "files": [
-    "2401-2413"
+    "2501-2517"
    ],
-   "unlock": "Mari chain (2011/2017 opt2) + 2019-1484 opt2 (gated mari aff>=3) + 2503-126 opt2 (Stay here)",
+   "unlock": "Mari chain (2004/2011/2017 opt2, 2013 opt2) -> 2019-1484 opt2 (Stop by the editorial office, gated G[10]>=3) -> 2501..2517 + 2503-126 opt2 (Stay here, sets GFlag 25)",
    "epilogue": true,
-   "status": "EXPERT_SOURCED"
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "cc-chiaki-normal",
    "chapter": "closing",
    "name": "Izumi Chiaki Normal End",
    "files": [
-    "23xx line?"
+    "2401-2402 -> 2413"
    ],
-   "unlock": "Chiaki chain (2007 opt1) + 2019-1484 opt1 (gated chiaki aff>=3). UNLOCKS 12/1 opt1 + IC extra scene.",
+   "unlock": "Chiaki chain (2003-242 opt2, 2007 opt1, 2014 opt1, 2016 opt2) -> 2019-1484 opt1 (Call Chiaki, gated G[9]>=3 && !G[12]) -> 2401..2402 -> 2413 (sets GFlag 24 + GFlag 1). UNLOCKS 2003-242 opt1 + IC replay scenes.",
    "gates": "cc_chiaki_true_option",
-   "status": "NEEDS_PLAYTEST"
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "cc-chiaki-true",
    "chapter": "closing",
    "name": "Izumi Chiaki True End",
    "files": [
-    "23xx line?"
+    "2401-2412"
    ],
-   "unlock": "PREREQ cc-chiaki-normal. Restart CC; 2003-242 opt1, same chain, 2019-1484 opt1.",
-   "status": "NEEDS_PLAYTEST"
+   "unlock": "PREREQ cc-chiaki-normal (GFlag 1). 2003-242 opt1 -> same Chiaki chain -> 2019-1484 opt1 -> 2401..2412 (sets GFlag 23).",
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "cc-setsuna",
    "chapter": "closing",
    "name": "Ogiso Setsuna End",
    "files": [
-    "25xx line"
+    "2020-2024 -> 2026-2033"
    ],
-   "unlock": "Avoid Koharu/Mari/Chiaki flags, keep Setsuna affinity; 2019-1484 opt3 + shrine visit. Auto-transitions into Coda.",
+   "unlock": "Avoid 2025 short-exit; 2019-1484 opt3 -> 2019-1512 opt2 -> 2020..2024 (shrine visit) -> 2026..2033 (sets GFlag 21). Auto-transitions into 3001 (Coda).",
    "gates": "coda",
-   "status": "NEEDS_PLAYTEST"
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "coda-normal",
    "chapter": "coda",
    "name": "Coda Normal End",
-   "unlock": "Fail Kazusa and Setsuna-True flag sets; typical: 3016-859 opt1 without s_flag.",
-   "status": "EXPERT_SOURCED"
+   "files": [
+    "3001-3016 -> 3024"
+   ],
+   "unlock": "With s_flag (G[27]) OFF: 3016-822 opt2 (Turn my face away) -> 3016-859 opt1 (I love Setsuna) -> 3024 (sets GFlag 30).",
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "coda-cheating",
    "chapter": "coda",
    "name": "Cheating End (Kazusa Normal)",
-   "unlock": "Kazusa-leaning chain + 3016-822 opt1 (skips final choice). UNLOCKS Extra Episode.",
+   "files": [
+    "3901-3909"
+   ],
+   "unlock": "With s_flag (G[27]) OFF: 3016-822 opt1 (Let go of her hands) -> 3901..3909 (skips 3016-859, sets GFlag 32). UNLOCKS Extra Episode.",
    "gates": "extra_fugutaiten",
-   "status": "EXPERT_SOURCED"
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "coda-kazusa-true",
    "chapter": "coda",
    "name": "Touma Kazusa True End",
-   "unlock": "Kazusa chain (kazusa aff=6) + 3016-822 opt2 -> 3901 + 3016-859 opt2.",
-   "status": "EXPERT_SOURCED"
+   "files": [
+    "3017-3023 -> 3101-3111"
+   ],
+   "unlock": "Kazusa aff G[5]>=6: 3016-822 opt2 -> 3016-859 opt2 (I can't lie to Kazusa) -> 3017..3023 -> 3101..3111 (sets GFlag 31).",
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "coda-setsuna-true",
    "chapter": "coda",
    "name": "Ogiso Setsuna True End (finale)",
-   "unlock": "Setsuna-honest chain (3014-376 opt2) + 3016-822 opt2 + 3016-859 opt1 with s_flag.",
-   "status": "EXPERT_SOURCED"
+   "files": [
+    "3017-3023 -> 3201-3211"
+   ],
+   "unlock": "Setsuna-honest chain (3014-376 opt2 -> s_flag G[27]==1): 3016-822 opt2 -> 3016-859 opt1 (I love Setsuna) -> 3017..3023 -> 3201..3211 (sets GFlag 33).",
+   "status": "ENGINE_EVIDENCED"
   },
   {
    "id": "extra-fugutaiten",
    "chapter": "coda",
    "name": "Extra Episode: To You, My Irreconcilable",
+   "files": [
+    "4000-4009"
+   ],
    "choices": 0,
-   "unlock": "clear coda-cheating; Special menu; linear.",
-   "status": "EXPERT_SOURCED"
+   "unlock": "clear coda-cheating; Special menu 4000..4009 (sets GFlag 15); linear.",
+   "status": "ENGINE_EVIDENCED"
   }
  ],
  "recommended_order": [

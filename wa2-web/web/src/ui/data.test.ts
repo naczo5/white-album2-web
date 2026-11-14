@@ -74,16 +74,18 @@ describe("loadGameData external pack", () => {
     expect(data.demo).toBe(false);
     expect(data.scenarios).toEqual([SCENARIO]);
     expect(data.luts).toEqual({ sepia: lut });
-    // The bundle has no slot table, so the loose copy is fetched once; the
-    // committed table backs it up when that 404s. Still no per-script calls.
+    // The bundle has no slot table or cfg, so the loose copies are fetched;
+    // the committed sysSlots table backs it up when that 404s. Still no per-script calls.
     expect(calls).toEqual([
       "https://pack.example/wa2/data/bundle.json",
       "https://pack.example/wa2/data/sys-slots.json",
+      "https://pack.example/wa2/data/cfg.json",
     ]);
     expect(data.sysSlots.scripts.length).toBeGreaterThan(0);
+    expect(data.cfg).toBeNull();
   });
 
-  it("takes the slot table from the bundle without a second request", async () => {
+  it("takes the slot table and cfg from the bundle without extra requests", async () => {
     const calls: string[] = [];
     const sysSlots = {
       version: 1,
@@ -94,6 +96,11 @@ describe("loadGameData external pack", () => {
       endingSlotsConfidence: { "22": "high" },
       gateSlots: { replaySlot: 3 },
     };
+    const cfg = {
+      version: 1,
+      vars: [{ idx: 0, name: "FLG_00", init: 0 }],
+      scripts: { "1001": { "0": [{ t: "play", from: 0, to: 1 }] } },
+    };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       calls.push(url);
       if (url === "https://pack.example/wa2/data/bundle.json") {
@@ -102,19 +109,50 @@ describe("loadGameData external pack", () => {
           scenarios: [SCENARIO],
           flow: FLOW,
           sysSlots,
+          cfg,
         }), { status: 200 });
       }
       return new Response("not found", { status: 404 });
     }));
     const data = await loadGameData("https://pack.example/wa2");
     expect(data.sysSlots).toEqual(sysSlots);
+    expect(data.cfg).toEqual(cfg);
     expect(calls).toEqual(["https://pack.example/wa2/data/bundle.json"]);
+  });
+
+  it("fetches cfg.json when omitted from bundle", async () => {
+    const cfg = { version: 1, vars: [], scripts: { "1001": { "0": [] } } };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "https://pack.example/wa2/data/bundle.json") {
+        return new Response(JSON.stringify({
+          version: 1,
+          scenarios: [SCENARIO],
+          flow: FLOW,
+          sysSlots: {
+            version: 1,
+            scripts: ["1001"],
+            choiceTable: { scriptIds: [], base: 900, stride: 4 },
+            cgRows: [[0]],
+            endingSlots: {},
+            endingSlotsConfidence: {},
+            gateSlots: {},
+          },
+        }), { status: 200 });
+      }
+      if (url === "https://pack.example/wa2/data/cfg.json") {
+        return new Response(JSON.stringify(cfg), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }));
+    const data = await loadGameData("https://pack.example/wa2");
+    expect(data.cfg).toEqual(cfg);
   });
 
   it("always exposes a slot table, even for the asset-free demo", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("not found", { status: 404 })));
     const data = await loadGameData();
     expect(data.demo).toBe(true);
+    expect(data.cfg).toBeNull();
     // Committed data/sys-slots.json keeps Sys.sav import working offline.
     expect(data.sysSlots.scripts.length).toBe(185);
     expect(data.sysSlots.cgRows.length).toBe(168);

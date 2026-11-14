@@ -1,9 +1,9 @@
 import { loadManifest } from "./engine/assets";
 import { Router, chapterOfScript } from "./engine/router";
-import { newSave, readAutosave, readProfile, readQuicksave, setSaveNamespace, writeAutosave, writeQuicksave } from "./engine/save";
+import { newSave, readAutosave, readProfile, readQuicksave, setSaveNamespace, writeAutosave, writeProfile, writeQuicksave } from "./engine/save";
 import type { SaveData, SysProfile } from "./engine/types";
 import { loadGameData, resolvePackBase, type GameData } from "./ui/data";
-import { renderFlowchart } from "./ui/flowchart";
+import { renderFlowchart, sceneLabel } from "./ui/flowchart";
 import { renderGuide, type GuideData } from "./ui/guide";
 import { ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetPaintState, resetSkip, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
 import { stopMovie } from "./ui/movie";
@@ -21,6 +21,7 @@ interface Settings {
   bgmVol: number; // 0..1
   skipRead: boolean; // true: Ctrl skips only already-read lines
   dev: boolean; // dev mode: scene-jump buttons in the flowchart
+  unlockAllChoices: boolean; // bypass choice flag locks (e.g. Chiaki True)
 }
 
 function safeStorageGet(key: string): string | null {
@@ -47,6 +48,7 @@ const settings: Settings = {
   bgmVol: storedNumber("wa2web.bgmVol", 0.7, 0, 1),
   skipRead: safeStorageGet("wa2web.skipRead") === "1",
   dev: safeStorageGet("wa2web.dev") === "1",
+  unlockAllChoices: safeStorageGet("wa2web.unlockAllChoices") === "1",
 };
 
 let skipState = { active: false };
@@ -62,6 +64,7 @@ function persistSettings(): void {
     localStorage.setItem("wa2web.bgmVol", String(settings.bgmVol));
     localStorage.setItem("wa2web.skipRead", settings.skipRead ? "1" : "0");
     localStorage.setItem("wa2web.dev", settings.dev ? "1" : "0");
+    localStorage.setItem("wa2web.unlockAllChoices", settings.unlockAllChoices ? "1" : "0");
   } catch {
     /* settings are a convenience; the app still runs with in-memory values */
   }
@@ -103,6 +106,57 @@ function dataNamespace(): string {
 }
 const app = document.getElementById("app")!;
 
+const GATE_SLOT_NAMES: Record<string, string> = {
+  icClearSlot: "icClear",
+  replaySlot: "replay",
+  chiakiNormalSlot: "chiakiNormal",
+  ccClearSlot: "ccClear",
+  codaClearSlot: "codaClear",
+  codaEnteredSlot: "codaEntered",
+  setsunaCcSlot: "setsunaCc",
+  codaSetsunaTrueSlot: "codaSetsunaTrue",
+};
+
+function recordRunEnding(id: string): void {
+  if (id && save && !save.endings.includes(id)) save.endings.push(id);
+}
+
+function recordGameFlag(id: number, val: number): void {
+  if (val === 0) return;
+  if (!profile) {
+    profile = {
+      version: 1,
+      importedAt: new Date().toISOString(),
+      readKeys: [],
+      visited: [],
+      endings: [],
+      seenPicks: {},
+      cg: [],
+      music: [],
+      movies: [],
+      ero: [],
+      gates: {},
+      gameFlags: {},
+    };
+  }
+  const key = String(id);
+  profile.gameFlags = { ...(profile.gameFlags ?? {}), [key]: val };
+  const endingId = data.sysSlots?.endingSlots?.[key];
+  if (endingId) {
+    if (!profile.endings.includes(endingId)) profile.endings.push(endingId);
+    recordRunEnding(endingId);
+  }
+  if (data.sysSlots?.gateSlots) {
+    for (const [slotKey, slotIdx] of Object.entries(data.sysSlots.gateSlots)) {
+      if (slotIdx === id && GATE_SLOT_NAMES[slotKey]) {
+        profile.gates[GATE_SLOT_NAMES[slotKey]] = val;
+      }
+    }
+  }
+  writeProfile(localStorage, profile);
+  router.setProfileGameFlags(profile.gameFlags);
+}
+
 async function boot(): Promise<void> {
   applySettings();
   const q = new URLSearchParams(location.search);
@@ -111,12 +165,18 @@ async function boot(): Promise<void> {
   packFromQuery = resolved.fromQuery;
   data = await loadGameData(packBase);
   setSaveNamespace(dataNamespace());
-  router = new Router(data.scenarios, data.flow, data.links, data.terminals);
   // Global progress (Sys.sav import) is stored under the same namespace and
   // is independent of any run save: load it once, seed the read set so
   // skip-read honours imported lines, and keep it live for the screens.
   profile = readProfile(localStorage);
   if (profile && profile.readKeys.length > 0) ingestReadKeys(profile.readKeys);
+  router = new Router(data.scenarios, data.flow, data.links, data.terminals, {
+    cfg: data.cfg,
+    profileGameFlags: profile?.gameFlags,
+    endingSlots: data.sysSlots?.endingSlots,
+    unlockAllChoices: settings.unlockAllChoices,
+    onGameFlag: recordGameFlag,
+  });
   setScenarioLookup((script) => router.scripts.get(script));
   setBgmLookup((script) => data.bgm?.cues[script]);
   setBnrLookup((script) => data.bnr?.recs[script]);
@@ -180,7 +240,10 @@ async function boot(): Promise<void> {
   if (scr && ["flow", "guide", "settings", "saves", "special", "log"].includes(scr)) {
     screen = scr as Screen;
   }
-  save.position = skipLatches(router, save.position, save.flags);
+  if (!save.flags.cfg || save.flags.cfg.script !== save.position.script) {
+    save.position = router.seek(save.position, save.flags, save.picks);
+  }
+  save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
   pushLog(router, save);
   render();
   // Enter/click = advance (first press completes typing instantly, next
@@ -245,6 +308,7 @@ function freshStart(): SaveData {
   const first = data.scenarios[0]?.script ?? "demo-1";
   const s = newSave("Haruki", { script: first, event: 0 });
   s.visited.push(first);
+  s.position = router.seek(s.position, s.flags, s.picks);
   // Global progress survives a new game: the flowchart still shows what the
   // player has already read in the original build.
   applyProfileToRun(s, profile);
@@ -280,7 +344,10 @@ function loadSaveIntoGame(next: SaveData): void {
     return;
   }
   save = next;
-  save.position = skipLatches(router, save.position, save.flags);
+  if (!save.flags.cfg || save.flags.cfg.script !== save.position.script) {
+    save.position = router.seek(save.position, save.flags, save.picks);
+  }
+  save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
   if (!save.visited.includes(save.position.script)) save.visited.push(save.position.script);
   // A loaded run still sees the global profile's visited/endings union.
   applyProfileToRun(save, profile);
@@ -410,7 +477,7 @@ function render(): void {
       : hasContinue
         ? (settings.dev
           ? `${chapterLabel(at.position.script)} · ${escapeHtml(at.position.script)}:${at.position.event}`
-          : `${chapterLabel(at.position.script)} · continue where you left off`)
+          : `${escapeHtml(sceneLabel(at.position.script, data.flow, { spoiler: true, visited: true }))} · continue where you left off`)
         : "Begin the story";
     app.innerHTML = `
       <div class="title">
@@ -447,7 +514,7 @@ function render(): void {
         if (m === "new") {
           if (confirm("Start a new game from the beginning? The autosave resets; existing slots, quick save, and imported saves are kept.")) {
             save = freshStart();
-            save.position = skipLatches(router, save.position, save.flags);
+            save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
             writeAutosave(localStorage, save);
             resetPaintState();
             backTo = "title";
@@ -491,12 +558,14 @@ function render(): void {
       spine: router.spine,
       links: data.links.links,
       terminals: data.terminals.terminals,
+      cfg: data.cfg,
       dev: settings.dev,
       profile,
       onJump: (script) => {
         save = newSave("debug", { script, event: 0 });
         save.visited.push(script);
-        save.position = skipLatches(router, save.position, save.flags);
+        save.position = router.seek(save.position, save.flags, save.picks);
+        save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
         writeAutosave(localStorage, save);
         resetPaintState();
         backTo = "flow";
@@ -554,7 +623,8 @@ function render(): void {
       b.onclick = () => {
         save = newSave(`special-${id}`, { script: id, event: 0 });
         save.visited.push(id);
-        save.position = skipLatches(router, save.position, save.flags);
+        save.position = router.seek(save.position, save.flags, save.picks);
+        save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
         writeAutosave(localStorage, save);
         resetPaintState();
         backTo = "special";
@@ -577,8 +647,10 @@ function render(): void {
       sysSlots: data.sysSlots,
       flow: data.flow,
       profile,
+      dev: settings.dev,
       onProfileChange: (p) => {
         profile = p;
+        router.setProfileGameFlags(profile?.gameFlags);
         if (applyProfileToRun(save, profile)) writeAutosave(localStorage, save);
       },
       onLoad: loadSaveIntoGame,
@@ -649,6 +721,10 @@ function render(): void {
             <input type="checkbox" id="sp" ${settings.spoiler ? "checked" : ""}>
           </label>
           <label class="setting">
+            <span class="setting-label">Unlock all choice routes<small>Allow locked NG+ choice options (such as Chiaki True) on a first playthrough.</small></span>
+            <input type="checkbox" id="ul" ${settings.unlockAllChoices ? "checked" : ""}>
+          </label>
+          <label class="setting">
             <span class="setting-label">Developer mode<small>Adds a scene-jump button to the flowchart node details.</small></span>
             <input type="checkbox" id="dv" ${settings.dev ? "checked" : ""}>
           </label>
@@ -660,6 +736,12 @@ function render(): void {
     sp.onchange = () => {
       settings.spoiler = sp.checked;
       localStorage.setItem("wa2web.spoiler", sp.checked ? "1" : "0");
+    };
+    const ul = app.querySelector("#ul") as HTMLInputElement;
+    ul.onchange = () => {
+      settings.unlockAllChoices = ul.checked;
+      router.setUnlockAllChoices(settings.unlockAllChoices);
+      persistSettings();
     };
     const dv = app.querySelector("#dv") as HTMLInputElement;
     dv.onchange = () => {

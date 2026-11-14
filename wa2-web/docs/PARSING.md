@@ -278,14 +278,20 @@ docs/QA.md verification log):
   pick flags (`FLG_第２部03選択肢１` → script 2003 option 1; 条件 = branch
   condition, e.g. `FLG_第３部15条件２` proves the 3015 switch is gated).
   15/15 pick flags map to real scripts (tools/build_flags.py --ir).
-- `GFLAG.dat`: 62 slots × 260 B, `_GFLAG_EV_*` names — chapter clears,
-  `２周目以降` replay, novel clears, all route endings. Each record also
-  stores the `Sys.sav` Region C `u32` flag slot at `+256` (record 61 is an
-  unassigned reservation at slot 0, and two records alias slot 210);
-  `build_flags.py` emits that as `gflagSlots` in `flags.json`.
+- `GFLAG.dat`: 4-byte `u32` record count (`62`) followed by 62 × 260 B records
+  of `(u32 slot, char name[256])` (`_GFLAG_EV_*` names — chapter clears,
+  `２周目以降` replay, novel clears, all route endings, and the choice-band
+  base at slot `900`). Record 0 holds `slot 0` (`ic-end`), record 61 holds
+  `slot 900`, and two records alias `slot 210`; `build_flags.py` emits that as
+  `gflagSlots` in `flags.json`.
 - `LFScriptFunc{,Ex}.fnc`: opcode vocabulary (SetGameFlag/GetGameFlag,
   SetSelect/SetSelectMess, LoadBmp/SetBmp*, GetReplayMode, EroMode).
   Group numbers in `(4,X)`/`(6,X)` statements are NOT .fnc indices.
+- `tools/build_cfg.py` compiles every `.bnr` LSCR bytecode stream (control-flow
+  `op 0` subcodes `IF/ELSEIF/ELSE/FOR/WHILE/SWITCH/GOTO`, locals `op 1`, globals
+  `op 2`, txt tokens `op 3`, system calls `op 4`, pushes `op 5`, RPN stack ops
+  `op 6`) into `cfg.json` v1 (`play` spans `[from, to)`, `setG`/`setL`,
+  `setGFlag`, `if`, `choice`, `sload`, `scall`, `ret`, `gotitle`).
 
 ## Native PC save files (sample-backed, static format map)
 
@@ -357,16 +363,16 @@ The samples used for this map were user-supplied and are not committed.
   **Region C `0x268480..0x26947F`** — 4,096 bytes = 1024 `u32` LE global
   flags, the array behind `GetGameFlag`/`SetGameFlag` (the guarded setter
   `0x405320` writes the in-memory copy at `0x521930`; `0x4760` flushes the
-  0x1000-byte block). Ids are assigned by `GFLAG.dat` (`script.pak`, 62
-  records × 260 B) whose record `+256` `u32` is the slot index — formerly
-  discarded by `build_flags.py`, now emitted as `gflagSlots`. Two shipped
-  records alias slot 210; record 61 is an unassigned reservation (`slot 0`)
-  and the final record's slot field sits at EOF (parsed with a clamp). Bands
-  (all `high` unless noted):
+  0x1000-byte block). Ids are assigned by `GFLAG.dat` (`script.pak`, 4-byte
+  `u32` count + 62 records × 260 B of `(u32 slot, char name[256])`, emitted as
+  `gflagSlots`). Two shipped records alias slot 210; record 0 holds slot `0`
+  (`ic-end`) and record 61 holds slot `900` (`choiceBandBase`). Bands (all
+  `high`):
 
   | slots | meaning |
   | --- | --- |
-  | `1,2,3,10,20..25,30..33,80,99` | chapter/route clear + ending flags |
+  | `0,1,2,3,4,5,10..15,20..25,30..33,80` | chapter/route clear + ending flags |
+  | `99` | choice-system placeholder (`SetSelectMess` compares `GetGameFlag(99)` == 0; setter rejects 99) |
   | `100 + trackId` | music unlocks (~`101..174` in the sample) |
   | `200 + movieId` | movie unlocks (`201..213`, `220..224`), plus `80` |
   | `300..322` | ero-scene unlocks |
@@ -378,30 +384,27 @@ The samples used for this map were user-supplied and are not committed.
     identical to the ordered unique scripts of `flow.json`. Bit `k`
     (`1 << k`) means option `k + 1` was chosen at least once. The sample
     save shows values `2/3/7` in that band, i.e. multi-bit option history.
-  - **`900` collides**: `GFLAG.dat` also names slot `900` for the last
-    ero-scene flag, so read the 23×4 choice band from the choice table
-    first and leave any other `900..991` bits unclassified (`open`).
-  - **Ending slots** map to `endings.json` ids: `21 cc-normal1`,
-    `22 cc-setsuna`, `23 cc-koharu`, `24 cc-chiaki-true`,
-    `25 cc-chiaki-normal`, `30 cc-mari`, `31 coda-normal`,
-    `32 coda-kazusa-true`, `33 coda-cheating` (all `high`), `1 ic-end`
-    (`hypothesis`: the slot records a prologue/IC clear, which implies the
-    intro ending), and `99 coda-setsuna-true` (`reserved`, see below).
-  - **Slot 99 is system-reserved.** `GFLAG.dat` assigns the coda-setsuna
-    ending record to slot 99, but the guarded setter `0x405320` rejects
-    that index: it prints a reserved-slot warning (string `0x4a2018`),
-    substitutes index `0`, and proceeds. So slot 99 is never observable as
-    set in `Sys.sav`; a zero there means "unknown", not "not cleared".
-    Write a correct implementation from another observable (`32/33` end
-    states, or the route flags) rather than trusting 99 (`open`).
-  - Gate slots used by the menu logic: `3` replay (2nd playthrough),
-    `2` Chiaki-normal (gates the Chiaki true-end option), `10` coda entered,
-    `22` cc-setsuna cleared (unlocks coda). `0x4138fb` resets the
-    replay/system words on new-game setup and calls the guarded setter;
-    `0x428200` is the gallery cell reader; `0x44e1d0` is the packed-bit
-    get/set helper (bit width 1/2/4 only), and `0x405410` builds the
-    `Sys.sav` path/state. Region C is mirrored at `0x521930` (the in-memory
-    array the setters write before `0x4760` flushes the 0x1000-byte block).
+  - **`900` collides**: `GFLAG.dat` also names slot `900` in record 61, so read
+    the 23×4 choice band from the choice table first and leave any other
+    `900..991` bits unclassified (`open`).
+  - **Ending slots** (all 11 `high`, verified 1:1 from `GFLAG.dat` + `.bnr`
+    `SetGameFlag`) map to `endings.json` ids: `0 ic-end`, `20 cc-normal1`,
+    `21 cc-setsuna`, `22 cc-koharu`, `23 cc-chiaki-true`,
+    `24 cc-chiaki-normal`, `25 cc-mari`, `30 coda-normal`,
+    `31 coda-kazusa-true`, `32 coda-cheating`, `33 coda-setsuna-true`.
+  - **Slot 99 is system-reserved.** The guarded setter `0x405320` rejects
+    index `99` (prints a reserved-slot warning at `0x4a2018` and substitutes
+    index `0`); `SetSelectMess` uses `flagId = 99` as its dummy/unconditional-false
+    lookup (`GetGameFlag(99)` == 0). It is not an ending slot.
+  - Gate slots used by the menu logic and scripts: `1` Chiaki-normal (gates
+    `2003-242` opt1 + IC replay extras), `2` replay (2nd playthrough),
+    `5` coda entered, `21` cc-setsuna cleared (unlocks coda), `99`
+    choice-system slot. `0x4138fb` resets the replay/system words on new-game
+    setup and calls the guarded setter; `0x428200` is the gallery cell
+    reader; `0x44e1d0` is the packed-bit get/set helper (bit width 1/2/4 only),
+    and `0x405410` builds the `Sys.sav` path/state. Region C is mirrored at
+    `0x521930` (the in-memory array the setters write before `0x4760` flushes
+    the 0x1000-byte block).
 
   The slot saves do not contain this read/choice profile, so importing it
   means reading `Sys.sav`. Consumed through the `sysSlots` bundle key;

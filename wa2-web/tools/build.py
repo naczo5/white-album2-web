@@ -196,6 +196,10 @@ def main() -> None:
                             os.path.join(HERE, "build_flags.py"),
                             spak, os.path.join(data_dir, "flags.json"),
                             "--ir", ir_for_flags], check=True)
+            subprocess.run([sys.executable,
+                            os.path.join(HERE, "build_cfg.py"),
+                            spak, *paks, os.path.join(data_dir, "cfg.json"),
+                            "--ir", ir_dir], check=True)
             r = subprocess.run([sys.executable,
                                 os.path.join(HERE, "check_bnr_choices.py"),
                                 ir_dir, spak])

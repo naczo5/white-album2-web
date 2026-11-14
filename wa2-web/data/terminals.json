@@ -1,114 +1,150 @@
 {
  "version": 1,
- "status_note": "Route-end and provisional-chain overrides plus the one cross-line bridge. Every entry needs in-game confirmation (docs/QA.md).",
+ "status_note": "Engine-verified terminals from .bnr SLoad/GoTitle + GFLAG.dat SetGameFlag writes (static cfg.json is authoritative when present).",
  "terminals": {
   "1013": {
    "action": "chain",
    "to": "2001",
-   "note": "IC->CC auto-transition (bare link + all sources agree)",
+   "note": "IC->CC auto-transition (1013.bnr sets GFlag 0 = ic-end, SLoad 2001)",
+   "status": "ENGINE_EVIDENCED"
+  },
+  "2025": {
+   "action": "end",
+   "ending": "cc-normal1",
+   "note": "CC Normal End (2025.bnr sets GFlag 20, GoTitle)",
    "status": "ENGINE_EVIDENCED"
   },
   "2033": {
    "action": "chain",
    "to": "3001",
-   "note": "Setsuna-line end -> Coda prologue (bare 3001 hint at 2033:155 + proposal-then-Coda content flow; numeric-next 2301 would be wrong)",
+   "note": "Setsuna-line end -> Coda prologue (2033.bnr sets GFlag 3 + GFlag 21 = cc-setsuna, SLoad 3001)",
    "status": "ENGINE_EVIDENCED"
   },
   "2322": {
    "action": "end",
-   "ending": null,
-   "guess": "cc chiaki-line end (normal or true by flags)",
-   "status": "NEEDS_PLAYTEST"
+   "ending": "cc-koharu",
+   "note": "Sugiura Koharu End (2322.bnr sets GFlag 3 + GFlag 22, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
+  },
+  "2412": {
+   "action": "end",
+   "ending": "cc-chiaki-true",
+   "note": "Izumi Chiaki True End (2412.bnr sets GFlag 3 + GFlag 23, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
   "2413": {
    "action": "end",
-   "ending": null,
-   "guess": "cc-mari",
-   "status": "NEEDS_PLAYTEST"
+   "ending": "cc-chiaki-normal",
+   "note": "Izumi Chiaki Normal End (2413.bnr sets GFlag 3 + GFlag 1 + GFlag 24, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
   "2517": {
    "action": "end",
-   "ending": null,
-   "guess": "cc koharu/setsuna/normal line end (flag-decided)",
-   "status": "NEEDS_PLAYTEST"
+   "ending": "cc-mari",
+   "note": "Kazaoka Mari End (2517.bnr sets GFlag 3 + GFlag 25, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
-  "3024": {
+  "3023": {
    "action": "chain",
    "to": "3101",
-   "note": "numeric continuation; 31xx identity unknown (epilogue or route tail?)",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Coda true branch: 3023.bnr loads 3201 when s_flag (G[27]==1) else 3101; never falls through to 3024",
+   "status": "ENGINE_EVIDENCED"
+  },
+  "3024": {
+   "action": "end",
+   "ending": "coda-normal",
+   "note": "Coda Normal End (3024.bnr sets GFlag 4 + GFlag 30, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
   "3111": {
-   "action": "chain",
-   "to": "3201",
-   "note": "numeric continuation; see 3024",
-   "status": "NEEDS_PLAYTEST"
+   "action": "end",
+   "ending": "coda-kazusa-true",
+   "note": "Touma Kazusa True End (3111.bnr sets GFlag 4 + GFlag 31, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
   "3211": {
    "action": "end",
-   "ending": null,
-   "guess": "coda normal-side end? (mv21 concert tail)",
-   "status": "NEEDS_PLAYTEST"
+   "ending": "coda-setsuna-true",
+   "note": "Ogiso Setsuna True End (3211.bnr sets GFlag 4 + GFlag 33, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
   "3909": {
    "action": "end",
-   "ending": null,
-   "guess": "coda kazusa-side end",
-   "status": "NEEDS_PLAYTEST"
+   "ending": "coda-cheating",
+   "note": "Kazusa Normal / Cheating End (3909.bnr sets GFlag 4 + GFlag 32, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
-  "5000": {
+  "4009": {
+   "action": "end",
+   "ending": "extra-fugutaiten",
+   "note": "Extra Episode Fugutaiten end (4009.bnr sets GFlag 15, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
+  },
+  "5004": {
    "action": "end",
    "ending": null,
-   "note": "digital-novel intro; continuation 5001 not in en.pak (DEAD link)",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Kazusa digital novel end (5004.bnr sets GFlag 10, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
-  "5100": {
+  "5104": {
    "action": "end",
    "ending": null,
-   "note": "digital-novel intro; continuation 5101 not in en.pak (DEAD link)",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Setsuna digital novel end (5104.bnr sets GFlag 11, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
-  "5200": {
+  "5209": {
    "action": "end",
    "ending": null,
-   "note": "special menu stub; continuation 5201 not in en.pak",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Special digital novel 5200..5209 end (5209.bnr sets GFlag 12, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
-  "5300": {
+  "5303": {
    "action": "end",
    "ending": null,
-   "note": "special menu stub; continuation 5301 not in en.pak",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Special digital novel 5300..5303 end (5303.bnr sets GFlag 13, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
-  "5400": {
+  "5401": {
    "action": "end",
    "ending": null,
-   "note": "special menu stub; continuation 5401 has .bnr only, no .txt",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Special digital novel 5400..5401 end (5401.bnr sets GFlag 14, GoTitle)",
+   "status": "ENGINE_EVIDENCED"
+  },
+  "6005": {
+   "action": "end",
+   "ending": null,
+   "note": "Special novel 6001..6005 end (6005.bnr GoTitle)",
+   "status": "ENGINE_EVIDENCED"
+  },
+  "6104": {
+   "action": "end",
+   "ending": null,
+   "note": "Special novel 6101..6104 end (6104.bnr GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
   "7000": {
    "action": "end",
    "ending": null,
-   "note": "special contents menu/voice message?",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Special contents track (7000.bnr GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
   "7100": {
    "action": "end",
    "ending": null,
-   "note": "special contents menu/voice message?",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Special contents track (7100.bnr GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
   "7200": {
    "action": "end",
    "ending": null,
-   "note": "special contents menu/voice message?",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Special contents track (7200.bnr GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   },
   "7300": {
    "action": "end",
    "ending": null,
-   "note": "special contents menu/voice message?",
-   "status": "NEEDS_PLAYTEST"
+   "note": "Special contents track (7300.bnr GoTitle)",
+   "status": "ENGINE_EVIDENCED"
   }
  }
 }

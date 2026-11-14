@@ -70,24 +70,24 @@ A: dict = {
         "status": "EXPERT_SOURCED"},
     ('2019', 'Call Chiaki', 'Stop by the editorial office'): {"walk": "cc-c14", "date": "12/24 ROUTER",
         "effects": {},
-        "gated": {1: "needs chiaki aff>=3/flag ON",
-                  2: "needs mari aff>=3/flag ON"},
-        "note": ("THE branch. Engine gotos: opt2->2401 (Mari line), "
-                 "opt3->2501 (common line), opt1 falls through toward the "
-                 "work/stay follow-up (Chiaki line via 2301 on opt2 there; "
-                 "Setsuna line via 2020 on opt1)."),
-        "status": "EXPERT_SOURCED"},
+        "goto": {1: "2401", 2: "2501", 3: None},
+        "gated": {1: "needs chiaki aff>=3 and chiaki route ON (G[9]>=3 && !G[12])",
+                  2: "needs mari aff>=3 (G[10]>=3)"},
+        "note": ("THE 12/24 branch (.bnr SLoad + SetSelectMess verified). "
+                 "Opt1 'Call Chiaki' -> 2401 (Chiaki line); opt2 'Stop by "
+                 "the editorial office' -> 2501 (Mari line); opt3 falls "
+                 "through to 2019-1512 work/stay follow-up."),
+        "status": "VERIFIED_IN_GAME"},
     ('2019', 'Go to work', 'Stay alone'): {"walk": "cc-c15?", "date": "12/24 cont.?",
         "effects": {},
-        "play": {2: "2301"},
+        "play": {1: "2301"},
+        "gated": {1: "needs koharu aff>=3 and koharu route ON (G[8]>=3 && !G[11])"},
         "note": ("'Go to work / Stay alone' sits in 2019 AFTER the router, "
-                 "so it executes on the opt1 fall-through path. The ONLY "
-                 "choice in the game directly followed by a CATCH jump: "
-                 "CATCH2 2301 resolves opt2 'Stay alone' -> 2301 (Chiaki "
-                 "line; 2301 and 2020 open with parallel Dec-25-morning "
-                 "scenes). Opt1 falls through toward 2020 (Setsuna line). "
-                 "Confirm the flag/affection framing in game."),
-        "status": "NEEDS_PLAYTEST"},
+                 "executing on the opt3 fall-through path (.bnr SLoad + "
+                 "SetSelectMess verified). Opt1 'Go to work' -> 2301 (Koharu "
+                 "line); opt2 'Stay alone' falls through to 2020 (Setsuna / "
+                 "CC Normal line)."),
+        "status": "EXPERT_SOURCED"},
     ('2024', 'Go to the concert', 'Go on the midnight shrine visit'): {"walk": "cc-c16", "date": "12/31",
         "effects": {},
         "note": ("Setsuna-line New Year's Eve (inside 2020->2033): concert "
@@ -135,20 +135,26 @@ A: dict = {
         "note": "Present in v2.1.0; absent from v1.3.6 engine data.",
         "status": "EXPERT_SOURCED"},
     ('3014', 'I just wanted to see you', 'Tell her the truth about Kazusa'): {"walk": "coda-c12", "date": "1/27 DECIDER",
-        "effects": {1: {"aff": {"k": 1}}, 2: {"flag": "s_honest"}},
-        "note": "Opt2 required for Setsuna True.",
+        "effects": {1: {"aff": {"k": 1}, "uwaki": 1}, 2: {"flag": "s_honest"}},
+        "gated": {1: "LOCKED if setsuna aff > uwaki + kazusa aff (G[7] > G[6]+G[5])"},
+        "note": ".bnr verified: opt1 adds G[5]+=1 & G[6]+=1 and loads 3015; opt2 sets G[25]=2 (enables s_flag G[27]==1 in 3016, required for Setsuna True).",
         "status": "EXPERT_SOURCED"},
     ('3016', 'Let go of her hands', 'Turn my face away'): {"walk": "coda-c13", "date": "1/29 FINAL ROUTER",
         "effects": {},
-        "gated": {1: "selectable only if s_flag OFF"},
-        "note": ("Engine goto: opt2->3901 (Kazusa side files). "
-                 "Opt1 skips the final choice -> cheating end."),
-        "status": "EXPERT_SOURCED"},
+        "goto": {1: "3901", 2: None},
+        "gated": {1: "selectable only if s_flag OFF (G[27]==0)"},
+        "note": ("Final 1/29 router (.bnr SLoad + SetSelectMess verified). "
+                 "Opt1 'Let go of her hands' -> 3901 (Kazusa Cheating side "
+                 "files, skips final choice); opt2 'Turn my face away' falls "
+                 "through to 3016-859."),
+        "status": "VERIFIED_IN_GAME"},
     ('3016', 'I love Setsuna', "I can't lie to Kazusa"): {"walk": "coda-c14", "date": "1/29 FINAL",
         "effects": {},
-        "note": ("'I love Setsuna' with s_flag ON -> Setsuna True; with "
-                 "s_flag OFF -> Normal. 'I can't lie to Kazusa' needs "
-                 "kazusa aff=6 -> Kazusa True."),
+        "gated": {2: "LOCKED if kazusa aff < 6 (G[5] < 6)"},
+        "note": ("'I love Setsuna' with s_flag ON (G[27]==1) -> 3017..3023->3201 "
+                 "(Setsuna True); with s_flag OFF -> 3024 (Coda Normal). "
+                 "'I can't lie to Kazusa' needs kazusa aff>=6 (G[5]>=6) -> "
+                 "3017..3023->3101 (Kazusa True)."),
         "status": "EXPERT_SOURCED"},
     ("3904","Remove her glasses.","Kiss her with her glasses on."): {"walk": "coda-c15", "date": "2/14 (cheating only)",
         "effects": {},
@@ -211,23 +217,30 @@ def main() -> None:
             nodes.append(n)
             continue
         n = dict(n)
+        goto = a.get("goto", {})
+        if goto:
+            n["options"] = [dict(o, goto=goto[o["n"]])
+                            if o["n"] in goto else o
+                            for o in n["options"]]
         play = a.get("play", {})
         if play:
             n["options"] = [dict(o, play=play.get(o["n"]))
                             if o["n"] in play else o
                             for o in n["options"]]
-        n.update({k: v for k, v in a.items() if k != "play"})
+        n.update({k: v for k, v in a.items() if k not in ("play", "goto")})
         nodes.append(n)
+    verified = sum(1 for n in nodes if n["status"] == "VERIFIED_IN_GAME")
     review = sum(1 for n in nodes if n["status"] == "NEEDS_REVIEW")
     playtest = sum(1 for n in nodes if n["status"] == "NEEDS_PLAYTEST")
     expert = sum(1 for n in nodes if n["status"] == "EXPERT_SOURCED")
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump({"version": 1, "counts": {"expert": expert,
+        json.dump({"version": 1, "counts": {"verified": verified,
+                                           "expert": expert,
                                            "playtest": playtest,
                                            "review": review},
                    "nodes": nodes}, f, ensure_ascii=False, indent=1)
-    print(f"{len(nodes)} nodes (expert={expert} playtest={playtest} "
-          f"unannotated={review}) -> {out_path}")
+    print(f"{len(nodes)} nodes (verified={verified} expert={expert} "
+          f"playtest={playtest} unannotated={review}) -> {out_path}")
 
 
 if __name__ == "__main__":

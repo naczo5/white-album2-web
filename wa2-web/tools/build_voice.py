@@ -215,7 +215,9 @@ def match_jp_to_mao(jp_texts: list[str], mao_jp: list[str],
     Monotonic windowed matcher (JP fragment contained in the manuscript
     row or vice versa), then linear gap-fill between matched pairs whose
     ordinal deltas agree (handles engine ellipsis rows and merged/split
-    manuscript rows). Pure; tested.
+    manuscript rows). Short lines (<= 3 chars) match only locally/exact so
+    character-name beats like '麻理' never jump 25+ lines into narration.
+    Pure; tested.
     """
     o2j: dict[int, int] = {}
     cur = 0
@@ -224,19 +226,118 @@ def match_jp_to_mao(jp_texts: list[str], mao_jp: list[str],
         if not nj:
             continue
         hit = None
-        for j in range(cur, min(cur + window, len(mao_jp))):
-            if nj in mao_jp[j]:
-                hit = j
-                break
+        short = len(nj) <= 3
+        w = min(8, window) if short else window
+        for j in range(cur, min(cur + w, len(mao_jp))):
             mj = mao_jp[j]
-            if mj and mj in nj and len(mj) >= 6:
-                hit = j
-                break
+            if short:
+                if nj == mj or (j - cur <= 1 and nj in mj):
+                    hit = j
+                    break
+            else:
+                if nj in mj:
+                    hit = j
+                    break
+                if mj and mj in nj and len(mj) >= 6:
+                    hit = j
+                    break
         if hit is not None:
             o2j[o] = hit
             cur = hit
     _fill_runs(o2j, len(jp_texts), len(mao_jp))
     return o2j
+
+
+def match_jp_to_mao_parts(jp_texts: list[str], parts_jp: list[list[str]],
+                          window: int = 40) -> dict[int, tuple[int, int]]:
+    """Map JP line ordinal -> (part_idx, line_idx) across interleaved MAO parts.
+
+    MAO splits long scripts into base + _2, _3, ... whose blocks are often
+    interleaved or reordered relative to the single JP script. Instead of
+    monotonically consuming a concatenated list, discover strong monotonic
+    anchors per part, slice `jp_texts` at part transitions, and align each
+    slice independently with `match_jp_to_mao`. Falls back directly to part 0
+    when part 0 alone covers >=95% of non-empty lines (e.g. duplicate 3901_2).
+    """
+    n = len(jp_texts)
+    if not n or not parts_jp:
+        return {}
+    if len(parts_jp) == 1:
+        o2j = match_jp_to_mao(jp_texts, parts_jp[0], window=window)
+        return {o: (0, j) for o, j in o2j.items()}
+
+    jp_norms = [jp_norm(t) for t in jp_texts]
+    nonempty = sum(1 for dn in jp_norms if dn)
+    o2j0 = match_jp_to_mao(jp_texts, parts_jp[0], window=window)
+    if nonempty and sum(1 for o in o2j0 if jp_norms[o]) >= 0.95 * nonempty:
+        return {o: (0, j) for o, j in o2j0.items()}
+
+    disp_by_norm: dict[str, list[int]] = {}
+    for o, dn in enumerate(jp_norms):
+        if dn:
+            disp_by_norm.setdefault(dn, []).append(o)
+
+    part_anchors: list[list[tuple[int, int]]] = []
+    for pnorms in parts_jp:
+        raw: list[tuple[int, int]] = []
+        last_o = -1
+        for j, pn in enumerate(pnorms):
+            if len(pn) < 6:
+                continue
+            cands = [o for o in disp_by_norm.get(pn, []) if o > last_o]
+            if not cands:
+                continue
+            chosen = None
+            for o in cands:
+                if len(disp_by_norm[pn]) == 1 and len(pn) >= 8:
+                    chosen = o
+                    break
+                for dk in (1, 2, -1):
+                    if 0 <= o + dk < n and 0 <= j + dk < len(pnorms):
+                        dn2, pn2 = jp_norms[o + dk], pnorms[j + dk]
+                        if dn2 and pn2 and (pn2 in dn2 or (dn2 in pn2 and len(dn2) >= 6)):
+                            chosen = o
+                            break
+                if chosen is not None:
+                    break
+            if chosen is not None:
+                raw.append((chosen, j))
+                last_o = chosen
+        part_anchors.append(raw)
+
+    by_o: dict[int, tuple[int, int, int]] = {}
+    for p_idx, lst in enumerate(part_anchors):
+        for o, j in lst:
+            if o not in by_o:
+                by_o[o] = (o, p_idx, j)
+    all_anc = [by_o[o] for o in sorted(by_o)]
+    if not all_anc:
+        return {o: (0, j) for o, j in o2j0.items()}
+
+    runs: list[list[tuple[int, int, int]]] = []
+    for o, p_idx, j in all_anc:
+        if not runs or runs[-1][0][1] != p_idx:
+            runs.append([(o, p_idx, j)])
+        elif j >= runs[-1][-1][2]:
+            runs[-1].append((o, p_idx, j))
+
+    o2pm: dict[int, tuple[int, int]] = {}
+    for r_i, run in enumerate(runs):
+        p_idx = run[0][1]
+        pnorms = parts_jp[p_idx]
+        first_o, _, first_j = run[0]
+        last_o, _, last_j = run[-1]
+        o_a = runs[r_i - 1][-1][0] + 1 if r_i > 0 else 0
+        o_b = runs[r_i + 1][0][0] if r_i + 1 < len(runs) else n
+        j_a = max(0, first_j - (first_o - o_a) - 6)
+        j_b = min(len(pnorms), last_j + (o_b - last_o) + 12)
+        sub_o2j = match_jp_to_mao(jp_texts[o_a:o_b], pnorms[j_a:j_b], window=window)
+        for rel_o, rel_j in sub_o2j.items():
+            o_abs = o_a + rel_o
+            j_abs = j_a + rel_j
+            if o_abs not in o2pm:
+                o2pm[o_abs] = (p_idx, j_abs)
+    return o2pm
 
 
 def _fill_runs(o2j: dict[int, int], n_jp: int, n_mao: int) -> None:
@@ -367,25 +468,59 @@ def manuscript_files(mao_files: dict[str, str], script: str) -> list[str]:
     return [p for _k, p in paths]
 
 
-def load_mao_lines(mao_files: dict[str, str], script: str) -> list[dict] | None:
-    """Manuscript rows for `script` including its _N continuations."""
-    rows: list[dict] = []
-    found = False
+def load_mao_parts(mao_files: dict[str, str], script: str) -> list[list[dict]] | None:
+    """Manuscript row lists per file for `script` (base, _2, _3, ...)."""
+    parts: list[list[dict]] = []
     for path in manuscript_files(mao_files, script):
         try:
             j = json.load(open(path, encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        found = True
-        rows.extend(j.get("lines") or [])
-    return rows if found else None
+        parts.append(j.get("lines") or [])
+    return parts if parts else None
 
 
-def speaker_name_map(mao_lines: list[dict]) -> dict[str, str]:
+def load_mao_lines(mao_files: dict[str, str], script: str) -> list[dict] | None:
+    """Manuscript rows for `script` including its _N continuations."""
+    parts = load_mao_parts(mao_files, script)
+    if parts is None:
+        return None
+    rows: list[dict] = []
+    for p in parts:
+        rows.extend(p)
+    return rows
+
+
+def global_speaker_map(mao_files: dict[str, str]) -> dict[str, str]:
+    """Unanimous JP -> EN speaker map across the whole MAO corpus."""
+    votes: dict[str, dict[str, int]] = {}
+    for path in set(mao_files.values()):
+        try:
+            lines = json.load(open(path, encoding="utf-8")).get("lines") or []
+        except (OSError, ValueError):
+            continue
+        for l in lines:
+            ja, en = l.get("speakerJa"), l.get("speakerEn")
+            if ja and en and en != ja:
+                votes.setdefault(ja, {})
+                votes[ja][en] = votes[ja].get(en, 0) + 1
+    out: dict[str, str] = {"？？？": "???"}
+    for ja, tally in votes.items():
+        en, n = max(tally.items(), key=lambda kv: kv[1])
+        total = sum(tally.values())
+        if n >= 1 and n >= 0.9 * total:
+            out[ja] = en
+    return out
+
+
+def speaker_name_map(mao_lines: list[dict],
+                     fallback_map: dict[str, str] | None = None) -> dict[str, str]:
     """JP speaker -> manuscript EN speaker (script-scoped majority vote).
 
     Returns only unambiguous mappings (>= 3 votes and >= 90% agreement):
-    a wrong displayed name is worse than the JP one. Pure; tested.
+    a wrong displayed name is worse than the JP one. When `fallback_map`
+    is supplied, corpus-wide unanimous mappings fill speakers with < 3 lines
+    in this script (e.g. 2401/3211). Pure; tested.
     """
     votes: dict[str, dict[str, int]] = {}
     for l in mao_lines:
@@ -393,7 +528,7 @@ def speaker_name_map(mao_lines: list[dict]) -> dict[str, str]:
         if ja and en and en != ja:
             votes.setdefault(ja, {})
             votes[ja][en] = votes[ja].get(en, 0) + 1
-    name_map: dict[str, str] = {}
+    name_map: dict[str, str] = dict(fallback_map) if fallback_map else {}
     for ja, tally in votes.items():
         en, n = max(tally.items(), key=lambda kv: kv[1])
         total = sum(tally.values())
@@ -452,9 +587,11 @@ def main() -> None:
         print("voice: no --voice-dir; emitting bare NNN values")
 
     mao_files: dict[str, str] = {}
+    global_spk: dict[str, str] = {}
     if mao_dir and os.path.isdir(mao_dir):
         try:
             mao_files = load_mao_index(mao_dir)
+            global_spk = global_speaker_map(mao_files)
             print(f"mao: {len(mao_files)} scripts from {mao_dir}")
         except (OSError, KeyError, ValueError):
             print("mao: unreadable index; falling back to fractional maps")
@@ -494,56 +631,81 @@ def main() -> None:
                 jev = []
         else:
             jev = []
-        mao = None
-        if script in mao_files:
-            mao_lines = load_mao_lines(mao_files, script)
-            if mao_lines:
-                mao = {"lines": mao_lines}
+        mao_parts = (load_mao_parts(mao_files, script)
+                     if script in mao_files else None)
+        mao_lines = ([l for p in mao_parts for l in p]
+                     if mao_parts is not None else None)
         placed_frac: dict[int, int] | None = None
-        if mao:
-            mao_lines = mao["lines"]
+        if mao_lines is not None and mao_parts is not None:
             ev_pairs = [(_norm_en(events[i].get("text") or ""),
                          jp_norm(events[i].get("text") or ""))
                         for i, _t in voiced]
-            m2e: dict[int, int] = {}
-            e2m: dict[int, int] = {}
             if (main_keys or ic_keys) and jev:
                 # exact voice chain needs JP txt + voice keys
-                j2m = match_jp_to_mao(
-                    [e.get("text") or "" for e in jev],
-                    [jp_norm(l.get("japanese") or "") for l in mao_lines])
-                m2e, e2m = match_mao_to_en(
-                    [_norm_en(l.get("english") or "") for l in mao_lines],
-                    [jp_norm(l.get("japanese") or "") for l in mao_lines],
-                    ev_pairs)
                 chained = 0
-                for (_idx, _n, nnn, _d), X in zip(recs, atoks):
-                    if X is None:
-                        continue
-                    o = jtok2ord.get(X)
-                    jj = j2m.get(o) if o is not None else None
-                    ev = m2e.get(jj) if jj is not None else None
-                    if ev is None:
-                        continue
-                    ev = voiced[ev][0]  # voiced position -> event index
-                    key = resolve_voice_key(script, nnn, main_keys, ic_keys)
-                    if key is None:
-                        continue
-                    if str(ev) not in rows:
-                        rows[str(ev)] = key
-                        chained += 1
+                if len(mao_parts) == 1:
+                    j2m = match_jp_to_mao(
+                        [e.get("text") or "" for e in jev],
+                        [jp_norm(l.get("japanese") or "") for l in mao_lines])
+                    m2e, _e2m = match_mao_to_en(
+                        [_norm_en(l.get("english") or "") for l in mao_lines],
+                        [jp_norm(l.get("japanese") or "") for l in mao_lines],
+                        ev_pairs)
+                    for (_idx, _n, nnn, _d), X in zip(recs, atoks):
+                        if X is None:
+                            continue
+                        o = jtok2ord.get(X)
+                        jj = j2m.get(o) if o is not None else None
+                        ev = m2e.get(jj) if jj is not None else None
+                        if ev is None:
+                            continue
+                        ev = voiced[ev][0]
+                        key = resolve_voice_key(script, nnn, main_keys, ic_keys)
+                        if key is None:
+                            continue
+                        if str(ev) not in rows:
+                            rows[str(ev)] = key
+                            chained += 1
+                else:
+                    parts_jp = [[jp_norm(l.get("japanese") or "") for l in pl]
+                                for pl in mao_parts]
+                    j2pm = match_jp_to_mao_parts(
+                        [e.get("text") or "" for e in jev], parts_jp)
+                    spine_aligned = len(jev) == len(voiced)
+                    for (_idx, _n, nnn, _d), X in zip(recs, atoks):
+                        if X is None:
+                            continue
+                        o = jtok2ord.get(X)
+                        if o is None or o not in j2pm:
+                            continue
+                        ev_ord = o if spine_aligned else None
+                        if ev_ord is None:
+                            p_i, l_i = j2pm[o]
+                            row = mao_parts[p_i][l_i]
+                            me = _norm_en(row.get("english") or "")
+                            mj = jp_norm(row.get("japanese") or "")
+                            for cand in range(max(0, o - 12),
+                                              min(len(ev_pairs), o + 13)):
+                                ne, nj = ev_pairs[cand]
+                                if (ne and me and ne in me) or (nj and mj and nj in mj):
+                                    ev_ord = cand
+                                    break
+                        if ev_ord is None or ev_ord >= len(voiced):
+                            continue
+                        ev = voiced[ev_ord][0]
+                        key = resolve_voice_key(script, nnn, main_keys, ic_keys)
+                        if key is None:
+                            continue
+                        if str(ev) not in rows:
+                            rows[str(ev)] = key
+                            chained += 1
                 n_exact += chained
                 if chained:
                     vmap[script] = rows
-            else:
-                # no voice chain (no JP txt / no keys); voice fallbacks
-                # below still run
-                pass
             # speaker overrides by NAME: MAO lines carry (speakerJa,
             # speakerEn) pairs; a JP name maps to the manuscript's EN
-            # name via majority vote (script-scoped, no text matching —
-            # a wrong displayed name is worse than a JP one)
-            name_map = speaker_name_map(mao_lines)
+            # name via majority vote (plus global fallback for rare names).
+            name_map = speaker_name_map(mao_lines, fallback_map=global_spk)
             for i, _t in voiced:
                 sp = events[i].get("speaker")
                 if isinstance(sp, str) and sp in name_map:
@@ -551,6 +713,12 @@ def main() -> None:
                     n_spk += 1
             if vmap.get(script):
                 continue
+        elif global_spk:
+            for i, _t in voiced:
+                sp = events[i].get("speaker")
+                if isinstance(sp, str) and sp in global_spk:
+                    smap.setdefault(script, {})[str(i)] = global_spk[sp]
+                    n_spk += 1
         # ---- fallbacks ----
         m = len(events)
         fracs = [(idx / max(1, n), nnn, is_dialog)

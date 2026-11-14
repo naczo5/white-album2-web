@@ -2279,20 +2279,21 @@
   ]
  ],
  "endingSlots": {
-  "1": "ic-end",
-  "21": "cc-normal1",
-  "22": "cc-setsuna",
-  "23": "cc-koharu",
-  "24": "cc-chiaki-true",
-  "25": "cc-chiaki-normal",
-  "30": "cc-mari",
-  "31": "coda-normal",
-  "32": "coda-kazusa-true",
-  "33": "coda-cheating",
-  "99": "coda-setsuna-true"
+  "0": "ic-end",
+  "20": "cc-normal1",
+  "21": "cc-setsuna",
+  "22": "cc-koharu",
+  "23": "cc-chiaki-true",
+  "24": "cc-chiaki-normal",
+  "25": "cc-mari",
+  "30": "coda-normal",
+  "31": "coda-kazusa-true",
+  "32": "coda-cheating",
+  "33": "coda-setsuna-true"
  },
  "endingSlotsConfidence": {
-  "1": "hypothesis",
+  "0": "high",
+  "20": "high",
   "21": "high",
   "22": "high",
   "23": "high",
@@ -2301,16 +2302,15 @@
   "30": "high",
   "31": "high",
   "32": "high",
-  "33": "high",
-  "99": "reserved"
+  "33": "high"
  },
  "gateSlots": {
-  "replaySlot": 3,
-  "chiakiNormalSlot": 2,
-  "codaEnteredSlot": 10,
-  "setsunaCcSlot": 22,
+  "replaySlot": 2,
+  "chiakiNormalSlot": 1,
+  "codaEnteredSlot": 5,
+  "setsunaCcSlot": 21,
   "reservedSlot99": 99,
-  "choiceSystemSlot": 100,
+  "choiceSystemSlot": 99,
   "musicBandBase": 100,
   "movieBandBase": 200,
   "eroBandBase": 300,
@@ -2321,9 +2321,9 @@
  ],
  "openItems": [
   "Region A slot 0 is untrustworthy: the script->slot resolver at 0x40ea10 falls back to index 0 for ids absent from the 0x4be530 table and accumulates them there. The sample save shows a 52-bit gap (63->115) and a tail out to bit 1760 while 1001 itself has 85 message lines. Excluded from import; keep as reference only.",
-  "GFLAG.dat record 61 has slot 0 (unassigned reservation record); the slot field of the final record sits at the very end of the file and is read with an EOF clamp.",
-  "Region C band 900+ is shared: 900 + 4*choiceIdx + nodeIdx choice bitmasks collide with the ero-scene slot 900 named in GFLAG.dat. Read the 23x4 band from choiceTable first, then treat any remaining 900..991 bits as unclassified.",
+  "GFLAG.dat record 0 holds slot 0 (ic-end clear flag written by 1013); record 61 holds slot 900 (choiceBandBase reservation in Region C).",
+  "Region C band 900+ is shared: 900 + 4*choiceIdx + nodeIdx choice bitmasks share base 900 named in GFLAG.dat record 61. Read the 23x4 band from choiceTable first, then treat any remaining 900..991 bits as unclassified.",
   "Movie and music band ids overlap in the low 200s (movie sentinel 80, music 100 + trackId); treat 201..224 as movies and 101..199 as music.",
-  "Slot 99 is system-reserved and force-zeroed: the guarded flag setter at 0x405320 compares the index with 99, substitutes 0 and reports the rejection, so the coda-setsuna ending record is never observable as set in Region C. Read 0 as 'unknown', not as 'not cleared'."
+  "Slot 99 is system-reserved and force-zeroed: the guarded flag setter at 0x405320 compares the index with 99, substitutes 0 and reports the rejection; SetSelectMess compares GetGameFlag(99) (always 0) against choice gate conditions. Not an ending slot."
  ]
 }

@@ -106,21 +106,19 @@ def test_sys_slots_ending_map_is_complete_and_known():
         open(os.path.join(DATA, "endings.json"), encoding="utf-8"))["endings"]}
     mapped = set(t["endingSlots"].values())
     assert mapped <= ids, f"unknown ending ids: {sorted(mapped - ids)}"
+    assert len(t["endingSlots"]) == 11
     assert set(t["endingSlots"]) == set(t["endingSlotsConfidence"])
-    assert set(t["endingSlotsConfidence"].values()) <= {"high",
-                                                        "hypothesis",
-                                                        "reserved"}
-    # The hypothesis is exactly the prologue/IC clear.
-    hyp = {s for s, c in t["endingSlotsConfidence"].items()
-           if c == "hypothesis"}
-    assert hyp == {"1"}
-    assert t["endingSlots"]["1"] == "ic-end"
-    # The engine force-zeroes 99, so its mapping stays reference-only.
-    reserved = {s for s, c in t["endingSlotsConfidence"].items()
-                if c == "reserved"}
-    assert reserved == {"99"}
-    assert t["endingSlots"]["99"] == "coda-setsuna-true"
+    assert set(t["endingSlotsConfidence"].values()) == {"high"}
+    assert t["endingSlots"]["0"] == "ic-end"
+    assert t["endingSlots"]["21"] == "cc-setsuna"
+    assert t["endingSlots"]["33"] == "coda-setsuna-true"
+    assert "99" not in t["endingSlots"]
     assert t["gateSlots"]["reservedSlot99"] == 99
+    assert t["gateSlots"]["choiceSystemSlot"] == 99
+    assert t["gateSlots"]["chiakiNormalSlot"] == 1
+    assert t["gateSlots"]["replaySlot"] == 2
+    assert t["gateSlots"]["codaEnteredSlot"] == 5
+    assert t["gateSlots"]["setsunaCcSlot"] == 21
     # All band/gate constants stay numeric.
     assert all(isinstance(v, int) and not isinstance(v, bool)
                for v in t["gateSlots"].values())
@@ -170,12 +168,11 @@ def test_bundle_delivers_sys_slots(tmp_path):
 
 # ------------------------------------------------- GFLAG slot parsing ---
 def _gflag_blob(names_slots):
-    """Build a synthetic GFLAG.dat (u32 count + 260-byte records)."""
-    blob = struct.pack("<I", len(names_slots)) + b"\x00" * 4
+    """Build a synthetic GFLAG.dat (u32 count + 260-byte (u32 slot, name) records)."""
+    blob = struct.pack("<I", len(names_slots))
     for name, slot in names_slots:
-        rec = name.encode("cp932") + b"\x00" * (256 - len(name))
-        rec += struct.pack("<I", slot)
-        blob += rec[:260].ljust(260, b"\x00")
+        rec = struct.pack("<I", slot) + name.encode("cp932").ljust(256, b"\x00")[:256]
+        blob += rec
     return blob
 
 
@@ -186,21 +183,21 @@ def test_parse_gflag_slots_reads_offset_256():
     assert [r["slot"] for r in rows] == [21, 0, 900]
     assert [r["name"] for r in rows] == ["_GFLAG_EV_A", "_GFLAG_EV_B",
                                          "_GFLAG_EV_C"]
-    # The legacy name-only parse is unchanged.
+    # The legacy name-only parse reads +4+4 = +8 for record 0, matching the same offsets.
     assert build_flags.parse_gflag(blob) == ["_GFLAG_EV_A", "_GFLAG_EV_B",
                                              "_GFLAG_EV_C"]
 
 
 def test_parse_gflag_slots_clamps_short_final_record():
-    """A truncated last record must not raise (slot field sits at EOF)."""
-    blob = struct.pack("<I", 2) + b"\x00" * 4
+    """A truncated last record must not raise."""
+    blob = struct.pack("<I", 2)
     name = b"_GFLAG_EV_A\x00"
-    blob += (name + b"\x00" * (256 - len(name)) + struct.pack("<I", 1))
-    # Second record is cut off well before its +256 slot field.
-    blob += b"_GFLAG_TRUNC\x00"
+    blob += struct.pack("<I", 1) + name.ljust(256, b"\x00")
+    # Second record is cut off before its 4-byte slot field finishes.
+    blob += b"\x01\x00"
     rows = build_flags.parse_gflag_slots(blob)
     assert rows[0]["slot"] == 1
-    assert rows[1]["name"] == "_GFLAG_TRUNC"
+    assert rows[1]["name"] == ""
     assert rows[1]["slot"] == 0  # clamped, not read past EOF
 
 
@@ -290,9 +287,9 @@ def test_parse_gflag_slots_matches_committed_ending_map():
     rows = build_flags.parse_gflag_slots(build_flags.get_entry(pak,
                                                               "GFLAG.dat"))
     assert len(rows) == 62
-    slots = {r["slot"] for r in rows if r["slot"]}
+    slots = {r["slot"] for r in rows}
     t = load_slots()
     for slot in t["endingSlots"]:
         assert int(slot) in slots
-    # Records 61 and the pre-final record leave slot 0 unassigned.
-    assert rows[-1]["slot"] == 0
+    assert rows[0]["slot"] == 0
+    assert rows[-1]["slot"] == 900

@@ -3,7 +3,15 @@
 // localStorage holds autosave + named slots for convenience; the FILE is
 // the source of truth and the unit under test (round-trip stable).
 
-import type { Flags, Position, SaveData, SysProfile } from "./types";
+import type {
+  CfgCallFrame,
+  CfgRuntimeState,
+  CfgStackFrame,
+  Flags,
+  Position,
+  SaveData,
+  SysProfile,
+} from "./types";
 
 export const SAVE_VERSION = 1;
 /** Default namespace for a local full build; setSaveNamespace() isolates
@@ -38,6 +46,73 @@ export function serialize(save: SaveData): string {
   return JSON.stringify({ ...save, updatedAt: new Date().toISOString() });
 }
 
+function sanitizeRanges(raw: unknown): [number, number][] {
+  if (!Array.isArray(raw)) return [];
+  const out: [number, number][] = [];
+  for (const r of raw) {
+    if (Array.isArray(r) && r.length >= 2 &&
+      typeof r[0] === "number" && Number.isFinite(r[0]) &&
+      typeof r[1] === "number" && Number.isFinite(r[1])) {
+      out.push([r[0], r[1]]);
+    }
+  }
+  return out;
+}
+
+function sanitizePcStack(raw: unknown): CfgStackFrame[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CfgStackFrame[] = [];
+  for (const f of raw) {
+    if (!f || typeof f !== "object") continue;
+    const rec = f as { path?: unknown; idx?: unknown };
+    if (!Array.isArray(rec.path) || typeof rec.idx !== "number" || !Number.isInteger(rec.idx)) continue;
+    const path = rec.path.filter((x): x is number => typeof x === "number" && Number.isInteger(x));
+    out.push({ path, idx: rec.idx });
+  }
+  return out;
+}
+
+function sanitizeCallFrame(raw: unknown): CfgCallFrame | null {
+  if (!raw || typeof raw !== "object") return null;
+  const f = raw as Partial<CfgCallFrame>;
+  if (typeof f.script !== "string" || typeof f.entry !== "string") return null;
+  const l = Array.isArray(f.l) ? f.l.map((x) => (typeof x === "number" && Number.isFinite(x) ? x : 0)) : [];
+  const frame: CfgCallFrame = {
+    script: f.script,
+    entry: f.entry,
+    l,
+    pcStack: sanitizePcStack(f.pcStack),
+    event: typeof f.event === "number" && Number.isInteger(f.event) ? f.event : 0,
+    executedRanges: sanitizeRanges(f.executedRanges),
+  };
+  if (typeof f.spanEnd === "number" && Number.isFinite(f.spanEnd)) {
+    frame.spanEnd = f.spanEnd;
+  }
+  return frame;
+}
+
+function sanitizeCfgState(raw: unknown): CfgRuntimeState | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const c = raw as Partial<CfgRuntimeState>;
+  if (typeof c.script !== "string" || typeof c.entry !== "string") return undefined;
+  const l = Array.isArray(c.l) ? c.l.map((x) => (typeof x === "number" && Number.isFinite(x) ? x : 0)) : [];
+  const callStack = Array.isArray(c.callStack)
+    ? c.callStack.map(sanitizeCallFrame).filter((x): x is CfgCallFrame => x !== null)
+    : [];
+  const state: CfgRuntimeState = {
+    script: c.script,
+    entry: c.entry,
+    l,
+    pcStack: sanitizePcStack(c.pcStack),
+    callStack,
+    executedRanges: sanitizeRanges(c.executedRanges),
+  };
+  if (typeof c.spanEnd === "number" && Number.isFinite(c.spanEnd)) {
+    state.spanEnd = c.spanEnd;
+  }
+  return state;
+}
+
 export function deserialize(json: string): SaveData {
   const data = JSON.parse(json) as SaveData;
   if (data.version !== SAVE_VERSION) {
@@ -49,10 +124,24 @@ export function deserialize(json: string): SaveData {
   if (!Number.isInteger(data.position.event) || data.position.event < 0) {
     throw new Error("save has a bad position.event");
   }
-  data.flags = { aff: data.flags?.aff ?? {}, set: data.flags?.set ?? {} };
-  for (const [k, v] of Object.entries(data.flags.aff)) {
+  const rawFlags = data.flags as Partial<Flags> | undefined;
+  const flags: Flags = { aff: rawFlags?.aff ?? {}, set: rawFlags?.set ?? {} };
+  for (const [k, v] of Object.entries(flags.aff)) {
     if (typeof v !== "number") throw new Error(`bad affection value for ${k}`);
   }
+  if (Array.isArray(rawFlags?.g)) {
+    flags.g = rawFlags.g.map((x) => (typeof x === "number" && Number.isFinite(x) ? x : 0));
+  }
+  if (rawFlags?.gflags && typeof rawFlags.gflags === "object" && !Array.isArray(rawFlags.gflags)) {
+    const gflags: Record<string, number> = {};
+    for (const [k, v] of Object.entries(rawFlags.gflags)) {
+      if (typeof v === "number" && Number.isFinite(v)) gflags[k] = v;
+    }
+    flags.gflags = gflags;
+  }
+  const cfgState = sanitizeCfgState(rawFlags?.cfg);
+  if (cfgState) flags.cfg = cfgState;
+  data.flags = flags;
   if (typeof data.name !== "string") data.name = "Haruki";
   if (typeof data.updatedAt !== "string") data.updatedAt = new Date().toISOString();
   data.picks = (data.picks && typeof data.picks === "object") ? data.picks : {};
@@ -218,6 +307,13 @@ export function sanitizeProfile(raw: unknown): SysProfile | null {
       if (typeof v === "number" && Number.isFinite(v)) gates[k] = v;
     }
   }
+  let gameFlags: Record<string, number> | undefined;
+  if (p.gameFlags && typeof p.gameFlags === "object" && !Array.isArray(p.gameFlags)) {
+    gameFlags = {};
+    for (const [k, v] of Object.entries(p.gameFlags)) {
+      if (typeof v === "number" && Number.isInteger(v)) gameFlags[k] = v;
+    }
+  }
   return {
     version: 1,
     ...(typeof p.fileName === "string" && p.fileName ? { fileName: p.fileName } : {}),
@@ -231,6 +327,7 @@ export function sanitizeProfile(raw: unknown): SysProfile | null {
     movies: numberList(p.movies),
     ero: numberList(p.ero),
     gates,
+    ...(gameFlags ? { gameFlags } : {}),
   };
 }
 

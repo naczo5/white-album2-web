@@ -74,6 +74,31 @@ def test_bundle_data_merges_scripts_and_prunes(tmp_path):
     assert (data / "novels" / "bonus.pdf").is_file()
 
 
+def test_bundle_delivers_cfg(tmp_path):
+    data = tmp_path / "data"
+    (data / "scripts").mkdir(parents=True)
+    (data / "scripts" / "index.json").write_text(json.dumps(["1001"]), encoding="utf-8")
+    (data / "scripts" / "1001.json").write_text(
+        json.dumps({"script": "1001", "tokens": 1, "events": []}),
+        encoding="utf-8",
+    )
+    (data / "flow.json").write_text(json.dumps({"version": 1, "nodes": []}), encoding="utf-8")
+    cfg_payload = {
+        "version": 1,
+        "vars": [{"idx": 0, "name": "FLG_00", "init": 0}],
+        "scripts": {"1001": {"0": [{"t": "play", "from": 0, "to": 1}, {"t": "sload", "script": "1002", "entry": 0}]}},
+    }
+    (data / "cfg.json").write_text(json.dumps(cfg_payload), encoding="utf-8")
+
+    stats = pack_bundle.bundle_data(str(data))
+    assert stats["scenarios"] == 1
+    bundle = json.loads((data / "bundle.json").read_text(encoding="utf-8"))
+    assert bundle["cfg"] == cfg_payload
+
+    pack_bundle.bundle_data(str(data), prune=True)
+    assert not (data / "cfg.json").exists()
+
+
 def test_pack_audio_groups_dedups_rolls_chunks_and_prunes(tmp_path):
     assets = tmp_path / "assets"
     (assets / "voice" / "ic").mkdir(parents=True)

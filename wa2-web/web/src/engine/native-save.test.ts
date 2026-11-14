@@ -128,4 +128,57 @@ describe("native save parser", () => {
     expect(cleanNativeOption('"1. I can\'t handle her."')).toBe("I can't handle her.");
     expect(cleanNativeOption("'2. See her off'")).toBe("See her off");
   });
+
+  it("parses Global.vrb records and restores flags.g, aff, picks, and flags.cfg", async () => {
+    const { STANDARD_GLOBAL_VARS } = await import("./cfg-vm");
+    const ab = nativeBuffer({ script: "2003", text: "For all her physical beauty, I had never met a woman." });
+    const bytes = new Uint8Array(ab);
+    const dv = new DataView(ab);
+    // Write 29 Global.vrb records at 0x54cb0 (compact ASCII names fit in <= 0x54fd0)
+    const vals: Record<number, number> = { 5: 2, 7: 7, 8: 3, 12: 1, 14: 2, 15: 1 };
+    let p = 0x54cb8;
+    for (let i = 0; i < STANDARD_GLOBAL_VARS.length; i++) {
+      const nameBytes = new TextEncoder().encode(`G_${i}`);
+      const nlen = nameBytes.length + 1; // includes trailing NUL
+      dv.setUint32(p, nlen, true);
+      p += 4;
+      bytes.set(nameBytes, p);
+      bytes[p + nameBytes.length] = 0;
+      p += nlen;
+      bytes[p] = 3;
+      p += 1;
+      dv.setInt32(p, vals[i] ?? 0, true);
+      p += 4;
+    }
+    expect(p).toBeLessThanOrEqual(NATIVE_SAVE_SIZE);
+    dv.setUint32(0x54cb0, p - 0x54cb0, true);
+    dv.setUint32(0x54cb4, STANDARD_GLOBAL_VARS.length, true);
+
+    const parsed = parseNativeSave(ab)!;
+    expect(parsed.globalVars).toHaveLength(29);
+    expect(parsed.globalVars?.[7]?.value).toBe(7);
+
+    const cfg = {
+      version: 1,
+      vars: STANDARD_GLOBAL_VARS,
+      scripts: {
+        "2003": {
+          "0": [
+            { t: "play" as const, from: 0, to: 1 },
+            { t: "play" as const, from: 1, to: 2 },
+          ],
+        },
+      },
+    };
+    const pos = findNativePosition(parsed, scenario)!;
+    const restored = nativeToSave(parsed, pos, "save_18.sav", 1, 1, { cfg });
+    expect(restored.flags.g?.[7]).toBe(7);
+    expect(restored.flags.g?.[12]).toBe(1);
+    expect(restored.flags.aff).toEqual({ k: 2, s: 7, koharu: 3 });
+    expect(restored.picks["2003-242"]).toBe(2);
+    expect(restored.picks["2003-982"]).toBe(1);
+    expect(restored.flags.cfg?.script).toBe("2003");
+    expect(restored.flags.cfg?.executedRanges).toEqual([[0, 1], [1, 2]]);
+  });
 });
+

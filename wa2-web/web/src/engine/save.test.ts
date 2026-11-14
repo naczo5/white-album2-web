@@ -240,4 +240,70 @@ describe("saves", () => {
     expect(readProfile(storage)).toBeNull();
     setSaveNamespace("");
   });
+
+  it("round-trips flags.g, flags.gflags, and flags.cfg with callStack cleanly", () => {
+    const s = newSave("Haruki", { script: "1012_030_2", event: 4 });
+    s.flags.g = [0, 0, 0, 0, 0, 7, 1, 5];
+    s.flags.gflags = { "0": 1, "21": 1 };
+    s.flags.cfg = {
+      script: "1012_030_2",
+      entry: "10",
+      l: [2, 0, 1],
+      pcStack: [{ path: [2, 0], idx: 1 }],
+      callStack: [
+        {
+          script: "1012_030",
+          entry: "0",
+          l: [1],
+          pcStack: [{ path: [], idx: 5 }],
+          event: 12,
+          executedRanges: [[0, 12]],
+          spanEnd: 12,
+        },
+      ],
+      executedRanges: [[0, 10]],
+      spanEnd: 10,
+    };
+    const back = deserialize(serialize(s));
+    expect(back.flags.g).toEqual([0, 0, 0, 0, 0, 7, 1, 5]);
+    expect(back.flags.gflags).toEqual({ "0": 1, "21": 1 });
+    expect(back.flags.cfg).toEqual(s.flags.cfg);
+  });
+
+  it("preserves and sanitizes SysProfile.gameFlags", async () => {
+    const { readProfile, setSaveNamespace, writeProfile } = await import("./save");
+    setSaveNamespace("");
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() { return store.size; },
+    } as Storage;
+    const p: SysProfile = {
+      version: 1,
+      importedAt: "2026-11-13T10:00:00.000Z",
+      readKeys: [],
+      visited: [],
+      endings: [],
+      seenPicks: {},
+      cg: [],
+      music: [],
+      movies: [],
+      ero: [],
+      gates: { replay: 1 },
+      gameFlags: { "0": 1, "21": 1 },
+    };
+    writeProfile(storage, p);
+    expect(readProfile(storage)?.gameFlags).toEqual({ "0": 1, "21": 1 });
+
+    store.set("wa2web.profile", JSON.stringify({
+      ...p,
+      gameFlags: { "0": 1, "bad": "nope", "2": 3.5 },
+    }));
+    expect(readProfile(storage)?.gameFlags).toEqual({ "0": 1 });
+  });
 });
+

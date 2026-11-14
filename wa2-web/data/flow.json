@@ -1,8 +1,9 @@
 {
  "version": 1,
  "counts": {
-  "expert": 30,
-  "playtest": 2,
+  "verified": 2,
+  "expert": 29,
+  "playtest": 1,
   "review": 0
  },
  "nodes": [
@@ -472,29 +473,29 @@
     {
      "n": 1,
      "text": "Call Chiaki",
-     "goto": null
+     "goto": "2401"
     },
     {
      "n": 2,
      "text": "Stop by the editorial office",
-     "goto": "2401"
+     "goto": "2501"
     },
     {
      "n": 3,
      "text": "I had no right to think any of this",
-     "goto": "2501"
+     "goto": null
     }
    ],
    "date": "12/24 ROUTER",
    "effects": {},
    "gated": {
-    "1": "needs chiaki aff>=3/flag ON",
-    "2": "needs mari aff>=3/flag ON"
+    "1": "needs chiaki aff>=3 and chiaki route ON (G[9]>=3 && !G[12])",
+    "2": "needs mari aff>=3 (G[10]>=3)"
    },
    "walkthrough": null,
-   "status": "EXPERT_SOURCED",
+   "status": "VERIFIED_IN_GAME",
    "walk": "cc-c14",
-   "note": "THE branch. Engine gotos: opt2->2401 (Mari line), opt3->2501 (common line), opt1 falls through toward the work/stay follow-up (Chiaki line via 2301 on opt2 there; Setsuna line via 2020 on opt1)."
+   "note": "THE 12/24 branch (.bnr SLoad + SetSelectMess verified). Opt1 'Call Chiaki' -> 2401 (Chiaki line); opt2 'Stop by the editorial office' -> 2501 (Mari line); opt3 falls through to 2019-1512 work/stay follow-up."
   },
   {
    "id": "2019-1512",
@@ -506,22 +507,24 @@
     {
      "n": 1,
      "text": "Go to work",
-     "goto": null
+     "goto": null,
+     "play": "2301"
     },
     {
      "n": 2,
      "text": "Stay alone",
-     "goto": null,
-     "play": "2301"
+     "goto": null
     }
    ],
    "date": "12/24 cont.?",
    "effects": {},
-   "gated": {},
+   "gated": {
+    "1": "needs koharu aff>=3 and koharu route ON (G[8]>=3 && !G[11])"
+   },
    "walkthrough": null,
-   "status": "NEEDS_PLAYTEST",
+   "status": "EXPERT_SOURCED",
    "walk": "cc-c15?",
-   "note": "'Go to work / Stay alone' sits in 2019 AFTER the router, so it executes on the opt1 fall-through path. The ONLY choice in the game directly followed by a CATCH jump: CATCH2 2301 resolves opt2 'Stay alone' -> 2301 (Chiaki line; 2301 and 2020 open with parallel Dec-25-morning scenes). Opt1 falls through toward 2020 (Setsuna line). Confirm the flag/affection framing in game."
+   "note": "'Go to work / Stay alone' sits in 2019 AFTER the router, executing on the opt3 fall-through path (.bnr SLoad + SetSelectMess verified). Opt1 'Go to work' -> 2301 (Koharu line); opt2 'Stay alone' falls through to 2020 (Setsuna / CC Normal line)."
   },
   {
    "id": "2024-84",
@@ -978,17 +981,20 @@
     "1": {
      "aff": {
       "k": 1
-     }
+     },
+     "uwaki": 1
     },
     "2": {
      "flag": "s_honest"
     }
    },
-   "gated": {},
+   "gated": {
+    "1": "LOCKED if setsuna aff > uwaki + kazusa aff (G[7] > G[6]+G[5])"
+   },
    "walkthrough": null,
    "status": "EXPERT_SOURCED",
    "walk": "coda-c12",
-   "note": "Opt2 required for Setsuna True."
+   "note": ".bnr verified: opt1 adds G[5]+=1 & G[6]+=1 and loads 3015; opt2 sets G[25]=2 (enables s_flag G[27]==1 in 3016, required for Setsuna True)."
   },
   {
    "id": "3016-822",
@@ -1000,23 +1006,23 @@
     {
      "n": 1,
      "text": "Let go of her hands",
-     "goto": null
+     "goto": "3901"
     },
     {
      "n": 2,
      "text": "Turn my face away",
-     "goto": "3901"
+     "goto": null
     }
    ],
    "date": "1/29 FINAL ROUTER",
    "effects": {},
    "gated": {
-    "1": "selectable only if s_flag OFF"
+    "1": "selectable only if s_flag OFF (G[27]==0)"
    },
    "walkthrough": null,
-   "status": "EXPERT_SOURCED",
+   "status": "VERIFIED_IN_GAME",
    "walk": "coda-c13",
-   "note": "Engine goto: opt2->3901 (Kazusa side files). Opt1 skips the final choice -> cheating end."
+   "note": "Final 1/29 router (.bnr SLoad + SetSelectMess verified). Opt1 'Let go of her hands' -> 3901 (Kazusa Cheating side files, skips final choice); opt2 'Turn my face away' falls through to 3016-859."
   },
   {
    "id": "3016-859",
@@ -1038,11 +1044,13 @@
    ],
    "date": "1/29 FINAL",
    "effects": {},
-   "gated": {},
+   "gated": {
+    "2": "LOCKED if kazusa aff < 6 (G[5] < 6)"
+   },
    "walkthrough": null,
    "status": "EXPERT_SOURCED",
    "walk": "coda-c14",
-   "note": "'I love Setsuna' with s_flag ON -> Setsuna True; with s_flag OFF -> Normal. 'I can't lie to Kazusa' needs kazusa aff=6 -> Kazusa True."
+   "note": "'I love Setsuna' with s_flag ON (G[27]==1) -> 3017..3023->3201 (Setsuna True); with s_flag OFF -> 3024 (Coda Normal). 'I can't lie to Kazusa' needs kazusa aff>=6 (G[5]>=6) -> 3017..3023->3101 (Kazusa True)."
   },
   {
    "id": "3904-386",

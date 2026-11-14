@@ -39,10 +39,14 @@ const ERO_LAST = 322;
 
 /** Gate-flag names carried into `SysProfile.gates`. */
 const GATE_NAMES: Record<string, string> = {
+  icClear: "icClearSlot",
   replay: "replaySlot",
   chiakiNormal: "chiakiNormalSlot",
+  ccClear: "ccClearSlot",
+  codaClear: "codaClearSlot",
   codaEntered: "codaEnteredSlot",
   setsunaCc: "setsunaCcSlot",
+  codaSetsunaTrue: "codaSetsunaTrueSlot",
 };
 
 export interface SysReadSlot {
@@ -195,6 +199,12 @@ export function buildSysProfile(
     gates[name] = sys.flags[slot] ?? 0;
   }
 
+  const gameFlags: Record<string, number> = {};
+  for (let slot = 0; slot < 900; slot++) {
+    const val = sys.flags[slot] ?? 0;
+    if (val !== 0) gameFlags[String(slot)] = val;
+  }
+
   const profile: SysProfile = {
     version: 1,
     ...(fileName ? { fileName } : {}),
@@ -208,6 +218,7 @@ export function buildSysProfile(
     movies,
     ero,
     gates,
+    gameFlags,
   };
   return { profile, readKeys };
 }
@@ -258,6 +269,7 @@ export function mergeSysProfile(existing: SysProfile | null, incoming: SysProfil
       movies: unionNumbers([], incoming.movies),
       ero: unionNumbers([], incoming.ero),
       gates: { ...incoming.gates },
+      ...(incoming.gameFlags ? { gameFlags: { ...incoming.gameFlags } } : {}),
     };
   }
   const seenPicks: Record<string, number[]> = {};
@@ -268,6 +280,15 @@ export function mergeSysProfile(existing: SysProfile | null, incoming: SysProfil
   const gates: Record<string, number> = { ...existing.gates };
   for (const [k, v] of Object.entries(incoming.gates)) {
     gates[k] = ((gates[k] ?? 0) | v) >>> 0;
+  }
+  let gameFlags: Record<string, number> | undefined;
+  if (existing.gameFlags !== undefined || incoming.gameFlags !== undefined) {
+    gameFlags = { ...(existing.gameFlags ?? {}) };
+    for (const [k, v] of Object.entries(incoming.gameFlags ?? {})) {
+      if (typeof v === "number" && Number.isFinite(v)) {
+        gameFlags[k] = Math.max(gameFlags[k] ?? 0, v);
+      }
+    }
   }
   return {
     version: 1,
@@ -282,5 +303,6 @@ export function mergeSysProfile(existing: SysProfile | null, incoming: SysProfil
     movies: unionNumbers(existing.movies, incoming.movies),
     ero: unionNumbers(existing.ero, incoming.ero),
     gates,
+    ...(gameFlags ? { gameFlags } : {}),
   };
 }

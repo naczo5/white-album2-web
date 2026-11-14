@@ -26,6 +26,7 @@ import {
   parseSysSave,
 } from "../engine/sys-save";
 import { ingestReadKeys } from "./reader";
+import { sceneLabel } from "./flowchart";
 import type { FlowData, SaveData, SysProfile, SysSlotsTable } from "../engine/types";
 
 export interface SaveHooks {
@@ -41,6 +42,8 @@ export interface SaveHooks {
   flow?: FlowData;
   /** Global profile currently stored (read lines, endings, unlocks). */
   profile?: SysProfile | null;
+  /** Developer mode: display raw script:event ids in slot/import rows. */
+  dev?: boolean;
   /** Called after an import/removal so callers can repaint and re-sync. */
   onProfileChange?(p: SysProfile | null): void;
 }
@@ -331,9 +334,12 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
         <span class="slot-main"><b>${label}</b><span>No save yet</span></span>
         <span class="slot-actions">${saveAttr ? `<button ${saveAttr}>Save now</button>` : ""}</span></li>`;
     }
+    const posText = h.dev
+      ? `${s.position.script}:${s.position.event}`
+      : sceneLabel(s.position.script, h.flow, { spoiler: true, dev: false, visited: true });
     return `<li><span class="slot-no">${code}</span>
       <span class="slot-main"><b>${label}</b>
-      <span>${escapeHtml(s.position.script)}:${s.position.event} · ${escapeHtml(s.updatedAt.slice(0, 16).replace("T", " "))}</span></span>
+      <span>${escapeHtml(posText)} · ${escapeHtml(s.updatedAt.slice(0, 16).replace("T", " "))}</span></span>
       <span class="slot-actions"><button ${loadAttr}>Load</button> <button ${expAttr}>File</button>${saveAttr ? ` <button ${saveAttr}>Save now</button>` : ""}</span></li>`;
   };
   let html = `<header class="screen-head"><div><h2>Save / Load</h2>
@@ -359,10 +365,13 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
       const chapter = s.position.script.startsWith("demo")
         ? "Demo"
         : CHAPTER_LABEL[chapterOfScript(s.position.script)] ?? "Special";
+      const slotPlace = h.dev
+        ? `${chapter} · ${s.position.script}:${s.position.event}`
+        : sceneLabel(s.position.script, h.flow, { spoiler: true, dev: false, visited: true });
       html += `<li>
         <span class="slot-no">${String(i + 1).padStart(2, "0")}</span>
         <span class="slot-main"><b>${escapeHtml(s.name)}</b>
-        <span>${chapter} · ${escapeHtml(s.position.script)}:${s.position.event} · ${escapeHtml(s.updatedAt.slice(0, 10))}</span></span>
+        <span>${escapeHtml(slotPlace)} · ${escapeHtml(s.updatedAt.slice(0, 10))}</span></span>
         <span class="slot-actions"><button data-load="${i}">Load</button> <button data-exp="${i}">File</button> <button data-save="${i}">Save here</button></span>`;
     } else if (r.corrupt) {
       html += `<li class="corrupt">
@@ -401,8 +410,11 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
       const n = s.native;
       if (!n) return;
       const line = n.preview || n.speaker || "Imported save";
+      const where = h.dev
+        ? `${n.script}:${s.position.event}`
+        : sceneLabel(s.position.script, h.flow, { spoiler: true, dev: false, visited: true });
       const meta = [
-        `${n.script}:${s.position.event}`,
+        where,
         n.speaker,
         n.timestamp || s.updatedAt.slice(0, 10),
         n.file,
@@ -556,6 +568,7 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
         positions.forEach((pos, i) => {
           imported.unshift(nativeToSave(
             parsed.save, pos, file.name, i + 1, positions.length,
+            { router: h.router, profileGameFlags: profile?.gameFlags },
           ));
           added++;
         });

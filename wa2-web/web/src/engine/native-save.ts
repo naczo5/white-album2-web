@@ -16,7 +16,14 @@
 // Text/choice buffers are the reliable position description: the engine's
 // VM pointer is not stored as our script:event index.
 
-import type { NativeSaveMeta, SaveData } from "./types";
+import {
+  G_TO_PICK_NODE,
+  STANDARD_GLOBAL_VARS,
+  seekCfg,
+  syncAffFromG,
+} from "./cfg-vm";
+import type { Router } from "./router";
+import type { CfgData, NativeSaveMeta, SaveData } from "./types";
 import { newSave } from "./save";
 import { SYS_SIZE } from "./sys-save";
 import type { Scenario } from "./types";
@@ -32,6 +39,12 @@ const OFF_SPEAKER = 0x116c4;
 const OFF_OPTION = 0x11714;
 const OPTION_STRIDE = 0x100;
 const OFF_SCRIPT = 0x203d8;
+const OFF_GLOBAL_VRB = 0x54cb0;
+
+export interface NativeGlobalVar {
+  name: string;
+  value: number;
+}
 
 export interface NativeSave {
   version: number;
@@ -43,6 +56,7 @@ export interface NativeSave {
   options: string[];
   script: string;
   route: string;
+  globalVars?: NativeGlobalVar[];
 }
 
 export type ParsedNativeFile =
@@ -67,6 +81,41 @@ function u16(b: Uint8Array, off: number): number {
 
 function u32(b: Uint8Array, off: number): number {
   return (b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24)) >>> 0;
+}
+
+function i32(b: Uint8Array, off: number): number {
+  return (b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24)) >> 0;
+}
+
+function parseGlobalVrb(b: Uint8Array): NativeGlobalVar[] | undefined {
+  if (b.length < OFF_GLOBAL_VRB + 8) return undefined;
+  const totalBytes = u32(b, OFF_GLOBAL_VRB);
+  const count = u32(b, OFF_GLOBAL_VRB + 4);
+  if (count === 0 || count > 256 || totalBytes < 8 || OFF_GLOBAL_VRB + totalBytes > b.length) {
+    return undefined;
+  }
+  const end = OFF_GLOBAL_VRB + totalBytes;
+  let p = OFF_GLOBAL_VRB + 8;
+  const out: NativeGlobalVar[] = [];
+  for (let i = 0; i < count; i++) {
+    if (p + 4 > end) return undefined;
+    const nlen = u32(b, p);
+    if (nlen < 1 || p + 4 + nlen + 5 > end) return undefined;
+    const rawName = b.subarray(p + 4, p + 4 + nlen);
+    const trimmed = rawName[nlen - 1] === 0 ? rawName.subarray(0, nlen - 1) : rawName;
+    let name: string;
+    try {
+      name = decoder.decode(trimmed);
+    } catch {
+      return undefined;
+    }
+    const typ = b[p + 4 + nlen];
+    if (typ !== 3) return undefined;
+    const value = i32(b, p + 4 + nlen + 1);
+    out.push({ name, value });
+    p += 4 + nlen + 5;
+  }
+  return out;
 }
 
 function cstring(b: Uint8Array, off: number, max: number): string {
@@ -123,6 +172,7 @@ export function parseNativeSave(buffer: ArrayBuffer): NativeSave | null {
   let route = "";
   const scriptEnd = b.indexOf(0, OFF_SCRIPT);
   if (scriptEnd >= 0) route = cstring(b, scriptEnd + 1, 8);
+  const globalVars = parseGlobalVrb(b);
   return {
     version: u32(b, 0),
     playtime: u32(b, 4),
@@ -133,6 +183,7 @@ export function parseNativeSave(buffer: ArrayBuffer): NativeSave | null {
     options: readOptions(b),
     script,
     route,
+    ...(globalVars ? { globalVars } : {}),
   };
 }
 
@@ -251,12 +302,19 @@ export function findNativePosition(save: NativeSave, scenario: Scenario): Native
   return findNativeCandidates(save, scenario)[0] ?? null;
 }
 
+export interface NativeToSaveOptions {
+  cfg?: CfgData | null;
+  router?: Router | null;
+  profileGameFlags?: Record<string, number>;
+}
+
 export function nativeToSave(
   native: NativeSave,
   position: NativePosition,
   fileName = "",
   candidate = 1,
   candidateCount = 1,
+  options?: NativeToSaveOptions,
 ): SaveData {
   const script = position.script ?? native.script;
   const save = newSave("Imported", { script, event: position.event });
@@ -277,5 +335,38 @@ export function nativeToSave(
     candidateCount: candidateCount > 1 ? candidateCount : undefined,
   };
   save.native = meta;
+
+  const cfg = options?.cfg ?? options?.router?.cfg ?? null;
+  if (native.globalVars?.length) {
+    const vars = cfg?.vars ?? STANDARD_GLOBAL_VARS;
+    const byName = new Map(vars.map((v) => [v.name, v.idx]));
+    const g = new Array(Math.max(29, vars.length, native.globalVars.length)).fill(0);
+    for (const v of vars) g[v.idx] = v.init ?? 0;
+    native.globalVars.forEach((gv, i) => {
+      const idx = byName.get(gv.name) ?? (i < g.length ? i : -1);
+      if (idx >= 0) g[idx] = gv.value;
+    });
+    save.flags.g = g;
+    syncAffFromG(save.flags);
+    for (const [idxStr, nodeId] of Object.entries(G_TO_PICK_NODE)) {
+      const val = g[Number(idxStr)] ?? 0;
+      if (val > 0) save.picks[nodeId] = val;
+    }
+  }
+
+  const profileGameFlags = options?.profileGameFlags ?? options?.router?.profileGameFlags;
+  if (cfg && Object.keys(cfg.scripts[script] ?? {}).length > 0) {
+    seekCfg(cfg, save.position, save.flags, {
+      profileGameFlags,
+      endingSlots: options?.router?.endingSlots,
+      terminals: options?.router?.terminals,
+      replay: options?.router?.replay,
+      picks: save.picks,
+      preserveG: Boolean(native.globalVars?.length),
+    });
+  } else if (options?.router) {
+    options.router.seek(save.position, save.flags, save.picks);
+  }
+
   return save;
 }

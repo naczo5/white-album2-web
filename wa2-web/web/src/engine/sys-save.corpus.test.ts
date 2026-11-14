@@ -61,14 +61,18 @@ describe.runIf(SAVES && DATA)("Sys.sav corpus", () => {
     expect(readKeys.every((k) => /^\d{4}(?:_\d+)*:\d+$/.test(k))).toBe(true);
     expect(new Set(readKeys).size).toBe(readKeys.length);
 
-    // Region C endings: only the `high` confidence slots of this save.
-    // `ic-end` (slot 1, hypothesis) and `coda-setsuna-true` (slot 99,
-    // reserved and force-zeroed by the engine) must never appear.
-    expect(profile.endings.sort()).toEqual(
-      ["cc-chiaki-normal", "cc-chiaki-true", "cc-koharu", "cc-setsuna"],
-    );
+    // Region C endings: all `high` confidence slots decoded by fixed sys-slots.json;
+    // in this sample slots 0, 20, 22, 23, 24, 25 are set (21 cc-setsuna and 33 coda-setsuna-true are unset).
+    expect(profile.endings.sort()).toEqual([
+      "cc-chiaki-normal",
+      "cc-chiaki-true",
+      "cc-koharu",
+      "cc-mari",
+      "cc-normal1",
+      "ic-end",
+    ]);
+    expect(profile.endings).not.toContain("cc-setsuna");
     expect(profile.endings).not.toContain("coda-setsuna-true");
-    expect(profile.endings).not.toContain("ic-end");
 
     // Choice bitmasks live in the 900+ band and map onto real flow nodes.
     const pickIds = Object.keys(profile.seenPicks);
@@ -97,9 +101,13 @@ describe.runIf(SAVES && DATA)("Sys.sav corpus", () => {
     expect(profile.movies.length).toBeGreaterThan(0);
     expect(profile.movies).toContain(1); // mv01
     expect(profile.ero.length).toBeGreaterThan(0);
-    // Gate flags from the sample: replay + cc-setsuna cleared.
-    expect(profile.gates["replay"]).toBeGreaterThan(0);
-    expect(profile.gates["setsunaCc"]).toBeGreaterThan(0);
+    // Gate flags & Region C gameFlags from the sample (slot 2 replaySlot is 0 in this save; slots 0, 1, 3, 20, 22, 23, 24, 25, 80 are 1).
+    expect(profile.gates["replay"]).toBe(0);
+    expect(profile.gates["chiakiNormal"]).toBeGreaterThan(0);
+    expect(profile.gameFlags?.["0"]).toBeGreaterThan(0);
+    expect(profile.gameFlags?.["1"]).toBeGreaterThan(0);
+    expect(profile.gameFlags?.["3"]).toBeGreaterThan(0);
+    expect(profile.gameFlags?.["22"]).toBeGreaterThan(0);
   });
 
   it("rejects a truncated copy of the same save", () => {

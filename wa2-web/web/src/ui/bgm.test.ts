@@ -370,3 +370,79 @@ describe("fade resolver (bnr fadeMs)", () => {
     expect(resolveFade([{ ev: 1, fadeMs: 500, conf: "hypothesis" }], 5)).toBeNull();
   });
 });
+
+describe("CFG executedRanges branch filtering", () => {
+  const MANIFEST = {
+    version: 1,
+    images: {
+      "ic/b100400.tga": "ic/bg/b100400.png",
+      "b200101.tga": "bg/b200101.png",
+      "g.tga": "cg/g.png",
+    },
+    bgm: {},
+    sfx: {},
+    voice: {},
+    movies: {},
+  };
+  const origFetch = globalThis.fetch;
+  beforeAll(async () => {
+    globalThis.fetch = (async () => ({
+      ok: true, json: async () => MANIFEST,
+    })) as unknown as typeof fetch;
+    await loadManifest("assets/manifest.json");
+    globalThis.fetch = origFetch;
+  });
+
+  it("excludes skipped-branch stage backdrops, overlays, and fades", () => {
+    const ranges: [number, number][] = [[0, 10], [30, 50]];
+    const txt = [
+      { e: { t: "image" as const, file: "b200101.tga", layer: "bak" as const }, i: 15 },
+      { e: { t: "image" as const, file: "g.tga", layer: "grp" as const }, i: 20 },
+    ];
+    const bnr: BnrRec[] = [
+      { ev: 5, layer: "bak", stems: ["100400"], fadeMs: 400, conf: "high" },
+      { ev: 20, layer: "bak", clear: true, fadeMs: 900, conf: "high" },
+    ];
+    // Event 15/20 were never executed, so b100400 and fade 400 stay active at event 40
+    expect(resolveStageImage(txt, bnr, 40, "intro", ranges)).toBe("assets/ic/bg/b100400.png");
+    expect(resolveStageOverlay(txt, bnr, 40, "closing", ranges)).toBeNull();
+    expect(resolveFade(bnr, 40, ranges)).toBe(400);
+  });
+
+  it("excludes skipped-branch BGM, SE, ambient, and standing sprite cues", () => {
+    const ranges: [number, number][] = [[0, 10], [30, 50]];
+    const bgmCues = [
+      { ev: 4, track: 10 },
+      { ev: 20, stop: true },
+      { ev: 35, track: 22 },
+    ];
+    expect(resolveBgmCue(bgmCues, 31, (t) => ({ url: `bgm/${t}.ogg` }), ranges)).toEqual({
+      kind: "play",
+      url: "bgm/10.ogg",
+    });
+    expect(resolveBgmTimeline(bgmCues, 31, (t) => `bgm/${t}.ogg`, ranges)).toEqual({
+      kind: "play",
+      url: "bgm/10.ogg",
+    });
+    expect(resolveBgmTimeline(bgmCues, 35, (t) => `bgm/${t}.ogg`, ranges)).toEqual({
+      kind: "play",
+      url: "bgm/22.ogg",
+    });
+
+    const bnr: BnrRec[] = [
+      { ev: 4, se: [100], amb: { se: 50, ch: 0, vol: 128, loop: true }, spr: { id: 1, stem: "kaz001101", pos: 1 }, conf: "high" },
+      { ev: 20, se: [999], ambStop: 0, sprHide: 1, conf: "high" },
+      { ev: 32, se: [200], spr: { id: 2, stem: "set001101", pos: 0 }, conf: "high" },
+    ];
+    expect(resolveSeIds(bnr, 3, 40, ranges)).toEqual([100, 200]);
+    expect(resolveAmbientTimeline(bnr, 40, ranges).get(0)).toEqual({
+      kind: "play",
+      cue: { se: 50, ch: 0, vol: 128, loop: true },
+    });
+    expect(resolveSprites(bnr, 40, ranges)).toEqual([
+      { id: 1, stem: "kaz001101", pos: 1 },
+      { id: 2, stem: "set001101", pos: 0 },
+    ]);
+  });
+});
+

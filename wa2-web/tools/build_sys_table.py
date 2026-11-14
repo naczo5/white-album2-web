@@ -70,34 +70,32 @@ REGION_A_SLOT_BITS = REGION_A_SLOT_BYTES * 8
 # Global flag ids that gate content. Names are functional English labels;
 # GFLAG.dat carries the original labels, which never enter this file.
 GATE_SLOTS = {
-    "replaySlot": 3,  # 2nd-playthrough unlock
-    "chiakiNormalSlot": 2,  # gates the Chiaki true-end option
-    "codaEnteredSlot": 10,  # third part entered
-    "setsunaCcSlot": 22,  # cc-setsuna cleared -> coda unlocks
-    "reservedSlot99": 99,  # system-reserved; setter forces it to 0
-    "choiceSystemSlot": 100,  # reserved choice/system band base
+    "replaySlot": 2,  # 2nd-playthrough unlock
+    "chiakiNormalSlot": 1,  # gates the Chiaki true-end option (2003 opt1)
+    "codaEnteredSlot": 5,  # third part entered
+    "setsunaCcSlot": 21,  # cc-setsuna cleared -> coda unlocks
+    "reservedSlot99": 99,  # system-reserved choice placeholder; setter forces it to 0
+    "choiceSystemSlot": 99,  # GFLAG choice-system slot (GetGameFlag(99) == 0)
     "musicBandBase": 100,  # 100 + trackId
     "movieBandBase": 200,  # 200 + movieId
     "eroBandBase": 300,  # 300..322 ero-scene flags
     "choiceBandBase": CHOICE_BASE,
 }
 
-# GFLAG.dat slot -> endings.json id. `high` = the record's meaning and the
-# endings.json id line up one-to-one; `hypothesis` = the record marks a
-# clear that only implies the ending; `reserved` = the engine refuses to
-# store this slot at all (see OPEN_ITEMS), so the id is reference-only.
+# GFLAG.dat slot -> endings.json id. All 11 endings are verified 1:1 from
+# GFLAG.dat records + .bnr SetGameFlag calls (`high` confidence).
 ENDING_SLOTS = {
-    21: ("cc-normal1", "high"),
-    22: ("cc-setsuna", "high"),
-    23: ("cc-koharu", "high"),
-    24: ("cc-chiaki-true", "high"),
-    25: ("cc-chiaki-normal", "high"),
-    30: ("cc-mari", "high"),
-    31: ("coda-normal", "high"),
-    32: ("coda-kazusa-true", "high"),
-    33: ("coda-cheating", "high"),
-    99: ("coda-setsuna-true", "reserved"),
-    1: ("ic-end", "hypothesis"),
+    0: ("ic-end", "high"),
+    20: ("cc-normal1", "high"),
+    21: ("cc-setsuna", "high"),
+    22: ("cc-koharu", "high"),
+    23: ("cc-chiaki-true", "high"),
+    24: ("cc-chiaki-normal", "high"),
+    25: ("cc-mari", "high"),
+    30: ("coda-normal", "high"),
+    31: ("coda-kazusa-true", "high"),
+    32: ("coda-cheating", "high"),
+    33: ("coda-setsuna-true", "high"),
 }
 
 OPEN_ITEMS = [
@@ -106,19 +104,18 @@ OPEN_ITEMS = [
     "and accumulates them there. The sample save shows a 52-bit gap "
     "(63->115) and a tail out to bit 1760 while 1001 itself has 85 message "
     "lines. Excluded from import; keep as reference only.",
-    "GFLAG.dat record 61 has slot 0 (unassigned reservation record); the "
-    "slot field of the final record sits at the very end of the file and is "
-    "read with an EOF clamp.",
+    "GFLAG.dat record 0 holds slot 0 (ic-end clear flag written by 1013); "
+    "record 61 holds slot 900 (choiceBandBase reservation in Region C).",
     "Region C band 900+ is shared: 900 + 4*choiceIdx + nodeIdx choice "
-    "bitmasks collide with the ero-scene slot 900 named in GFLAG.dat. Read "
+    "bitmasks share base 900 named in GFLAG.dat record 61. Read "
     "the 23x4 band from choiceTable first, then treat any remaining "
     "900..991 bits as unclassified.",
     "Movie and music band ids overlap in the low 200s (movie sentinel 80, "
     "music 100 + trackId); treat 201..224 as movies and 101..199 as music.",
     "Slot 99 is system-reserved and force-zeroed: the guarded flag setter at "
     "0x405320 compares the index with 99, substitutes 0 and reports the "
-    "rejection, so the coda-setsuna ending record is never observable as set "
-    "in Region C. Read 0 as 'unknown', not as 'not cleared'.",
+    "rejection; SetSelectMess compares GetGameFlag(99) (always 0) against "
+    "choice gate conditions. Not an ending slot.",
 ]
 
 

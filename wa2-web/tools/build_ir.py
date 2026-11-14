@@ -40,6 +40,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -50,8 +51,11 @@ import parse_txt  # noqa: E402
 from build_voice import (  # noqa: E402
     _fill_runs,
     _norm_en,
+    global_speaker_map as _voice_global_speaker_map,
     jp_norm,
     match_jp_to_mao,
+    match_jp_to_mao_parts,
+    speaker_name_map,
 )
 from parse_txt import _FW_DIGITS  # noqa: E402
 
@@ -62,6 +66,9 @@ _QMAP = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'",
                        "\r": ""})
 
 _man_index_cache: dict[str, dict[str, str]] = {}
+_global_spk_cache: dict[str, dict[str, str]] = {}
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
+_NONASCII_FW_RE = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]")
 
 
 def naive_tokens(txt: bytes) -> list[str]:
@@ -132,10 +139,14 @@ def manuscript_index(mao_dir: str) -> dict[str, str]:
     return idx
 
 
-def manuscript_lines(mao_dir: str, script: str) -> list[dict] | None:
-    """Manuscript rows for a pak script: its own file plus _N continuations
-    (MAO splits long branch scripts; pak 1012_030.txt covers manuscript
-    1012_030 + 1012_030_2). Base file first, then _2, _3, ..."""
+def manuscript_parts(mao_dir: str, script: str) -> list[list[dict]] | None:
+    """Per-file manuscript row lists for a pak script (base, _2, _3, ...).
+
+    MAO splits long branch scripts into separate files whose blocks may be
+    interleaved or reordered relative to the single JP file (e.g. 2031, 3015).
+    Keeping parts separate lets `_manuscript_pass` align each part independently
+    against the JP display stream.
+    """
     idx = manuscript_index(mao_dir)
     parts: list[tuple[int, str]] = []
     if script in idx:
@@ -147,14 +158,37 @@ def manuscript_lines(mao_dir: str, script: str) -> list[dict] | None:
     if not parts:
         return None
     parts.sort()
-    lines: list[dict] = []
+    out: list[list[dict]] = []
     for _k, path in parts:
         try:
             j = json.load(open(path, encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        lines.extend(j.get("lines") or [])
+        out.append(j.get("lines") or [])
+    return out or None
+
+
+def manuscript_lines(mao_dir: str, script: str) -> list[dict] | None:
+    """Manuscript rows for a pak script: its own file plus _N continuations
+    (MAO splits long branch scripts; pak 1012_030.txt covers manuscript
+    1012_030 + 1012_030_2). Base file first, then _2, _3, ..."""
+    parts = manuscript_parts(mao_dir, script)
+    if not parts:
+        return None
+    lines: list[dict] = []
+    for p in parts:
+        lines.extend(p)
     return lines or None
+
+
+def global_speaker_map(mao_dir: str) -> dict[str, str]:
+    """Cached corpus-wide unanimous JP -> EN speaker map from MAO."""
+    cached = _global_spk_cache.get(mao_dir)
+    if cached is not None:
+        return cached
+    m = _voice_global_speaker_map(manuscript_index(mao_dir))
+    _global_spk_cache[mao_dir] = m
+    return m
 
 
 def match_en_to_mao(en_texts: list[str], mao_en: list[str],
@@ -190,7 +224,8 @@ def match_en_to_mao(en_texts: list[str], mao_en: list[str],
 
 def _manuscript_pass(events: list[dict], disp_texts: list[str],
                      mao_lines: list[dict], use_en: bool,
-                     warnings: list[str]) -> dict[str, int]:
+                     warnings: list[str],
+                     mao_parts: list[list[dict]] | None = None) -> dict[str, int]:
     """Replace say/narrate text with the aligned manuscript English.
 
     use_en: align by English containment (EN-only scripts) instead of JP.
@@ -204,10 +239,40 @@ def _manuscript_pass(events: list[dict], disp_texts: list[str],
     if use_en:
         o2m = match_en_to_mao(disp_texts,
                               [l.get("english") or "" for l in mao_lines])
-    else:
-        o2m = match_jp_to_mao(disp_texts,
-                              [jp_norm(l.get("japanese") or "")
-                               for l in mao_lines])
+        for o, e in enumerate(disp):
+            m = o2m.get(o)
+            en = ""
+            if m is not None:
+                en = (mao_lines[m].get("english") or "").translate(_QMAP)
+                en = en.replace("\n", "\\n").strip()
+            if not en:
+                stats["fallback"] += 1
+                continue
+            e["text"] = strip_quotes(en) if e["t"] == "say" else en
+            stats["manuscript"] += 1
+        return stats
+
+    if mao_parts and len(mao_parts) > 1:
+        parts_jp = [[jp_norm(l.get("japanese") or "") for l in pl]
+                    for pl in mao_parts]
+        o2pm = match_jp_to_mao_parts(disp_texts, parts_jp)
+        for o, e in enumerate(disp):
+            pm = o2pm.get(o)
+            en = ""
+            if pm is not None:
+                row = mao_parts[pm[0]][pm[1]]
+                en = (row.get("english") or "").translate(_QMAP)
+                en = en.replace("\n", "\\n").strip()
+            if not en:
+                stats["fallback"] += 1
+                continue
+            e["text"] = strip_quotes(en) if e["t"] == "say" else en
+            stats["manuscript"] += 1
+        return stats
+
+    o2m = match_jp_to_mao(disp_texts,
+                          [jp_norm(l.get("japanese") or "")
+                           for l in mao_lines])
     for o, e in enumerate(disp):
         m = o2m.get(o)
         en = ""
@@ -227,7 +292,8 @@ def _manuscript_pass(events: list[dict], disp_texts: list[str],
 _OPT_LINE = re.compile(r"^([0-9０-９]+)[.．]\s?(.*)$")
 
 
-def _choice_pass(events: list[dict], mao_lines: list[dict]) -> int:
+def _choice_pass(events: list[dict], mao_lines: list[dict],
+                 jp_events: list[dict] | None = None) -> int:
     """Complete choice option text from the manuscript.
 
     Manuscript option rows are `N．text` (JP) with an `N. text` EN twin;
@@ -251,26 +317,63 @@ def _choice_pass(events: list[dict], mao_lines: list[dict]) -> int:
             by_jp.setdefault(jp_norm(jm.group(2)), body)
         by_en.setdefault(_norm_en(m.group(2)), body)
     n = 0
-    for e in events:
+    for ev_i, e in enumerate(events):
         if e.get("t") != "choice":
             continue
-        for o in e.get("options") or []:
+        jp_opts = (
+            jp_events[ev_i].get("options") or []
+            if jp_events and ev_i < len(jp_events) and jp_events[ev_i].get("t") == "choice"
+            else []
+        )
+        for k, o in enumerate(e.get("options") or []):
             t = o.get("text") or ""
             if not t:
                 continue
-            en = by_jp.get(jp_norm(t)) or by_en.get(_norm_en(t))
+            jp_t = jp_opts[k].get("text") or "" if k < len(jp_opts) else ""
+            en = (
+                by_jp.get(jp_norm(t))
+                or (by_jp.get(jp_norm(jp_t)) if jp_t else None)
+                or by_en.get(_norm_en(t))
+            )
             if en and en != t:
                 o["text"] = en
                 n += 1
     return n
 
 
+def _resolve_speaker_name(name: str,
+                          speaker_map: dict[str, str] | None) -> str:
+    if not name:
+        return ""
+    if name in ("？？？",):
+        return "???"
+    if speaker_map and name in speaker_map:
+        return speaker_map[name]
+    if _NONASCII_FW_RE.search(name) and not _CJK_RE.search(name):
+        return unicodedata.normalize("NFKC", name)
+    return name
+
+
+def _normalize_speakers(events: list[dict],
+                        speaker_map: dict[str, str] | None) -> None:
+    if not speaker_map:
+        return
+    for e in events:
+        if e.get("t") == "latch" and isinstance(e.get("name"), str):
+            e["name"] = _resolve_speaker_name(e["name"], speaker_map)
+        elif e.get("t") == "say" and isinstance(e.get("speaker"), str):
+            e["speaker"] = _resolve_speaker_name(e["speaker"], speaker_map)
+
+
 def build_script_ir(jp_txt: bytes | None, en_txt: bytes | None,
-                    mao_lines: list[dict] | None) -> tuple[dict, dict]:
+                    mao_lines: list[dict] | None,
+                    mao_parts: list[list[dict]] | None = None,
+                    speaker_map: dict[str, str] | None = None) -> tuple[dict, dict]:
     warnings: list[str] = []
     stats = {"manuscript": 0, "fallback": 0}
     if jp_txt is not None and en_txt is not None:
-        return _build_hybrid(jp_txt, en_txt, mao_lines, warnings)
+        return _build_hybrid(jp_txt, en_txt, mao_lines, warnings,
+                             mao_parts=mao_parts, speaker_map=speaker_map)
     if en_txt is not None:
         toks = naive_tokens(en_txt)
         events, w = parse_txt.parse_tokens(toks)
@@ -284,6 +387,7 @@ def build_script_ir(jp_txt: bytes | None, en_txt: bytes | None,
         else:
             stats["fallback"] = sum(1 for e in events
                                     if e.get("t") in ("say", "narrate"))
+        _normalize_speakers(events, speaker_map)
         return ({"script": "", "tokens": len(toks), "events": events,
                  "warnings": warnings}, stats)
     if jp_txt is not None:
@@ -294,12 +398,14 @@ def build_script_ir(jp_txt: bytes | None, en_txt: bytes | None,
             stats = _manuscript_pass(
                 events, [e.get("text") or "" for e in events
                          if e.get("t") in ("say", "narrate")],
-                mao_lines, use_en=False, warnings=warnings)
+                mao_lines, use_en=False, warnings=warnings,
+                mao_parts=mao_parts)
             stats["options"] = _choice_pass(events, mao_lines)
         else:
             warnings.append("no en txt, no manuscript; jp text kept")
             stats["fallback"] = sum(1 for e in events
                                     if e.get("t") in ("say", "narrate"))
+        _normalize_speakers(events, speaker_map)
         return ({"script": "", "tokens": len(toks), "events": events,
                  "warnings": warnings}, stats)
     raise ValueError("build_script_ir needs jp_txt or en_txt")
@@ -307,7 +413,9 @@ def build_script_ir(jp_txt: bytes | None, en_txt: bytes | None,
 
 def _build_hybrid(jp_txt: bytes, en_txt: bytes,
                   mao_lines: list[dict] | None,
-                  warnings: list[str]) -> tuple[dict, dict]:
+                  warnings: list[str],
+                  mao_parts: list[list[dict]] | None = None,
+                  speaker_map: dict[str, str] | None = None) -> tuple[dict, dict]:
     stats = {"manuscript": 0, "fallback": 0}
     jp_toks = naive_tokens(jp_txt)
     en_toks = naive_tokens(en_txt)
@@ -337,7 +445,7 @@ def _build_hybrid(jp_txt: bytes, en_txt: bytes,
         warnings.append(f"event drift: hybrid {len(events)} vs jp "
                         f"{len(jp_events)}; spine replay skipped")
     else:
-        _replay_spine(jp_events, events, warnings)
+        _replay_spine(jp_events, events, warnings, speaker_map=speaker_map)
 
     # ---- manuscript pass: complete EN text for display lines ----
     if mao_lines:
@@ -350,8 +458,9 @@ def _build_hybrid(jp_txt: bytes, en_txt: bytes,
         else:
             stats = _manuscript_pass(
                 events, [e.get("text") or "" for e in disp],
-                mao_lines, use_en=False, warnings=warnings)
-        stats["options"] = _choice_pass(events, mao_lines)
+                mao_lines, use_en=False, warnings=warnings,
+                mao_parts=mao_parts)
+        stats["options"] = _choice_pass(events, mao_lines, jp_events=jp_events)
     else:
         stats["fallback"] = sum(1 for e in events
                                 if e.get("t") in ("say", "narrate"))
@@ -360,7 +469,8 @@ def _build_hybrid(jp_txt: bytes, en_txt: bytes,
 
 
 def _replay_spine(jp_events: list[dict], hy_events: list[dict],
-                  warnings: list[str]) -> None:
+                  warnings: list[str],
+                  speaker_map: dict[str, str] | None = None) -> None:
     """Force the hybrid event stream onto the JP spine's classification.
 
     The hybrid tokens preserve shape, but EN name payloads can fail the
@@ -384,8 +494,7 @@ def _replay_spine(jp_events: list[dict], hy_events: list[dict],
                 name = (hy.get("text") or "").strip()
             if not name:
                 name = jp["name"].strip()
-            if name in ("？？？",):
-                name = "???"
+            name = _resolve_speaker_name(name, speaker_map)
             votes = name_votes.setdefault(jp["name"], {})
             votes[name] = votes.get(name, 0) + 1
             hy.clear()
@@ -396,8 +505,7 @@ def _replay_spine(jp_events: list[dict], hy_events: list[dict],
             if jp.get("speaker"):
                 votes = name_votes.get(jp["speaker"])
                 sp = max(votes, key=votes.get) if votes else jp["speaker"]
-            if sp == "？？？":
-                sp = "???"
+            sp = _resolve_speaker_name(sp, speaker_map)
             hy["speaker"] = sp
             if "tok" not in hy:
                 hy["tok"] = jp["tok"]
@@ -478,14 +586,19 @@ def main() -> None:
     }
     # EN paks can carry copies of the engine-internal names too.
     emit -= ENGINE_INTERNAL
+    has_mao = bool(mao_dir) and os.path.isdir(mao_dir)
+    g_spk = global_speaker_map(mao_dir) if has_mao else {}
     index: list[str] = []
     tot_man = tot_fb = 0
     for script in sorted(emit):
         jp_txt = txt_entry(jp_data, script)
         en_txt = en_txts.get(script)
-        mao = (manuscript_lines(mao_dir, script)
-               if os.path.isdir(mao_dir) else None)
-        ir, stats = build_script_ir(jp_txt, en_txt, mao)
+        parts = manuscript_parts(mao_dir, script) if has_mao else None
+        mao = [l for p in parts for l in p] if parts else None
+        spk_map = (speaker_name_map(mao, fallback_map=g_spk)
+                   if mao else (g_spk or None))
+        ir, stats = build_script_ir(jp_txt, en_txt, mao, mao_parts=parts,
+                                    speaker_map=spk_map)
         ir["script"] = script
         tot_man += stats["manuscript"]
         tot_fb += stats["fallback"]
