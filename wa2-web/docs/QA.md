@@ -755,3 +755,41 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     route attributions (`24xx`=Chiaki, `25xx`=Mari, `23xx`=Koharu,
     `3901`=Kazusa Cheating, `31xx`=Kazusa True, `32xx`=Setsuna True) match
     `.bnr` `SLoad` ground truth.
+
+- 2026-11-14 (Ghidra/REA pass: **voice subsystem decompiled**, **LAC layout proven**, **deploy drift root-caused**):
+  - **RE tooling**: REA 6.9.0 MCP registered for Cursor with Ghidra
+    12.1.4 (`GHIDRA_INSTALL_DIR=/home/debian/tools/ghidra_12.1.4_PUBLIC`);
+    `WA2.exe` sha256 `c395d93f…3990b` decompiled headless to 2,111
+    functions (`rea decompile-all`). Evidence below is from that dump.
+  - **Voice filename/probe order (high, decompiled)**: `FUN_0040eda0`
+    formats `"%04d_%04d_%02d.ogg"` via `wsprintfA` with
+    `(script, line, take)`; probes CC `FUN_00461400(...,2,...)` first,
+    IC `(...,5,...)` only on failure (`PLAY_CC`/`ERR_NO_FILE_CC` →
+    `PLAY_IC`/`ERR_NO_FILE_IC`). `web/src/engine/assets.ts` `voiceUrl()`
+    already tries main then `ic/` in that order — parity holds.
+  - **Argument mapping validated against the archive**: the 5 hardcoded
+    cues in `0x41f990` format to `2503_0099_01`, `2002_0242_02`,
+    `2027_0223_03`, `2001_0086_04`, `2001_0198_05` — all 5 present in
+    `VOICE.PAK`, confirming positions and CC-before-IC.
+  - **LAC layout (high)**: 32-byte XOR-0xFF name + u32 size + u32 offset =
+    40-byte records; payload at `8 + count*40`. Main `38736*40+8 =
+    1549448` = first `OggS`, and `sum(sizes) == 1447111922` = bytes after
+    that offset. `extract_assets.py`/`build_voice.py` already use stride
+    40 with a 24/32-byte name read — both yield the same key set.
+  - **Voicemap parity (0 misses)**: all 40,741 `voicemap.map` entries
+    verified against both archives — 37,849 string keys resolve, 2,892
+    numeric fallbacks resolve to **nothing** (silence, never a wrong
+    clip). This is the desired failure direction.
+  - **Known unmodelled field**: line base `DAT_00a391ec` is added to the
+    voice line number and persists at save slot `[0x445]`
+    (`0x423650+0x163` write, `0x423ea0+0x119` restore).
+    `native-save.ts` does not read `0x445`; it is 0 in all 13 observed
+    saves, so no current divergence. Left as a tracked gap, not guessed.
+  - **Root cause of "voices stopped" (deploy, not engine)**: the R2 bucket
+    held 762/1888 `.vpk` chunks, all 762 with stale sizes, while
+    `manifest.json` was current. Voice is `.vpk`-packed; BGM is loose
+    `.ogg` — hence music ok / voice silent. Slicing a current manifest
+    range out of a stale chunk yields garbage Ogg pages with **HTTP 200**,
+    so nothing surfaced as an error. Fixed by re-syncing all chunks;
+    `tools/upload_to_r2.sh` now runs `rclone check --one-way` over
+    `assets/` and `data/` after upload and **exits 1** on mismatch.

@@ -154,6 +154,56 @@ Comma-tok coincides with NNN only while a translation stays token-aligned
 while NNN runs 0-353, and 1008 base toks 199-213 collide with 1008_020's
 NNN 199-214 (same 16 files — positional truth decides).
 
+### Engine voice playback (decompiled, high confidence)
+
+`WA2.exe` `FUN_0040eda0` (`0x40eda0`-`0x40f3fe`) is the voice cue player.
+Pseudocode obtained with Ghidra 12.1.4 headless (`rea decompile-all`,
+target sha256 `c395d93f…3990b`). The filename is built with
+`wsprintfA`, so the arguments are unambiguous:
+
+```c
+wsprintfA(buf, "%04d_%04d_%02d.ogg", script, line, take);
+```
+
+- `take` is argument 2, `script` argument 3, **`line` argument 4** — so the
+  engine indexes voice by *script id + line number*, never by comma-token.
+- `line` is offset before formatting: `param_4 + DAT_00a391ec`
+  (`0x40eda0+0x20`). `DAT_00a391ec` is a persistent **line base** that is
+  written to save slot `[0x445]` (`0x423650+0x163`) and restored on load
+  (`0x423ea0+0x119`). Our importer does not read `0x445` yet; it is 0 in
+  every observed save, so no current divergence — but it is a real field.
+- Lookup order is CC first, then IC: `FUN_00461400(...,2,...)` (CC table)
+  is tried, and only if it fails does the `DAT_00a730b4`/`DAT_00a730b8`
+  branch try `FUN_00461400(...,5,...)` (IC table). Confirmed by the log
+  strings `PLAY_CC` / `ERR_NO_FILE_CC` then `PLAY_IC` / `ERR_NO_FILE_IC`
+  at `0x4a2558`/`0x4a2578`.
+- `_a` variant: when `DAT_00a391fc != 0` the engine formats
+  `"%04d_%04d_%02d_a"` first and falls back to the plain form
+  (`0x40eda0+0xd7`). Nothing in the image stores to `0x00a391fc` — a
+  scan for `A2`/`A3`/`88 05`/`89 05`/`C6 05`/`C7 05` stores at that
+  address finds none, and both references (`0xe31d`, `0xe6c7`) are
+  `cmp [0xa391fc],0` reads — so the flag stays at its `.data` default and
+  the branch is dead. Consistent with retail `VOICE.PAK`/`IC/VOICE.PAK`
+  shipping **zero** `_a` clips (12,910 + 7,271 entry names checked).
+- `voice\buf\%s` is the streaming copy target (`CopyFileA` at
+  `0x40eda0+0x28`), not a second asset namespace.
+
+Cross-checked against the LAC archives: the five hardcoded cues in
+`0x41f990` — `(0,1,0x9c7,99)`, `(0,2,0x7d2,0xf2)`, `(0,3,0x7eb,0xdf)`,
+`(0,4,0x7d1,0x56)`, `(0,5,0x7d1,0xc6)` — format to
+`2503_0099_01.OGG`, `2002_0242_02.OGG`, `2027_0223_03.OGG`,
+`2001_0086_04.OGG`, `2001_0198_05.OGG`, and **all five exist** in
+`VOICE.PAK`, which proves the CC-vs-IC order and the argument positions.
+
+Archive layout (both `VOICE.PAK` and `IC/VOICE.PAK`): `LAC\0`, u32 count,
+then `count × 40`-byte records — 32-byte XOR-0xFF name (NUL padded), u32
+size, u32 payload offset — payloads at `8 + count*40`. Verified exactly:
+main `38736 × 40 + 8 = 1549448` = first `OggS`, and the sum of entry sizes
+equals the byte length after that offset (`1447111922`). Main holds 38,736
+names (38,729 distinct line keys), IC holds 7,271 (7,267 keys); only 6 keys
+carry two takes and 2 names are malformed (`3012_9010_01\x81H.OGG`,
+`3204_0075126_02.OGG`) — both dropped, matching `extract_assets.py`.
+
 ## `.bnr` presentation bytecode (LSCR, decoded statically)
 
 Each `NNN.bnr` (LZSS in en.pak) is a u32-LE statement stream split on the
