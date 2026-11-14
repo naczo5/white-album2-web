@@ -806,3 +806,37 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     range was misaligned by the size delta, so it decoded to garbage while
     still returning HTTP 200. This is the concrete confirmation that the
     "voices silent / music fine" report was pure deploy drift.
+
+### Parity status by subsystem (measured, not asserted)
+
+Do not read the gate table as "1:1 with the engine". Gates prove the
+paths we implement behave correctly; they do not prove we implement
+everything. Current state, with the evidence behind each line:
+
+| subsystem | status | evidence |
+|---|---|---|
+| voices | **1:1 proven** | `FUN_0040eda0` filename format + CC→IC probe order decompiled; 5 hardcoded cues validated against `VOICE.PAK`; 43/43 manifest ranges decode as real Ogg |
+| backgrounds | high | handler addrs verified via dispatch table; `B%04d%1d%1d.tga` stem proven |
+| sprites | high (99.97%) | 14,315/14,319 statements resolve to real `char.pak` files |
+| CGs / grp | high (341/341) | `v%06d.tga` overlay, every hit present |
+| SE | high (645/646) | only id 180 absent from `SE.PAK` |
+| routing | **partially proven** | 11/11 endings, 32/32 choices, 2146/2147 jump targets on instruction boundaries — but several opcode semantics are still inferred |
+| music | medium on some rows | BGM pause, camera/zoom, timed wait are `medium` in PARSING.md |
+
+**The concrete gap:** 83 distinct `(4,id)` opcodes appear across the 206
+`en_main.pak` scripts. Only **29** have a documented row in PARSING.md.
+Those 29 account for **97.47%** of the 1,682,125 `(4,*)` statements, so
+**42,641 statements (2.53%) are unimplemented**. The CFG VM's `default`
+branches return 0/`cur`, i.e. unknown ops are skipped rather than guessed
+— the intended confidence-gated behaviour, but it is not parity.
+
+Largest undocumented by volume: `(4,159)` 7,223 · `(4,225)` 3,103 ·
+`(4,210)` 2,859 · `(4,172)` 2,508 · `(4,171)` 2,466 · `(4,2)` 2,145 ·
+`(4,195)` 2,089 · `(4,139)` 2,036 · `(4,203)` 1,618 · `(4,207)` 1,558.
+The 2xx block is the UI/system layer, so skipping it drops menu and
+effect behaviour rather than stage content.
+
+To close it: for each undocumented id, index the dispatch table at
+`0x4c2610 + (id-128)*4`, decompile the handler, and either implement it
+or record why it is a no-op. That addressing is now settled, so this is
+mechanical work over 54 handlers, not an open research problem.
