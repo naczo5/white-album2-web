@@ -793,3 +793,11 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     so nothing surfaced as an error. Fixed by re-syncing all chunks;
     `tools/upload_to_r2.sh` now runs `rclone check --one-way` over
     `assets/` and `data/` after upload and **exits 1** on mismatch.
+  - **End-to-end proof of the voice fix (43/43)**: re-fetching
+    `vpk/voice_ic_1002_000.vpk` from R2 after upload and slicing it with
+    the same manifest ranges the client uses gives **43 valid Ogg ranges
+    out of 43**. The pre-fix chunk of the same path yields **1 of 43**
+    (only the `0-…` range, which happens to start at byte 0). Every later
+    range was misaligned by the size delta, so it decoded to garbage while
+    still returning HTTP 200. This is the concrete confirmation that the
+    "voices silent / music fine" report was pure deploy drift.
