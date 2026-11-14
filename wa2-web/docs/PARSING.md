@@ -301,26 +301,33 @@ occur exactly 2× each).
 Static findings from WA2.exe (.text 0x401000, .rdata 0x4a1000; see
 docs/QA.md verification log):
 
-- LSCR dispatch table: one contiguous pointer array based at **.data
-  VA `0x4c25c0`**; `PTR_LAB_004c2610` is simply `0x4c25c0 + 20*4`, i.e.
-  element 20 of the same table, not a separate table. The runtime dispatch
-  is `FUN_00453d30` @`0x453f8c`:
-  `mov eax,[esi+0x8b3c]` (current function id) → `cmp eax,0x80` →
-  `jge 0x453fda` for ids ≥ 128, and on the id-128 path
-  `mov ecx,[eax*4 + 0x4c25c0]` / `call ecx` (`8b 0c 85 c0 25 4c 00`).
-  Because the base is indexed by the **raw id**, and
-  `0x4c2610 + (id-128)*4 == 0x4c25c0 + id*4`, the documented
-  "entry = id − 128 into 0x4c2610" arithmetic is numerically right but the
-  mechanism is one table indexed by id; ids below 128 take an inlined
-  `if/else` chain (id 0 → `FUN_00452490`, id 1 → `FUN_00453c10`, id 2 →
-  `FUN_00453ca0`) before falling through to the table. Registry:
-  `FUN_004178f0`/`FUN_00417a40` call
+- LSCR dispatch table: **.data VA `0x4c2610`**, 112 handler thunks, indexed
+  by **`id − 128`**. This is the registration default, not the live call
+  target. `FUN_004178f0`/`FUN_00417a40` call
   `FUN_004505c0("LFScriptFuncEx.fnc", &PTR_LAB_004c2610)` after
   `FUN_00452ae0(0,"script",9,0,0)` — this is the **`script` (index 9)
-  function table**. Handlers verified arithmetically: `(4,146)`→`0x454f30`,
-  `(4,147)`→`0x454fc0`, `(4,148)`→`0x455050`, `(4,170)`→`0x455800`, all
-  matching the `(4,14x)/(4,17x)` rows below, and `0x454f30` decompiles to a
-  `FUN_004167e0` call with **arg3 = 0** exactly as that row claims.
+  function table**. `FUN_004505c0` reads the `.fnc` header count and, when
+  it exceeds `0x7f`, copies `param_2` into the runtime array
+  `DAT_00b92440` (in `.bss`, so absent from the file image).
+  The live dispatch is `FUN_00453d30` @`0x453f8c`:
+  `mov eax,[esi+0x8b3c]` (`0x8b3c` holds the current function id) →
+  `cmp eax,0x80` → `jge` → for `id < 0x80` an inlined chain (0 →
+  `FUN_00452490`, 1 → `FUN_00453c10`, 2 → `FUN_00453ca0`, else
+  `PTR_LAB_004c25c0[id]`), and for `id >= 0x80`
+  `(**(code **)(&DAT_00b92440 + id*4))(ctx)`. Byte-level: `8b 0c 85 c0 25
+  4c 00` at `0x453fc3` is `mov ecx,[eax*4+0x4c25c0]` (the small-id path),
+  while the ≥128 path reads `DAT_00b92440`. Because the `.fnc` copy puts
+  element `id` of `param_2` at `DAT_00b92440 + id*4`, and
+  `param_2 = 0x4c2610 = 0x4c25c0 + 20*4`, the effective address is
+  `0x4c2610 + (id−128)*4` — so the documented `id − 128` arithmetic is
+  correct, just achieved through the copied array rather than a direct
+  read of `0x4c2610`.
+  Handlers verified at their documented ids: `(4,146)`→idx 18→`0x454f30`,
+  `(4,147)`→idx 19→`0x454fc0`, `(4,148)`→idx 20→`0x455050`,
+  `(4,170)`→idx 42→`0x455800`, plus `(4,164)`→idx 36→`0x455720` and
+  `(4,165)`→idx 37→`0x455740`, all matching the rows below; `0x454f30`
+  decompiles to a `FUN_004167e0` call with **arg3 = 0** exactly as the
+  `(4,146)` row claims.
   **handler index = opcode − 128** (validated: entry 36 = op 164 = SE
   thunk 0x455720, entry 37 = op 165 = channel-SE 0x40f400). Push values
   reach handlers from ctx `+0x18 + 0x14*i` (push[i] at 0x18, 0x2c, 0x40…).
