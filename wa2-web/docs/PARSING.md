@@ -599,3 +599,56 @@ The samples used for this map were user-supplied and are not committed.
 One fragment = one advance. Plain narration tokens are comma-free by
 construction, so comma-piece granularity only affects mega content.
 QA item: compare click counts per scene vs the PC build (docs/QA.md).
+
+### Undocumented `(4,id)` handlers — resolved addresses
+
+All 54 undocumented opcode ids, with the dispatch-table slot at
+`0x4c2610 + (id-128)*4` resolved to a handler address. 49 of 54 have a
+table slot; the 5 with `id < 128` use the inlined chain in
+`FUN_00453d30` instead (ids 0-4 and 9 in this set).
+
+| id | uses | handler | id | uses | handler |
+|---|---|---|---|---|---|
+| 159 | 7223 | `0x455690` | 197 | 250 | `0x455c20` |
+| 225 | 3103 | `0x456130` | 229 | 238 | `0x4564b0` |
+| 210 | 2859 | `0x455e50` | 222 | 236 | `0x456070` |
+| 172 | 2508 | `0x455840` | 140 | 214 | `0x454e10` |
+| 171 | 2466 | `0x455820` | 136 | 195 | `0x454d70` |
+| 2 | 2145 | id<128 | 198 | 166 | `0x455c40` |
+| 195 | 2089 | `0x455bf0` | 233 | 154 | `0x4565b0` |
+| 139 | 2036 | `0x454de0` | 201 | 93 | `0x455ca0` |
+| 203 | 1618 | `0x455d00` | 220 | 84 | `0x456030` |
+| 207 | 1558 | `0x455db0` | 190 | 77 | `0x455b00` |
+| 204 | 1545 | `0x455d50` | 193 | 75 | `0x455b80` |
+| 1 | 1452 | id<128 | 161 | 75 | `0x4556c0` |
+| 3 | 1242 | id<128 | 221 | 64 | `0x456050` |
+| 0 | 1051 | id<128 | 214 | 63 | `0x455ef0` |
+| 167 | 847 | `0x455790` | 235 | 49 | `0x456630` |
+| 237 | 813 | `0x456680` | 231 | 42 | `0x456530` |
+| 174 | 676 | `0x455890` | 213 | 35 | `0x455ed0` |
+| 236 | 672 | `0x456650` | 188 | 27 | `0x455ab0` |
+| 130 | 648 | `0x454bd0` | 191 | 27 | `0x455b30` |
+| 152 | 616 | `0x455350` | 177 | 25 | `0x455940` |
+| 211 | 605 | `0x455e70` | 9 | 9 | id<128 |
+| 141 | 601 | `0x454e40` | 238 | 7 | `0x456690` |
+| 173 | 576 | `0x455860` | 175 | 3 | `0x4558d0` |
+| 180 | 512 | `0x4559b0` | 200 | 2 | `0x455c80` |
+| 150 | 364 | `0x4552f0` | 135 | 1 | `0x454d50` |
+| 199 | 334 | `0x455c60` | 133 | 1 | `0x454cc0` |
+| 227 | 269 | `0x456250` | 134 | 1 | `0x454d30` |
+
+First three decoded by hand from the handler prologue (each starts
+`mov eax,[esp+4]`, loads ctx fields `[eax+N]`, pushes them, calls):
+
+- `(4,159)` → `0x455690`: loads ctx `+0x18`, calls `FUN_00406d00`,
+  which sets `DAT_004be52c = -1` then `FUN_00406b40(DAT_00a391f8, arg)`.
+  `DAT_004be52c` is the current text/voice-page id (written by
+  `FUN_0040faa0` @`0x40fbb4`, read by `0x403850`/`0x40fbd0`), so this
+  is a **page/voice-state reset**, not a stage effect.
+- `(4,172)` → `0x455840`: ctx `+0x2c`, `+0x10` → `FUN_004018c0`,
+  a strcpy-style pair writer into `DAT_005218d0`/`DAT_005218f0`.
+- `(4,171)` → `0x455820`: ctx `+0x2c`, `+0x18` → `FUN_00401880`,
+  the int variant writing `DAT_00521910`/`DAT_00521914`.
+
+Remaining 49 handlers still need per-handler reading before any
+implementation; this table is the addressing groundwork only.
