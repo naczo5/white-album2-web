@@ -5,7 +5,7 @@ import type { SaveData, SysProfile } from "./engine/types";
 import { loadGameData, resolvePackBase, type GameData } from "./ui/data";
 import { renderFlowchart, sceneLabel } from "./ui/flowchart";
 import { renderGuide, type GuideData } from "./ui/guide";
-import { ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetPaintState, resetSkip, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
+import { ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetAudioCursors, resetPaintState, resetSkip, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
 import { stopMovie } from "./ui/movie";
 import { applyProfileToRun, renderSaves } from "./ui/saves";
 import "./style.css";
@@ -159,11 +159,17 @@ function recordGameFlag(id: number, val: number): void {
 
 async function boot(): Promise<void> {
   applySettings();
+  const setBootStatus = (text: string) => {
+    const el = document.getElementById("boot-status");
+    if (el) el.textContent = text;
+  };
+  setBootStatus("Loading story data…");
   const q = new URLSearchParams(location.search);
   const resolved = resolvePackBase(import.meta.env.VITE_PACK_URL, location.search, location.href);
   packBase = resolved.packBase;
   packFromQuery = resolved.fromQuery;
   data = await loadGameData(packBase);
+  setBootStatus("Loading interface assets…");
   setSaveNamespace(dataNamespace());
   // Global progress (Sys.sav import) is stored under the same namespace and
   // is independent of any run save: load it once, seed the read set so
@@ -194,6 +200,7 @@ async function boot(): Promise<void> {
     ? null
     : await loadManifest(packBase ? `${packBase}/assets/manifest.json` : "assets/manifest.json");
   assetsMissing = !data.demo && !!packBase && !manifest;
+  setBootStatus("Preparing the stage…");
   if (data.luts) {
     installLutFilters(data.luts);
   } else if (!data.demo) {
@@ -356,6 +363,7 @@ function loadSaveIntoGame(next: SaveData): void {
   stopMovie();
   resetSkip();
   resetPaintState();
+  resetAudioCursors();
   skipState.active = false;
   backTo = "title";
   go("read");
@@ -517,6 +525,7 @@ function render(): void {
             save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
             writeAutosave(localStorage, save);
             resetPaintState();
+            resetAudioCursors();
             backTo = "title";
             go("read");
           }
@@ -568,6 +577,7 @@ function render(): void {
         save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
         writeAutosave(localStorage, save);
         resetPaintState();
+        resetAudioCursors();
         backTo = "flow";
         go("read");
       },
@@ -627,6 +637,7 @@ function render(): void {
         save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
         writeAutosave(localStorage, save);
         resetPaintState();
+        resetAudioCursors();
         backTo = "special";
         go("read");
       };

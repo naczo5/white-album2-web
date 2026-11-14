@@ -13,9 +13,42 @@
       content="Fan-made, bring-your-own-assets web engine for WHITE ALBUM 2 Extended Edition."
     />
     <title>WHITE ALBUM 2 — Web Port (BYOA)</title>
+    <style>
+      /* Critical shell only: the module CSS arrives after the JS bundle. */
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 0.9rem;
+        padding: 2rem;
+        background: radial-gradient(120% 90% at 50% 40%, #0a3440 0%, #04161d 62%, #010a0d 100%);
+        color: #dffcff;
+        font-family: ui-serif, Georgia, serif;
+        text-align: center;
+      }
+      #boot .boot-mark { display: flex; align-items: baseline; gap: 0.35rem; letter-spacing: 0.2em; font-size: clamp(1.4rem, 5vw, 2.4rem); }
+      #boot .boot-mark b { color: #f0dc9a; font-size: 1.25em; letter-spacing: 0; }
+      #boot .boot-text { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase; color: #9fe7e2; }
+      #boot .boot-bar { width: min(46vw, 320px); height: 2px; overflow: hidden; background: rgb(160 250 245 / 0.16); }
+      #boot .boot-bar i { display: block; width: 34%; height: 100%; background: linear-gradient(90deg, #2b9ea0, #8ff4ed); animation: boot-slide 1.25s ease-in-out infinite; }
+      #boot .boot-note { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.66rem; color: rgb(223 252 255 / 0.45); }
+      @keyframes boot-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(330%); } }
+      @media (prefers-reduced-motion: reduce) { #boot .boot-bar i { animation-duration: 3s; } }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div id="boot" role="status" aria-live="polite">
+        <div class="boot-mark" aria-hidden="true">
+          <span>WHITE</span><span>ALBUM</span><b>2</b>
+        </div>
+        <div class="boot-text" id="boot-status">Loading story data…</div>
+        <div class="boot-bar" aria-hidden="true"><i></i></div>
+        <div class="boot-note">First load may take a few seconds on a slow connection.</div>
+      </div>
+    </div>
     <div id="toast" role="status" aria-live="polite"></div>
     <audio id="bgm" loop></audio>
     <audio id="voice"></audio>

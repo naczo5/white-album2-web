@@ -7,12 +7,12 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit + data (tools) | `pytest tests/` | 165 passed + 9 skipped |
-| web unit | `cd web && vitest run` | 242 passed + 5 BYOA-skipped |
+| unit + data (tools) | `pytest tests/` | 172 passed + 9 skipped |
+| web unit | `cd web && vitest run` | 247 passed + 6 BYOA-skipped |
 | real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | all 11 endings + special scenarios + branch ranges (BYOA) |
 | types+build | `tsc --noEmit && npm run build` | clean (`tsc --noEmit` 0 errors) |
-| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 172 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
-| save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 247 passed + 0 skipped (native slots 11/11 + 29 `Global.vrb` vars, `Sys.sav` profile) |
+| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 179 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
+| save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 253 passed + 0 skipped (native slots 11/11 + 29 `Global.vrb` vars, `Sys.sav` profile) |
 | CFG VM & bytecode | `pytest tests/test_build_cfg.py`; `vitest run cfg-vm playthrough` | 221 `.bnr` scripts compiled into `cfg.json`, zero overlapping `play` spans, `SCall`/`SetSelectMess` parity |
 | movie subtitles | `pytest tests/test_subtitles.py`; `vitest run vtt` | ASS→VTT conversion + cue/region parsing pinned (`test_subtitles.py`, `vtt.test.ts`) |
 | movie player | `vitest run reader-movie` | HUD/CC/skip/autoplay-fallback/missing-card behaviour, no DOM leak (`reader-movie.test.ts`) |
@@ -806,6 +806,58 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     range was misaligned by the size delta, so it decoded to garbage while
     still returning HTTP 200. This is the concrete confirmation that the
     "voices silent / music fine" report was pure deploy drift.
+
+- 2026-11-14 (user report: repeated bell SFX, slow voice/backdrop load):
+  - **Root cause of the repeated sound — channel-state model**: `(4,165)`
+    records with loop=0 are one-shots. The engine keeps one record per
+    channel at `0x5e7360` (stride `0x34`, 16 slots); the channel updater
+    is `0x40f8f0` → `0x40fa54` (ends at `0x5e76ac`), closes the old handle
+    on a new play (`0x40f400`) and **frees a record when its non-looping
+    handle ends**. The player kept every cue as "current channel state" and
+    restarted a paused one-shot on each render. Concrete repro: script 2003, line ev 285 (the user's
+    screenshot) — last non-loop ch0 cue is SE **8258** at ev 83, so the
+    bell re-fired on every line from 83 through 285+. `resolveAmbientTimeline`
+    now holds only loop=1 cues (a one-shot clears the channel) and
+    `resolveAmbientOneShots` fires only `(from, to]`, with an `ambCursor`
+    mirroring the proven SE cursor so re-render/backward seek/load never
+    replay. One-shots now use per-channel players with their `vol/255`.
+  - **Channel clamp fixed in the decoder**: `decode_bnr.py` folded ch 4-6
+    onto ch 3 (`min(3, …)`); the engine has 16 records and valid 6-push
+    shapes use 0-6. Emit 0-15; `tests/test_bnr.py` pins ch 5 and ch 6.
+    Two further decode corrections from review: `(4,166)` is a channel
+    **end**, not a volume set — `0x40f590` → `0x4067a0(target=0, duration=V)`
+    fades to silence over V ms (10-480, including 300/360/420/480). All
+    valid 2-push shapes are now `ambStop` (1,572 emitted after rejecting
+    four out-of-range first values and dedupe; the old code emitted only
+    51 V≤0 stops). And `(4,165)` requires the op-first six-push shape. Six intro statements with
+    `(4,5),(3,X),(4,165)` carry only five pushes and were producing fake
+    `ch:15` loops (SE 3019 in `1008_020`, etc.); they are rejected.
+  - **Voice latency — HTTP Range**: packed `.vpk` refs now fetch only
+    `bytes=start-end` (R2 answers 206; the measured voice line that used to
+    pull a 1.5 MB chunk is 13-40 KB). A 200/416/failed range falls back to
+    the cached full chunk. Live check against `r2.setsuna.rocks`: Range +
+    CORS preflight allowed; 13-43 KB voice blobs instead of 1.5 MB.
+  - **Loading UX**: a voiced line whose packed clip is in flight paints a
+    "Loading voice…" plate and **blocks click/Enter/auto** until the clip is
+    ready (Ctrl-skip deliberately bypasses the gate); 5 s cap, failures paint
+    text rather than stalling. The
+    stage no longer crossfades before the new image loads — the old frame
+    stays visible, and a "Loading scene…" card appears after 350 ms (or
+    immediately on a cold scene). Images and voices are preloaded for the
+    next ~10-14 events (plus one near-term channel bed), and `index.html`
+    paints a boot splash while the bundle + manifest load.
+  - **Evidence (headless Chromium, real deployed pack over R2, 1.8 s
+    delayed asset routes)**: boot splash visible; scene 2003:285 paints its
+    backdrop; advancing 7 lines produces 4 voice plays and **0 SE_8258
+    (331,168-byte) replays**; scene 2003:287 shows "Loading voice…" +
+    "Loading scene…", then paints text with a loaded backdrop; 0 console
+    errors. Unit pins: `bgm.test.ts` one-shot/timeline cases + BYOA
+    `2003` regression; `assets.test.ts` Range/fallback/preload cases;
+    `tests/test_bnr.py` channel/loop/volume cases.
+  - Gates: `pytest tests/ -q` → **172 passed, 9 skipped**;
+    `WA2_EN_PAK=… pytest` → **179 passed, 2 skipped**;
+    `npx tsc --noEmit` clean; `npx vitest run` → **247 passed, 6 skipped**;
+    BYOA save corpora → **253 passed, 0 skipped**.
 
 ### Parity status by subsystem (measured, not asserted)
 

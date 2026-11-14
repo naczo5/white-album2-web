@@ -136,10 +136,11 @@ export interface SpeakersData {
 export interface BnrRec {
   ev: number;
   se?: number[];
-  /** Ambient channel cue (4,165): SE id, channel 0-3, volume 0-255,
-   * loop flag. */
+  /** Ambient channel cue (4,165): SE id, channel 0-15 (valid 6-push
+   * shapes use 0-6), volume 0-255, loop flag. */
   amb?: { se: number; ch: number; vol: number; loop: boolean };
-  /** Ambient channel stop (4,166) with non-positive volume. */
+  /** Ambient channel end (4,166) [ch, V]: V>0 fades to silence over V ms,
+   * V<=0 stops immediately. The player stops the channel for both. */
   ambStop?: number;
   cam?: { zoom: number; dur: number };
   fadeMs?: number;

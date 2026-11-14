@@ -1,6 +1,6 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
-import { bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, resolveAudioUrl, seUrl, subtitleUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
+import { audioPreloadStatus, bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, preloadAudio, preloadImage, resolveAudioUrl, seUrl, subtitleUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
 import { isEventInExecutedRanges } from "../engine/cfg-vm";
 import { Router, chapterOfScript } from "../engine/router";
 import { displayDate, plainText, renderText, spanize } from "../engine/text";
@@ -69,6 +69,9 @@ let lastPainted: { key: string; full: string; done: boolean } | null = null;
 export function resetPaintState(): void {
   lastPainted = null;
   textHidden = false;
+  warmCursor = null;
+  blockedVoice = null;
+  clearVoiceGate();
 }
 
 /** Hide-text ("immersion") state: the dialogue plate and chrome fade out so
@@ -426,6 +429,160 @@ export function revealNextTextPage(scroller: HTMLElement): void {
   syncOverflowEdges(scroller);
 }
 
+/** Loading gate for a line whose voice clip is a packed range. The text is
+ * painted only once the clip is playable (or the gate times out), so a slow
+ * connection cannot silently swallow a voiced line and click-through cannot
+ * outrun the audio. */
+const VOICE_GATE_TIMEOUT_MS = 5000;
+let voiceGate: {
+  script: string;
+  event: number;
+  url: string;
+  started: number;
+  failed: boolean;
+  timer: number | null;
+} | null = null;
+
+function clearVoiceGate(): void {
+  if (voiceGate?.timer != null) {
+    clearTimeout(voiceGate.timer);
+    voiceGate.timer = null;
+  }
+  voiceGate = null;
+}
+
+function positionIs(save: SaveData, script: string, event: number): boolean {
+  return save.position.script === script && save.position.event === event;
+}
+
+/** Decide whether a voiced line may paint now. Returns "wait" when the
+ * caller must show the loading plate instead. */
+function gateVoice(h: ReaderHooks, save: SaveData, url: string | null): "paint" | "wait" {
+  if (!url || !url.includes("#")) return "paint";
+  if (audioPreloadStatus(url) === "ready") {
+    if (voiceGate?.url === url) clearVoiceGate();
+    return "paint";
+  }
+  const script = save.position.script;
+  const event = save.position.event;
+  const now = performance.now();
+  const same = voiceGate && voiceGate.script === script &&
+    voiceGate.event === event && voiceGate.url === url;
+  if (same) {
+    if (voiceGate!.failed || now - voiceGate!.started >= VOICE_GATE_TIMEOUT_MS) {
+      return "paint";
+    }
+    return "wait";
+  }
+  clearVoiceGate();
+  const gate = {
+    script,
+    event,
+    url,
+    started: now,
+    failed: false,
+    timer: null as number | null,
+  };
+  voiceGate = gate;
+  const finish = (failed: boolean) => {
+    if (voiceGate !== gate) return;
+    gate.failed = failed;
+    if (gate.timer != null) {
+      clearTimeout(gate.timer);
+      gate.timer = null;
+    }
+    if (!readerLive || !curHooks || !positionIs(curHooks.save, script, event)) return;
+    curHooks.onChange();
+  };
+  void preloadAudio(url).then((resolved) => finish(!resolved));
+  gate.timer = window.setTimeout(() => finish(false), VOICE_GATE_TIMEOUT_MS);
+  return "wait";
+}
+
+/** The gate blocks story advancement while the current line's voice is still
+ * being fetched. Auto/skip call stepForward directly, so this guard is the
+ * real stop line, not just a disabled click handler. Skip deliberately opts
+ * out of audio sync: holding Ctrl means "go fast", not "wait for sound". */
+function voiceGateBlocking(h: ReaderHooks): boolean {
+  if (h.skip.active) return false;
+  const g = voiceGate;
+  return !!g && !g.failed && positionIs(h.save, g.script, g.event) &&
+    performance.now() - g.started < VOICE_GATE_TIMEOUT_MS;
+}
+
+/** Warm the next stretch of the script: voice clips, scene art, overlays,
+ * sprites and SE ranges. Bounded, and only re-run every few events. */
+let warmCursor: { script: string; ev: number } | null = null;
+function warmAhead(h: ReaderHooks, pos: Position): void {
+  const sc = h.router.scripts.get(pos.script);
+  if (!sc) return;
+  if (warmCursor && warmCursor.script === pos.script &&
+    pos.event >= warmCursor.ev && pos.event <= warmCursor.ev + 6) return;
+  warmCursor = { script: pos.script, ev: pos.event };
+  const ch = chapterOfScript(pos.script);
+  const textEnd = Math.min(sc.events.length, pos.event + 10);
+  let images = 0;
+  for (let i = pos.event + 1; i < textEnd; i++) {
+    const e = sc.events[i];
+    if (e.t === "say" || e.t === "narrate") {
+      if (h.settings.voiceVol <= 0) continue;
+      const u = voiceUrlFor(pos.script, i, e);
+      if (u) void preloadAudio(u);
+    } else if (e.t === "image" && images < 5) {
+      const u = imageUrl(e.file, ch);
+      if (u) {
+        images++;
+        void preloadImage(u);
+      }
+    }
+  }
+  const recs = bnrLookup?.(pos.script) ?? [];
+  let cueImages = 0;
+  let sounds = 0;
+  for (const r of recs) {
+    if (r.ev <= pos.event) continue;
+    if (r.ev > pos.event + 14) continue;
+    if (r.stems?.length && cueImages < 3) {
+      for (const stem of r.stems) {
+        const f = r.layer === "grp" ? `v${stem}.tga` : `b${stem}.tga`;
+        const u = imageUrl(f, ch);
+        if (u) {
+          cueImages++;
+          void preloadImage(u);
+          break;
+        }
+      }
+    }
+    // Channel beds can be multi-megabyte; only warm one that is about to
+    // play. One-shots and small SEs are fetched when they fire.
+    if (r.amb?.loop && sounds < 1 && r.ev <= pos.event + 6) {
+      const u = seUrl(r.amb.se, ch);
+      if (u) {
+        sounds++;
+        void preloadAudio(u);
+      }
+    }
+    if (r.spr && cueImages < 4) {
+      const u = imageUrl(`${r.spr.stem}.tga`, ch);
+      if (u) {
+        cueImages++;
+        void preloadImage(u);
+      }
+    }
+  }
+}
+
+/** Resolve a voice URL for an arbitrary event (preload/gate use). */
+function voiceUrlFor(script: string, index: number, ev: ScenarioEvent): string | null {
+  if (ev.t !== "say" && ev.t !== "narrate") return null;
+  const mapped = voiceLookup?.(script, index);
+  const ref = resolveVoiceRef(mapped, ev.tok);
+  if (ref === null) return null;
+  return typeof ref === "string"
+    ? voiceUrlByKey(ref)
+    : voiceUrl(script, ref, chapterOfScript(script));
+}
+
 export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   clearTimers();
   curHooks = h;
@@ -541,6 +698,9 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
         if (scroller) revealNextTextPage(scroller);
         return;
       }
+      // A cold/deep-link render can have its voice blocked by autoplay.
+      // Spend this click on starting that clip, not advancing past it.
+      if (retryBlockedVoice()) return;
       advanceHandler?.();
     });
     // Middle-click hides the text (mouse-only convenience) without
@@ -620,6 +780,8 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   delete box.dataset.fadeBottom;
   ch.innerHTML = "";
   hint.style.display = "";
+  hint.classList.remove("loading");
+  hint.textContent = "Click, Enter or Space to continue · hold Ctrl to skip · H hides the text · scroll up for the backlog";
   advanceHandler = null;
 
   const recordEndings = (unlocked?: readonly string[], ending?: string, verb = "Ending recorded"): boolean => {
@@ -725,6 +887,26 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     // A re-render from the backlog/settings/chart, or an Auto toggle, must
     // not re-type a line that was already fully shown.
     const alreadyDone = sameLine && lastPainted!.done;
+    if (!alreadyDone) {
+      const voice = voiceUrlFor(pos.script, pos.event, ev);
+      // A muted player must not be held on the loading plate for audio they
+      // cannot hear; the text is the whole line then.
+      if (h.settings.voiceVol > 0 && !h.skip.active &&
+        gateVoice(h, save, voice) === "wait") {
+        // Keep the stage and chrome, but do not show text whose voice has
+        // not arrived: the user cannot read past a silent line by clicking.
+        lastPainted = null;
+        const who = ev.t === "say" && displaySpeaker(save, ev)
+          ? `<div class="speaker">${escapeAttr(displaySpeaker(save, ev))}</div>` : "";
+        box.innerHTML = `${who}<div class="narrate line-loading" role="status" aria-live="polite"><i class="spinner" aria-hidden="true"></i> Loading voice…</div>`;
+        plate.setAttribute("aria-busy", "true");
+        advanceHandler = null;
+        hint.textContent = "Loading voice…";
+        hint.classList.add("loading");
+        return;
+      }
+    }
+    plate.removeAttribute("aria-busy");
     if (!alreadyDone) playVoice(save, ev, h.settings.voiceVol);
     // Capture whether this line was read BEFORE this display: markRead()
     // runs now, so checking isRead() later in scheduleAuto() always said
@@ -766,6 +948,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       stepForward(h);
     };
     preloadMovieAhead(nextMovieUrl(h, pos));
+    warmAhead(h, pos);
     return;
   }
 
@@ -834,6 +1017,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     : `<div class="narrate dim beat"></div>`;
   advanceHandler = () => stepForward(h);
   preloadMovieAhead(nextMovieUrl(h, pos));
+  warmAhead(h, pos);
 }
 
 /** Scroll a freshly painted line back to its first line, and flag whether
@@ -1055,8 +1239,18 @@ let curHooks: ReaderHooks | null = null;
 export function setSkipping(active: boolean): void {
   if (!curHooks) return;
   curHooks.skip.active = active;
-  if (active) scheduleAuto(curHooks);
-  else clearAuto();
+  if (active) {
+    // Ctrl pressed while a voiced line is still on the loading plate:
+    // repaint immediately with the gate bypassed, then let skip run.
+    if (voiceGate) {
+      clearVoiceGate();
+      curHooks.onChange();
+      return;
+    }
+    scheduleAuto(curHooks);
+  } else {
+    clearAuto();
+  }
 }
 
 function clearAuto(): void {
@@ -1071,6 +1265,9 @@ export function stepForward(h: ReaderHooks): void {
   // Ctrl-skip must never blast through a movie: a 5-minute film would be
   // over in 120 ms. The viewer presses Skip explicitly instead.
   if (moviePlaying()) return;
+  // Nor may auto outrun a voice clip that is still loading; Ctrl-skip opts
+  // out of the gate (see voiceGateBlocking).
+  if (voiceGateBlocking(h)) return;
   cutVoice();
   lastPainted = null;
   const recordEnding = (id: string, verb = "Ending recorded") => {
@@ -1198,12 +1395,87 @@ function paintStage(
   paintBgm(save, bgmVol, movieNext);
 }
 
+const stageBusyTimers = new WeakMap<HTMLElement, number>();
+let stageBusySeq = 0;
+
+/** Show (or clear) the stage's "Loading scene…" card. The returned token lets
+ * an older image load finish without clearing a newer card. */
+function setStageBusy(
+  stage: HTMLElement,
+  busy: boolean,
+  label = "Loading scene…",
+  delay = 0,
+): string | null {
+  const pending = stageBusyTimers.get(stage);
+  if (pending !== undefined) {
+    clearTimeout(pending);
+    stageBusyTimers.delete(stage);
+  }
+  if (!busy) {
+    stage.querySelector(":scope > .stage-loading")?.remove();
+    delete stage.dataset.busy;
+    return null;
+  }
+  const token = `${++stageBusySeq}`;
+  stage.dataset.busy = token;
+  const show = () => {
+    if (!stage.isConnected || stage.dataset.busy !== token) return;
+    let el = stage.querySelector(":scope > .stage-loading") as HTMLElement | null;
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "stage-loading";
+      el.setAttribute("role", "status");
+      el.innerHTML = `<i class="spinner" aria-hidden="true"></i><span></span>`;
+      stage.appendChild(el);
+    }
+    (el.querySelector("span") as HTMLElement).textContent = label;
+  };
+  if (delay > 0) {
+    stageBusyTimers.set(stage, window.setTimeout(show, delay));
+  } else {
+    show();
+  }
+  return token;
+}
+
+function clearStageBusy(stage: HTMLElement, token: string | null): void {
+  if (!token || stage.dataset.busy !== token) return;
+  setStageBusy(stage, false);
+}
+
+// A layer that is fading out is still reusable for the next cue. Track its
+// removal timer so reusing it cancels the delete (otherwise a rapid
+// A -> B -> C change could remove the C layer before it loads).
+const layerRemovalTimers = new WeakMap<HTMLImageElement, number>();
+
+function cancelLayerRemoval(l: HTMLImageElement): void {
+  const t = layerRemovalTimers.get(l);
+  if (t !== undefined) {
+    clearTimeout(t);
+    layerRemovalTimers.delete(l);
+  }
+}
+
+function scheduleLayerRemoval(l: HTMLImageElement, ms: number): void {
+  cancelLayerRemoval(l);
+  const t = window.setTimeout(() => {
+    layerRemovalTimers.delete(l);
+    if (l.dataset.active !== "1") l.remove();
+  }, ms);
+  layerRemovalTimers.set(l, t);
+}
+
 /** Crossfade the backdrop with a two-layer <img> pair.
  *
  * `background-image` cannot animate (the old `transition-duration` on the
  * stage was inert), and replacing a single <img> pops. Two layers let the
  * outgoing art fade under the incoming art; the engine's .bnr fade duration
  * is the transition time.
+ *
+ * A new layer stays hidden until it has actually loaded (`onload`), so the
+ * previous scene never fades to black while the next JPEG/WebP is still on
+ * the wire. When there is no previous scene, a "Loading scene…" card holds
+ * the frame instead of leaving an unexplained black rectangle.
  *
  * A clear fades the last frame out to black over that same duration (the
  * engine's own dissolve), then drops the element: hard-removing the <img>
@@ -1214,8 +1486,12 @@ function paintBackdrop(stage: HTMLElement, st: StageImageState, ms: number | nul
   const active = layers.find((l) => l.dataset.active === "1") ?? null;
   const duration = Math.max(0, ms ?? 0);
   if (!st.url) {
+    setStageBusy(stage, false);
     if (duration === 0) {
-      for (const l of layers) l.remove();
+      for (const l of layers) {
+        cancelLayerRemoval(l);
+        l.remove();
+      }
       stage.style.backgroundImage = "none";
       stage.style.backgroundColor = "#000";
       return;
@@ -1223,20 +1499,22 @@ function paintBackdrop(stage: HTMLElement, st: StageImageState, ms: number | nul
     // Dissolve to black: keep the frame visible while it fades.
     for (const l of layers) {
       if (l.dataset.active !== "1") {
+        cancelLayerRemoval(l);
         l.remove();
         continue;
       }
       l.dataset.active = "";
       l.style.transitionDuration = `${duration}ms`;
       l.style.opacity = "0";
-      window.setTimeout(() => {
-        if (l.dataset.active !== "1") l.remove();
-      }, duration + 60);
+      scheduleLayerRemoval(l, duration + 60);
     }
     return;
   }
   // A backdrop arriving after a clear: the old layers are already gone.
-  if (active?.dataset.cur === st.url) return;
+  if (active?.dataset.cur === st.url) {
+    if (active.complete && active.naturalWidth > 0) setStageBusy(stage, false);
+    return;
+  }
   // Reuse the inactive buffer; if both are absent create one.
   let next = layers.find((l) => l !== active) ?? null;
   if (!next) {
@@ -1245,24 +1523,45 @@ function paintBackdrop(stage: HTMLElement, st: StageImageState, ms: number | nul
     next.alt = "";
     stage.prepend(next);
   }
+  cancelLayerRemoval(next);
   next.dataset.cur = st.url;
   next.style.transitionDuration = `${duration}ms`;
   next.style.opacity = "0";
   next.style.zIndex = "1";
-  next.src = st.url;
-  requestAnimationFrame(() => {
-    next!.style.opacity = "1";
-  });
-  if (active) {
-    active.dataset.active = "";
-    active.style.transitionDuration = `${duration}ms`;
-    active.style.opacity = "0";
-    active.style.zIndex = "0";
-    window.setTimeout(() => {
-      if (active.dataset.active !== "1") active.remove();
-    }, duration + 60);
+  let busyToken: string | null = null;
+  const reveal = () => {
+    if (next!.dataset.cur !== st.url) return;
+    cancelLayerRemoval(next!);
+    if (active && active.isConnected && active !== next) {
+      active.dataset.active = "";
+      active.style.transitionDuration = `${duration}ms`;
+      active.style.opacity = "0";
+      active.style.zIndex = "0";
+      scheduleLayerRemoval(active, duration + 60);
+    }
+    next!.dataset.active = "1";
+    requestAnimationFrame(() => {
+      if (next!.dataset.cur === st.url) next!.style.opacity = "1";
+    });
+    clearStageBusy(stage, busyToken);
+  };
+  next.onload = reveal;
+  next.onerror = () => {
+    if (next!.dataset.cur !== st.url) return;
+    clearStageBusy(stage, busyToken);
+    next!.remove();
+  };
+  if (next.getAttribute("src") !== st.url) next.src = st.url;
+  if (next.complete && next.naturalWidth > 0) {
+    // Memory-cache hit: reveal in the same frame, and cancel any delayed
+    // "Loading scene…" timer a previous cue may have left behind.
+    setStageBusy(stage, false);
+    reveal();
+  } else {
+    busyToken = setStageBusy(
+      stage, true, active ? "Loading next scene…" : "Loading scene…", active ? 350 : 0,
+    );
   }
-  next.dataset.active = "1";
 }
 
 // These walk the loaded scenarios via a module-level ref set by main.ts.
@@ -1463,16 +1762,17 @@ function paintOverlay(stage: HTMLElement, save: SaveData): void {
   const img = document.createElement("img");
   img.className = "stage-ov";
   img.dataset.cur = url;
-  img.src = url;
   img.alt = "";
   const ms = bnrFadeAt(save) ?? 0;
   if (ms > 0) {
     img.style.opacity = "0";
     img.style.transition = `opacity ${ms}ms`;
-    requestAnimationFrame(() => {
-      img.style.opacity = "1";
-    });
   }
+  img.onload = () => {
+    if (img.dataset.cur === url) img.style.opacity = "1";
+  };
+  img.src = url;
+  if (img.complete) img.style.opacity = "1";
   stage.appendChild(img);
 }
 
@@ -1795,16 +2095,44 @@ export function resolveAmbStop(
   return null;
 }
 
-/** Latest high-confidence state per ambient channel at/before an event.
+/** Ordered play/stop events for a step across one or more channels.
+ * Volume end records (4,166) are stops. Keeping this ordered matters:
+ * a stop after a play at the same event cuts it, while a play after a stop
+ * starts; applying all plays and all stops in separate passes would invert
+ * those 114+ same-event cases. */
+export type AmbChannelEvent =
+  | { kind: "play"; cue: AmbCue }
+  | { kind: "stop"; ch: number };
+
+export function resolveAmbientEvents(
+  recs: { ev: number; amb?: AmbCue; ambStop?: number; conf: string }[],
+  from: number,
+  to: number,
+  executedRanges?: readonly [number, number][],
+): AmbChannelEvent[] {
+  const out: AmbChannelEvent[] = [];
+  const ordered = [...recs].sort((a, b) => a.ev - b.ev);
+  for (const r of ordered) {
+    if (r.conf !== "high") continue;
+    if (!cueInExecutedRanges(executedRanges, r.ev, to)) continue;
+    if (!(r.ev > from && r.ev <= to)) continue;
+    if (r.amb) out.push({ kind: "play", cue: r.amb });
+    else if (r.ambStop !== undefined) out.push({ kind: "stop", ch: r.ambStop });
+  }
+  return out;
+}
+
+/** Last persistent (looping) state per ambient channel at/before an event.
  *
+ * Only loop=1 cues persist: one-shots are fired by resolveAmbientEvents.
+ * A one-shot still claims the engine channel and ends up free, so it clears
+ * a previously looping cue on the same channel instead of leaving it alive.
  * A per-event lookup (the old resolveAmbCue/resolveAmbStop pair) loses cues
  * whenever the reader steps over directive events (skipLatches) and starts
  * silent after loading a save mid-scene. The engine keeps channel state, so
  * the player resolves the same lifetime: replay every cue up to the event
  * in statement order, last write per channel wins. */
-export type AmbTimelineEntry =
-  | { kind: "play"; cue: AmbCue }
-  | { kind: "stop" };
+export type AmbTimelineEntry = { kind: "play"; cue: AmbCue };
 
 export function resolveAmbientTimeline(
   recs: { ev: number; amb?: AmbCue; ambStop?: number; conf: string }[],
@@ -1816,16 +2144,22 @@ export function resolveAmbientTimeline(
   for (const r of ordered) {
     if (r.conf !== "high" || r.ev > event) continue;
     if (!cueInExecutedRanges(executedRanges, r.ev, event)) continue;
-    if (r.amb) out.set(r.amb.ch, { kind: "play", cue: r.amb });
-    else if (r.ambStop !== undefined) out.set(r.ambStop, { kind: "stop" });
+    if (r.amb) {
+      if (r.amb.loop) out.set(r.amb.ch, { kind: "play", cue: r.amb });
+      else out.delete(r.amb.ch);
+    } else if (r.ambStop !== undefined) out.delete(r.ambStop);
   }
   return out;
 }
 
-// Ambient channel state (engine .bnr (4,165)/(4,166)): up to four
-// looping channel players; a script switch cuts them all (engine
-// channel state does not carry across scripts).
+// Ambient channel state (engine .bnr (4,165)/(4,166)): looping channel
+// players plus one-shot channel players. The engine keeps one record per
+// channel (0..15; the corpus uses 0..6), so a new cue replaces whatever that
+// channel was playing and a finished one-shot frees it. A script switch cuts
+// every channel (engine channel state does not carry across scripts).
 const ambEls = new Map<number, HTMLAudioElement>();
+const oneShotEls = new Map<number, HTMLAudioElement>();
+const oneShotSeq = new Map<number, number>();
 let ambScript: string | null = null;
 
 function stopAmbChannel(ch: number): void {
@@ -1837,23 +2171,123 @@ function stopAmbChannel(ch: number): void {
   }
 }
 
+function stopOneShotChannel(ch: number): void {
+  oneShotSeq.set(ch, (oneShotSeq.get(ch) ?? 0) + 1);
+  const a = oneShotEls.get(ch);
+  if (a) {
+    a.pause();
+    a.removeAttribute("src");
+  }
+}
+
 function stopAllAmb(): void {
   for (const ch of [...ambEls.keys()]) stopAmbChannel(ch);
 }
 
+function stopAllOneShots(): void {
+  // Iterate the sequence map too: a cue whose blob is still resolving has a
+  // sequence entry but no element yet. Bumping it makes the late `start()`
+  // a no-op, so a load/title/movie can never resurrect that sound.
+  for (const ch of new Set([...oneShotSeq.keys(), ...oneShotEls.keys()])) {
+    stopOneShotChannel(ch);
+  }
+}
+
+/** Play a one-shot channel cue, replacing whatever the channel played.
+ * The resolved blob may arrive after the story moved on; the per-channel
+ * sequence makes that stale result a no-op. */
+function playChannelOneShot(cue: AmbCue, url: string): void {
+  const ch = cue.ch;
+  stopOneShotChannel(ch);
+  const seq = oneShotSeq.get(ch) ?? 0;
+  const start = (src: string) => {
+    if ((oneShotSeq.get(ch) ?? 0) !== seq) return;
+    let a = oneShotEls.get(ch);
+    if (!a) {
+      a = document.createElement("audio");
+      a.dataset.ch = String(ch);
+      oneShotEls.set(ch, a);
+    }
+    a.pause();
+    a.loop = false;
+    a.volume = Math.max(0, Math.min(1, cue.vol / 255));
+    a.src = src;
+    a.play().catch(() => undefined);
+  };
+  if (!url.includes("#")) {
+    start(url);
+    return;
+  }
+  void resolveAudioUrl(url).then((resolved) => {
+    if (resolved) start(resolved);
+  });
+}
+
+// Last position whose ambient one-shots have fired. Re-rendering the same
+// line must not ring a bell again; stepping over skipped directive events
+// must still fire the cues crossed on the way.
+let ambCursor: { script: string; ev: number } | null = null;
+
+export function resetAudioCursors(): void {
+  seCursor = null;
+  ambCursor = null;
+  // A save load/new game starts a different channel scene: never leave the
+  // previous scene's ambience or a one-shot ringing under it. updateAmbient
+  // rebuilds the loops from the loaded position.
+  stopAllAmb();
+  stopAllOneShots();
+  ambScript = null;
+  (document.getElementById("se") as HTMLAudioElement | null)?.pause();
+}
+
 function updateAmbient(save: SaveData, movieNext = false): void {
   if (audioSuspended || moviePlaying() || movieNext) {
-    for (const a of ambElsPlaying()) a.pause();
+    for (const a of ambElsPlaying()) if (!a.paused) a.pause();
     return;
   }
   if (ambScript !== null && ambScript !== save.position.script) {
     stopAllAmb();
+    stopAllOneShots();
   }
   ambScript = save.position.script;
   const recs = bnrLookup?.(save.position.script);
   if (!recs) return;
-  const timeline = resolveAmbientTimeline(recs, save.position.event, activeExecutedRanges(save));
-  const ch = chapterOfScript(save.position.script);
+  const script = save.position.script;
+  const ev = save.position.event;
+  const ch = chapterOfScript(script);
+  const prev = ambCursor;
+  const sameEvent = prev !== null && prev.script === script && prev.ev === ev;
+  if (!sameEvent) {
+    // Forward inside one script: fire the crossed range. First render /
+    // save load / backward seek: fire only the current event.
+    const from = prev && prev.script === script && ev > prev.ev ? prev.ev : ev - 1;
+    for (const item of resolveAmbientEvents(recs, from, ev, activeExecutedRanges(save))) {
+      if (item.kind === "stop") {
+        stopAmbChannel(item.ch);
+        stopOneShotChannel(item.ch);
+        continue;
+      }
+      const cue = item.cue;
+      // A loop is started by the persistent timeline below; it still claims
+      // the channel now, so a one-shot that is resolving must be cancelled.
+      if (cue.loop) {
+        stopOneShotChannel(cue.ch);
+        continue;
+      }
+      const url = seUrl(cue.se, ch);
+      // The engine keeps one record per channel: the one-shot takes the
+      // slot, so a loop that was running there is gone (0x40f400 closes
+      // the old handle before starting the new one).
+      stopAmbChannel(cue.ch);
+      if (!url) {
+        stopOneShotChannel(cue.ch);
+        continue;
+      }
+      playChannelOneShot(cue, url);
+    }
+    ambCursor = { script, ev };
+  }
+  const timeline = resolveAmbientTimeline(recs, ev, activeExecutedRanges(save));
   // A backward seek/load may land before a channel's cue: anything the
   // timeline does not keep alive must stop (engine channel state is
   // positional, not "whatever was playing last").
@@ -1861,10 +2295,6 @@ function updateAmbient(save: SaveData, movieNext = false): void {
     if (!timeline.has(activeCh)) stopAmbChannel(activeCh);
   }
   for (const [chan, state] of timeline) {
-    if (state.kind === "stop") {
-      stopAmbChannel(chan);
-      continue;
-    }
     const cue = state.cue;
     const url = seUrl(cue.se, ch);
     let a = ambEls.get(chan);
@@ -1876,17 +2306,21 @@ function updateAmbient(save: SaveData, movieNext = false): void {
     if (!url) {
       // missing asset: silence the channel rather than replay a stale cue
       stopAmbChannel(chan);
+      stopOneShotChannel(chan);
       continue;
     }
     if (a.dataset.cur === url) {
-      // Same cue still active: never restart the loop on a re-render.
-      a.loop = cue.loop;
+      // Same loop still active: never restart it on a re-render.
+      a.loop = true;
       a.volume = Math.max(0, Math.min(1, cue.vol / 255));
       if (a.paused && a.src) a.play().catch(() => undefined);
       continue;
     }
+    // The engine closes whatever the channel was playing before a new
+    // play (0x40f400), including a one-shot that may still be resolving.
+    stopOneShotChannel(chan);
     a.dataset.cur = url;
-    a.loop = cue.loop;
+    a.loop = true;
     a.volume = Math.max(0, Math.min(1, cue.vol / 255));
     if (!url.includes("#")) {
       a.src = url;
@@ -2109,6 +2543,8 @@ export function suspendAudio(): void {
   if (bgm && !bgm.paused) bgm.dataset.wasPlaying = "1";
   bgm?.pause();
   cutVoice();
+  stopAllOneShots();
+  (document.getElementById("se") as HTMLAudioElement | null)?.pause();
   for (const a of ambElsPlaying()) {
     if (!a.paused) a.dataset.wasPlaying = "1";
     a.pause();
@@ -2145,6 +2581,8 @@ function duckForMovie(enter: boolean, advancing = false): void {
     if (bgm && !bgm.paused) bgm.dataset.wasPlaying = "1";
     bgm?.pause();
     cutVoice();
+    stopAllOneShots();
+    (document.getElementById("se") as HTMLAudioElement | null)?.pause();
     for (const a of ambElsPlaying()) {
       if (!a.paused) a.dataset.wasPlaying = "1";
       a.pause();
@@ -2182,32 +2620,21 @@ function playVoice(save: SaveData, ev: ScenarioEvent, vol: number): void {
     return;
   }
   audio.volume = Math.max(0, Math.min(1, vol));
-  const ch = chapterOfScript(save.position.script);
-  const mapped = ev.t !== "say" && ev.t !== "narrate"
-    ? null
-    : voiceLookup?.(save.position.script, save.position.event);
-  const ref = ev.t !== "say" && ev.t !== "narrate"
-    ? null
-    : resolveVoiceRef(mapped, ev.tok);
-  const url = ref === null
-    ? null
-    : typeof ref === "string"
-      ? voiceUrlByKey(ref)
-      : voiceUrl(save.position.script, ref, ch);
+  const url = voiceUrlFor(save.position.script, save.position.event, ev);
   if (url) {
     if (audio.dataset.cur !== url) {
       const seq = ++voicePlaySeq;
       audio.dataset.cur = url;
       if (!url.includes("#")) {
         audio.src = url;
-        audio.play().catch(() => undefined);
+        audio.play().catch((err) => rememberBlockedVoice(err, url, seq, save));
       } else {
         audio.pause();
         audio.removeAttribute("src");
         void resolveAudioUrl(url).then((resolved) => {
           if (seq !== voicePlaySeq || !resolved || audio.dataset.cur !== url) return;
           audio.src = resolved;
-          audio.play().catch(() => undefined);
+          audio.play().catch((err) => rememberBlockedVoice(err, url, seq, save));
         });
       }
     }
@@ -2216,8 +2643,55 @@ function playVoice(save: SaveData, ev: ScenarioEvent, vol: number): void {
   }
 }
 
+// Autoplay policy: a cold boot/deep-link render is not a user gesture, so
+// the first play() can be rejected. Remember the clip and retry on the next
+// click/keypress instead of leaving that line permanently silent. Only a
+// NotAllowedError is recoverable; a decode/unsupported error must not wedge
+// advancement by consuming every click.
+let blockedVoice: { url: string; seq: number; script: string; event: number } | null = null;
+
+function isAutoplayBlock(err: unknown): boolean {
+  return !!err && (err as { name?: string }).name === "NotAllowedError";
+}
+
+function rememberBlockedVoice(
+  err: unknown, url: string, seq: number, save: SaveData,
+): void {
+  if (!isAutoplayBlock(err)) return;
+  blockedVoice = {
+    url,
+    seq,
+    script: save.position.script,
+    event: save.position.event,
+  };
+}
+
+function retryBlockedVoice(): boolean {
+  const pending = blockedVoice;
+  if (!pending) return false;
+  if (!curHooks || !positionIs(curHooks.save, pending.script, pending.event)) {
+    blockedVoice = null;
+    return false;
+  }
+  const audio = document.getElementById("voice") as HTMLAudioElement | null;
+  if (!audio || audio.dataset.cur !== pending.url || pending.seq !== voicePlaySeq) {
+    blockedVoice = null;
+    return false;
+  }
+  blockedVoice = null;
+  audio.play().catch((err) => {
+    // Still blocked: let the next click try again instead of losing it.
+    if (isAutoplayBlock(err) && audio.dataset.cur === pending.url &&
+      pending.seq === voicePlaySeq) {
+      blockedVoice = pending;
+    }
+  });
+  return true;
+}
+
 function cutVoice(): void {
   ++voicePlaySeq;
+  blockedVoice = null;
   const audio = document.getElementById("voice") as HTMLAudioElement | null;
   if (audio && audio.dataset.cur) {
     delete audio.dataset.cur;

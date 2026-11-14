@@ -19,7 +19,8 @@ The true SE opcode is (4,164): statement [SE,255]+(4,164) (LSCR thunk
 0x455720 -> SE channel allocator 0x406450; 12/12 corpus occurrences
 address real SE.PAK numbers) and IS emitted below with conf="high".
 Ambient channel playback is (4,165) [ch, se, fade_ms, loop, vol, ?]
-(0x40f400; 99% of ids are SE.PAK numbers), stopped by (4,166) [ch,0];
+(0x40f400; 99% of ids are SE.PAK numbers). (4,166) [ch,V] ends the
+channel: V>0 fades it to silence over V ms, V<=0 stops immediately;
 both emitted with conf="high" (see docs/PARSING.md).
 Standing sprites are (4,154)/(4,155) [prefix_id, face, base, ...] ->
 char\{prefix}{base+face:06d}.tga; face 4000 hides the slot. Proven by
@@ -165,20 +166,35 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             recs.append({"ev": ev, "se": [se_by_stmt[idx]],
                          "conf": "high"})
         # Ambient/channel SE (opcode (4,165)): [ch, se_id, fade_ms, loop,
-        # volume, ?] -> thunk chain 0x40f400 (6 args); 645/646 distinct
+        # volume, mode] -> thunk chain 0x40f400 (6 args); 645/646 distinct
         # ids exist as SE_%04d in SE.PAK (99%, conf high). Volume is the
-        # raw 0-255 push. Zero-volume (4,166) [ch,0] stops the channel;
-        # the skip-guarded (4,168) stop is deliberately not emitted.
+        # raw 0-255 push. The engine keeps 16 channel records at 0x5e7360;
+        # the channel update/free loop is 0x40f8f0 -> 0x40fa54 (ends at
+        # 0x5e76ac). Valid 6-push shapes use channels 0-6. Require the
+        # op-first shape: statements like [(4,5),(3,1),(4,165)] carry only
+        # 5 pushes, so their values belong to another op, not this handler.
+        #
+        # (4,166) [ch, V] is a channel END, not a volume set: 0x40f590 ->
+        # 0x4067a0(ch, target_volume=0, duration=V), i.e. V>0 fades the
+        # channel to silence over V ms and V<=0 stops it immediately.
+        # The player treats both as a stop (fade is presentation-only).
         has165 = any(o == 4 and a == 165 for o, a in ops)
         has166 = any(o == 4 and a == 166 for o, a in ops)
-        if has165 and len(s) >= 5:
+        # Mode 2 adjusts an already-active channel (0x40f400's param_6==2
+        # branch only touches the existing handle); it is not a new play and
+        # has no handle to start. Modes >=3 make 0x4065d0 fail. Only 0/1
+        # are plays. Out-of-range channels are not the 16-record array: the
+        # 4 corpus cases like (4,166)[120,0] carry a duration in s[0] and
+        # are rejected instead of clamped into a fake channel 15.
+        if (has165 and ops and ops[0] == (4, 165) and len(s) >= 6
+                and s[5] in (0, 1) and 0 <= s[0] <= 15):
             recs.append({"ev": ev,
-                         "amb": {"se": s[1], "ch": max(0, min(3, s[0])),
+                         "amb": {"se": s[1], "ch": s[0],
                                  "vol": s[4], "loop": bool(s[3])},
                          "conf": "high"})
-        elif has166 and len(s) >= 2 and s[1] <= 0:
-            recs.append({"ev": ev, "ambStop": max(0, min(3, s[0])),
-                         "conf": "high"})
+        elif (has166 and ops and ops[0] == (4, 166) and len(s) >= 2
+              and 0 <= s[0] <= 15):
+            recs.append({"ev": ev, "ambStop": s[0], "conf": "high"})
         # Standing sprites (4,154)/(4,155): [pid, face, base, pos, ...].
         # WA2.exe: handlers 0x4553f0/0x455590 -> 0x4160e0 -> filename
         # sprintf("%s%06d.tga", table[prefix_id], file) under char\ ;

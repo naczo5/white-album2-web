@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { resolveAmbCue, resolveAmbStop, resolveAmbientTimeline, resolveBgmCue, resolveBgmTimeline, resolveFade, resolveSeIds, resolveSeRec, resolveSprites, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay, skipBlocked, spriteLeftPct } from "./reader";
+import * as fs from "node:fs";
+import { resolveAmbCue, resolveAmbientEvents, resolveAmbientTimeline, resolveAmbStop, resolveBgmCue, resolveBgmTimeline, resolveFade, resolveSeIds, resolveSeRec, resolveSprites, resolveVoiceRef, renderSpanPartial, resolveStageImage, resolveStageOverlay, skipBlocked, spriteLeftPct } from "./reader";
 import { loadManifest } from "../engine/assets";
 import type { BnrRec } from "../engine/types";
 
@@ -164,24 +165,100 @@ describe("ambient channel resolvers (4,165 cue / 4,166 stop)", () => {
     expect(resolveAmbStop(RECS, 5)).toBeNull();
   });
 
-  it("timeline keeps every channel's latest state (skip/load/same-event)", () => {
+  it("timeline keeps only looping channels and clears a channel on a one-shot", () => {
     const recs = [
       { ev: 3, amb: { se: 1, ch: 0, vol: 100, loop: true }, conf: "high" },
       { ev: 5, amb: { se: 2, ch: 1, vol: 50, loop: false }, conf: "high" },
       { ev: 5, amb: { se: 3, ch: 2, vol: 60, loop: true }, conf: "high" },
-      { ev: 7, ambStop: 0, conf: "high" },
-      { ev: 9, amb: { se: 4, ch: 3, vol: 80, loop: true }, conf: "hypothesis" },
+      { ev: 6, amb: { se: 4, ch: 0, vol: 40, loop: true }, conf: "high" },
+      { ev: 7, amb: { se: 5, ch: 0, vol: 80, loop: false }, conf: "high" },
+      { ev: 8, ambStop: 0, conf: "high" },
+      { ev: 9, amb: { se: 6, ch: 3, vol: 80, loop: true }, conf: "hypothesis" },
     ];
     const at5 = resolveAmbientTimeline(recs, 5);
     expect(at5.get(0)).toEqual({ kind: "play", cue: { se: 1, ch: 0, vol: 100, loop: true } });
-    expect(at5.get(1)).toEqual({ kind: "play", cue: { se: 2, ch: 1, vol: 50, loop: false } });
+    // A one-shot is fired once by resolveAmbientEvents, never held as state.
+    expect(at5.has(1)).toBe(false);
     expect(at5.get(2)).toEqual({ kind: "play", cue: { se: 3, ch: 2, vol: 60, loop: true } });
-    const at8 = resolveAmbientTimeline(recs, 8);
-    expect(at8.get(0)).toEqual({ kind: "stop" }); // stop overrides the old cue
-    expect(at8.get(1)).toEqual({ kind: "play", cue: { se: 2, ch: 1, vol: 50, loop: false } });
-    expect(at8.has(3)).toBe(false); // hypothesis never enters the timeline
+    // A later loop replaces the earlier one on the same channel.
+    expect(resolveAmbientTimeline(recs, 6).get(0)).toEqual({
+      kind: "play", cue: { se: 4, ch: 0, vol: 40, loop: true },
+    });
+    // A one-shot claims the channel and frees it (engine 0x40f400 +
+    // channel updater 0x40f8f0 -> 0x40fa54).
+    expect(resolveAmbientTimeline(recs, 7).has(0)).toBe(false);
+    expect(resolveAmbientTimeline(recs, 8).has(0)).toBe(false);
+    expect(resolveAmbientTimeline(recs, 8).get(2)?.kind).toBe("play");
+    expect(resolveAmbientTimeline(recs, 100).has(3)).toBe(false); // hypothesis
     // stepping over the background-change events still yields their cues
-    expect(resolveAmbientTimeline(recs, 100).size).toBe(3);
+    expect(resolveAmbientTimeline(recs, 100).size).toBe(1);
+  });
+
+  it("fires only the one-shots crossed by a step, in order, high confidence only", () => {
+    const recs = [
+      { ev: 3, amb: { se: 1, ch: 0, vol: 100, loop: true }, conf: "high" },
+      { ev: 5, amb: { se: 2, ch: 1, vol: 50, loop: false }, conf: "high" },
+      { ev: 6, amb: { se: 3, ch: 1, vol: 60, loop: false }, conf: "high" },
+      { ev: 6, amb: { se: 4, ch: 2, vol: 70, loop: false }, conf: "high" },
+      { ev: 7, amb: { se: 5, ch: 3, vol: 80, loop: false }, conf: "hypothesis" },
+      { ev: 8, amb: { se: 6, ch: 0, vol: 90, loop: false }, conf: "high" },
+    ];
+    const oneShots = (from: number, to: number) =>
+      resolveAmbientEvents(recs, from, to)
+        .flatMap((e) => e.kind === "play" && !e.cue.loop ? [e.cue.se] : []);
+    expect(oneShots(4, 6)).toEqual([2, 3, 4]);
+    expect(oneShots(5, 8)).toEqual([3, 4, 6]);
+    // Re-rendering at one event (from == to) fires nothing.
+    expect(oneShots(6, 6)).toEqual([]);
+    // A segment boundary excludes the cue that belongs to the previous step.
+    expect(oneShots(6, 7)).toEqual([]); // only hypothesis at 7
+  });
+
+  it("keeps play/stop order within one event (engine statement order)", () => {
+    const recs = [
+      { ev: 5, amb: { se: 1, ch: 0, vol: 100, loop: true }, conf: "high" },
+      { ev: 6, amb: { se: 2, ch: 0, vol: 80, loop: false }, conf: "high" },
+      { ev: 6, ambStop: 0, conf: "high" },
+      { ev: 6, amb: { se: 3, ch: 0, vol: 90, loop: false }, conf: "high" },
+    ];
+    expect(resolveAmbientEvents(recs, 5, 6).map((e) => e.kind)).toEqual([
+      "play", "stop", "play",
+    ]);
+    expect(resolveAmbientEvents(recs, 5, 6)[2]).toMatchObject({
+      kind: "play", cue: { se: 3 },
+    });
+  });
+});
+
+/** The reported regression (closing chapter, 2003): the last one-shot
+ * SE 8258 in the scene used to be kept as live channel state, so every line
+ * after it restarted the bell. Event numbers differ between JP-spine and
+ * special-pak builds, so locate the cue instead of pinning an ev. */
+const BYOA_DATA = process.env.WA2_DATA_DIR;
+const BYOA_BNR = BYOA_DATA ? `${BYOA_DATA.replace(/\/+$/, "")}/bnr.json` : "";
+const HAS_BNR = !!BYOA_BNR && fs.existsSync(BYOA_BNR);
+
+describe.skipIf(!HAS_BNR)("2003 ambience regression (BYOA bnr.json)", () => {
+  it("does not resurrect the last SE 8258 one-shot later in the scene", () => {
+    const bnr = JSON.parse(fs.readFileSync(BYOA_BNR, "utf8")) as {
+      recs: Record<string, { ev: number; amb?: { se: number; ch: number; vol: number; loop: boolean }; ambStop?: number; conf: string }[]>;
+    };
+    const recs = bnr.recs["2003"];
+    expect(recs).toBeTruthy();
+    const last = recs.filter((r) => r.amb?.se === 8258 && !r.amb.loop).pop();
+    expect(last).toBeTruthy();
+    const ev = last!.ev;
+    const fired = resolveAmbientEvents(recs, ev - 1, ev)
+      .some((e) => e.kind === "play" && e.cue.se === 8258);
+    expect(fired).toBe(true);
+    // The very next render must not fire it again, and the loop timeline
+    // must not retain it as channel state.
+    const replayed = resolveAmbientEvents(recs, ev, ev + 1)
+      .some((e) => e.kind === "play" && e.cue.se === 8258);
+    expect(replayed).toBe(false);
+    const timeline = resolveAmbientTimeline(recs, ev + 1);
+    expect([...timeline.values()].some((v) =>
+      v.kind === "play" && v.cue.se === 8258)).toBe(false);
   });
 });
 

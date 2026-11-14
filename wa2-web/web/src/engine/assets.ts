@@ -220,10 +220,16 @@ export function hasAssets(): boolean {
 }
 
 const VPK_CACHE_MAX = 8;
-const BLOB_CACHE_MAX = 64;
+const BLOB_CACHE_MAX = 128;
+const BLOB_CACHE_BYTES = 32 * 1024 * 1024;
 const vpkPromises = new Map<string, Promise<ArrayBuffer | null>>();
 const vpkBuffers = new Map<string, ArrayBuffer>();
 const blobUrls = new Map<string, string>();
+const blobBytes = new Map<string, number>();
+let blobTotalBytes = 0;
+// Audio resolution in flight, keyed by manifest URL (including the range).
+// Callers that preload and callers that play share one request.
+const audioPromises = new Map<string, Promise<string | null>>();
 
 function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
   const v = map.get(key);
@@ -265,8 +271,10 @@ const VPK_REF_RE = /^(.+)#(\d+)-(\d+)(?::([a-z0-9]+))?$/i;
 
 /**
  * Resolve an audio manifest URL into a playable src. Plain URLs return as-is;
- * packed `.vpk#<start>-<end>` refs fetch the chunk once into an LRU buffer and
- * return a sliced Blob object URL.
+ * packed `.vpk#<start>-<end>` refs are fetched with an HTTP Range request so a
+ * 24 KB voice line does not download the whole 1.5 MB script chunk. Servers
+ * that ignore `Range` still work: a 200 response is sliced locally, and a
+ * failed range request falls back to one cached full-chunk fetch.
  */
 export async function resolveAudioUrl(url: string | null): Promise<string | null> {
   if (!url) return null;
@@ -274,29 +282,120 @@ export async function resolveAudioUrl(url: string | null): Promise<string | null
   if (!m) return url;
   const existing = lruGet(blobUrls, url);
   if (existing) return existing;
+  const inflight = audioPromises.get(url);
+  if (inflight) return inflight;
   const [, packUrl, startStr, endStr, ext] = m;
   const start = Number(startStr);
   const end = Number(endStr);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
-  const buf = await fetchVpk(packUrl);
-  if (!buf || end > buf.byteLength) return null;
-  const mime = ext?.toLowerCase() === "wav" ? "audio/wav" : "audio/ogg";
-  const objUrl = URL.createObjectURL(new Blob([buf.slice(start, end)], { type: mime }));
-  blobUrls.set(url, objUrl);
-  while (blobUrls.size > BLOB_CACHE_MAX) {
-    const oldest = blobUrls.keys().next().value;
-    if (oldest === undefined) break;
-    const oldUrl = blobUrls.get(oldest);
-    blobUrls.delete(oldest);
-    if (oldUrl) URL.revokeObjectURL(oldUrl);
+  const p = (async (): Promise<string | null> => {
+    let slice: ArrayBuffer | null = null;
+    try {
+      const res = await fetch(packUrl, {
+        headers: { Range: `bytes=${start}-${end - 1}` },
+        cache: "force-cache",
+      });
+      if (res.status === 206) {
+        const body = await res.arrayBuffer();
+        // A proxy that returns the wrong range would decode as garbage:
+        // reject it and fall back to the full chunk instead of guessing.
+        if (body.byteLength === end - start) slice = body;
+      } else if (res.ok) {
+        const whole = await res.arrayBuffer();
+        if (end <= whole.byteLength) slice = whole.slice(start, end);
+      }
+    } catch {
+      /* Range blocked/unsupported: full-chunk fallback below. */
+    }
+    if (!slice) {
+      const whole = await fetchVpk(packUrl);
+      if (!whole || end > whole.byteLength) return null;
+      slice = whole.slice(start, end);
+    }
+    if (!slice || slice.byteLength === 0) return null;
+    const mime = ext?.toLowerCase() === "wav" ? "audio/wav" : "audio/ogg";
+    const blob = new Blob([slice], { type: mime });
+    const objUrl = URL.createObjectURL(blob);
+    blobUrls.set(url, objUrl);
+    blobBytes.set(url, blob.size);
+    blobTotalBytes += blob.size;
+    while (blobUrls.size > BLOB_CACHE_MAX ||
+      (blobTotalBytes > BLOB_CACHE_BYTES && blobUrls.size > 1)) {
+      const oldest = blobUrls.keys().next().value;
+      if (oldest === undefined) break;
+      const oldUrl = blobUrls.get(oldest);
+      const oldSize = blobBytes.get(oldest) ?? 0;
+      blobUrls.delete(oldest);
+      blobBytes.delete(oldest);
+      blobTotalBytes = Math.max(0, blobTotalBytes - oldSize);
+      if (oldUrl) URL.revokeObjectURL(oldUrl);
+    }
+    return objUrl;
+  })();
+  audioPromises.set(url, p);
+  try {
+    return await p;
+  } finally {
+    audioPromises.delete(url);
   }
-  return objUrl;
+}
+
+/** Is a packed audio ref already resolved, in flight, or untouched? */
+export function audioPreloadStatus(url: string | null): "ready" | "pending" | "none" {
+  if (!url) return "none";
+  if (!VPK_REF_RE.test(url)) return "ready";
+  if (lruGet(blobUrls, url) !== undefined) return "ready";
+  return audioPromises.has(url) ? "pending" : "none";
+}
+
+/** Start (or join) the fetch for an audio ref. Safe to call for plain URLs. */
+export function preloadAudio(url: string | null): Promise<string | null> {
+  return resolveAudioUrl(url);
+}
+
+// Bounded image preload cache. The browser owns the actual image cache; this
+// only remembers which URLs have finished so the reader can gate on them
+// without constructing a second Image for every render.
+const IMAGE_CACHE_MAX = 256;
+const imageState = new Map<string, "pending" | "ready" | "error">();
+const imagePending = new Map<string, Promise<boolean>>();
+
+/** Warm an image and resolve true once it can be painted. Never throws. */
+export function preloadImage(url: string | null): Promise<boolean> {
+  if (!url) return Promise.resolve(false);
+  const state = imageState.get(url);
+  if (state === "ready") return Promise.resolve(true);
+  if (state === "error") return Promise.resolve(false);
+  const inflight = imagePending.get(url);
+  if (inflight) return inflight;
+  if (typeof Image === "undefined") return Promise.resolve(false);
+  const p = new Promise<boolean>((resolve) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = url;
+  }).then((ok) => {
+    imageState.set(url, ok ? "ready" : "error");
+    imagePending.delete(url);
+    while (imageState.size > IMAGE_CACHE_MAX) {
+      const oldest = imageState.keys().next().value;
+      if (oldest === undefined) break;
+      imageState.delete(oldest);
+    }
+    return ok;
+  });
+  imagePending.set(url, p);
+  return p;
 }
 
 export function clearAudioPackCache(): void {
   vpkPromises.clear();
   vpkBuffers.clear();
+  audioPromises.clear();
   for (const u of blobUrls.values()) URL.revokeObjectURL(u);
   blobUrls.clear();
+  blobBytes.clear();
+  blobTotalBytes = 0;
 }
 

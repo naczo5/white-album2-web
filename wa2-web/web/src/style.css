@@ -1069,6 +1069,67 @@ h3::after {
   pointer-events: none;
 }
 
+/* Asset in flight: a quiet card over the stage. It appears immediately on a
+ * cold scene and after a short grace period when the previous backdrop is
+ * still visible, so normal fast loads never flash furniture. */
+.stage-loading {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 55;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.95rem;
+  border: 1px solid rgb(160 250 245 / 0.26);
+  background: rgb(2 12 16 / 0.66);
+  color: rgb(223 252 255 / 0.82);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+  backdrop-filter: blur(3px);
+}
+
+.spinner {
+  display: inline-block;
+  width: 0.82em;
+  height: 0.82em;
+  border: 2px solid rgb(143 244 237 / 0.28);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: wa2-spin 0.85s linear infinite;
+}
+
+@keyframes wa2-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Voice waiting line inside the message plate. It replaces prose whose clip
+ * is still loading, so the reader cannot advance into a silent line. */
+.line-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: rgb(223 252 255 / 0.72);
+  font-size: 0.82em;
+  letter-spacing: 0.06em;
+}
+
+.advance-hint.loading {
+  color: rgb(223 252 255 / 0.74);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+}
+
 .stage-bg {
   position: absolute;
   inset: 0;

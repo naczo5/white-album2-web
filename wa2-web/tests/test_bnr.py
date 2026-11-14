@@ -200,3 +200,57 @@ def test_decode_img_3907_resolution_pushes():
         + [4, 146],
     )
     _img_row(recs, layer="bak", stems=["501020"], fade=90)
+
+
+def test_decode_amb_channel_is_not_clamped_to_three():
+    # 0x40f400 indexes 16 channel records (0x5e7360 stride 0x34, update loop
+    # ends at 0x5e76ac); the corpus uses channels 0-6. Folding ch 5 onto ch 3
+    # made unrelated sounds share one slot.
+    recs = _decode_syn(pushes(5, 2210, 0, 0, 255, 0) + [4, 165])
+    amb = [r for r in recs if "amb" in r]
+    assert len(amb) == 1
+    assert amb[0]["amb"] == {"se": 2210, "ch": 5, "vol": 255, "loop": False}
+    stop = _decode_syn(pushes(6, 0) + [4, 166])
+    assert [r for r in stop if "ambStop" in r][0]["ambStop"] == 6
+
+
+def test_decode_amb_loop_volume_and_fade_args():
+    # [ch, se, fade, loop, volume, mode]: loop=1 persists, volume is s[4].
+    recs = _decode_syn(pushes(2, 3019, 30, 1, 80, 0) + [4, 165])
+    amb = [r for r in recs if "amb" in r][0]["amb"]
+    assert amb == {"se": 3019, "ch": 2, "vol": 80, "loop": True}
+
+
+def test_decode_amb_166_fade_out_stops_channel():
+    # (4,166) [ch, V] ends the channel. V is a fade-out duration (V>0,
+    # often 300/360/420/480 in the corpus); V<=0 is an immediate stop.
+    # 0x40f590 -> 0x4067a0(ch, target_volume=0, duration=V).
+    for v in (0, 120, 360):
+        recs = _decode_syn(pushes(5, v) + [4, 166])
+        stops = [r for r in recs if "ambStop" in r]
+        assert len(stops) == 1 and stops[0]["ambStop"] == 5, (v, recs)
+        assert not [r for r in recs if "ambVol" in r]
+
+
+def test_decode_rejects_multi_op_165_with_short_pushes():
+    # Intro variant shape (4,5),(3,1),(4,165) has only 5 pushes; the pushes
+    # belong to the earlier ops. Reading them as [ch,se,...] produced a fake
+    # ch15 loop (SE 3019) in 1008_020/1009_020/etc.
+    recs = _decode_syn(pushes(3019, 20, 1, 60, 0) + [4, 5, 3, 1, 4, 165])
+    assert not [r for r in recs if "amb" in r]
+
+
+def test_decode_165_mode2_is_not_a_play():
+    # Mode 2 only adjusts an already-active channel; it must not be emitted
+    # as a new play (there is no handle to start).
+    recs = _decode_syn(pushes(0, 2210, 0, 0, 255, 2) + [4, 165])
+    assert not [r for r in recs if "amb" in r]
+
+
+def test_decode_rejects_out_of_range_channels():
+    # (4,166)[120,0] is a duration/other shape, not channel 120. Clamping
+    # would inject a fake ch15 stop.
+    recs = _decode_syn(pushes(120, 0) + [4, 166])
+    assert not [r for r in recs if "ambStop" in r]
+    recs = _decode_syn(pushes(20, 2210, 0, 0, 255, 0) + [4, 165])
+    assert not [r for r in recs if "amb" in r]
