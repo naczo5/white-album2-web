@@ -777,13 +777,17 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     that offset. `extract_assets.py`/`build_voice.py` already use stride
     40 with a 24/32-byte name read — both yield the same key set.
   - **Voicemap parity (0 misses)**: all 40,741 `voicemap.map` entries
+    (census taken from `build/data/voicemap.json`, which is byte-identical
+    to `bundle.json["voicemap"]` — the map the client actually serves;
+    the stale `web/public/data/voicemap.json` fallback holds only
+    39,182/36,290/2,892 and is not used when a bundle is present)
     verified against both archives — 37,849 string keys resolve, 2,892
     numeric fallbacks resolve to **nothing** (silence, never a wrong
     clip). This is the desired failure direction.
   - **Known unmodelled field**: line base `DAT_00a391ec` is added to the
     voice line number and persists at save slot `[0x445]`
-    (`0x423a18` write — `mov [ebx+0x1114], edx`, `0x1114/4 = 0x445`;
-    `0x423e33` restore — `mov [0xa391ec], ebx`).
+    (`0x423a1c` write — `mov [ebx+0x1114], edx`, `0x1114/4 = 0x445`;
+    `0x423e31` restore — `mov [0xa391ec], ebx`).
     `native-save.ts` does not read `0x445`; it is 0 in all 13 observed
     saves, so no current divergence. Left as a tracked gap, not guessed.
   - **Root cause of "voices stopped" (deploy, not engine)**: the R2 bucket

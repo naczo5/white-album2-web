@@ -189,13 +189,13 @@ wsprintfA(buf, "%04d_%04d_%02d.ogg", script, line, take);
 
 - `take` is argument 2, `script` argument 3, **`line` argument 4** — so the
   engine indexes voice by *script id + line number*, never by comma-token.
-- `line` is offset before formatting (`mov ... add`, the `0xa391ec` reference
-  at `0x40edcb` inside the function body). `DAT_00a391ec` is a persistent
-  **line base**: written to save slot `[0x445]` by
-  `0x423a18` (`89 93 14 11 00 00` = `mov [ebx+0x1114], edx`; `0x1114/4 =
-  0x445`) and restored at `0x423e33` (`89 1d ec 91 a3 00` = `mov
-  [0xa391ec], ebx`); read back at `0x423fff`. Our importer does not read
-  `0x445` yet; it is 0 in every observed save, so no current divergence. 
+- `line` is offset before formatting: `03 2d ec 91 a3 00` at **`0x40edc9`**
+  (`add ebp,[0xa391ec]`). `DAT_00a391ec` is a persistent **line base**:
+  written to save slot `[0x445]` by **`0x423a1c`** (`89 93 14 11 00 00` =
+  `mov [ebx+0x1114], edx`; `0x1114/4 = 0x445`) and restored at
+  **`0x423e31`** (`89 1d ec 91 a3 00` = `mov [0xa391ec], ebx`); read back
+  at `0x423fff`. Our importer does not read `0x445` yet; it is 0 in every
+  observed save, so no current divergence. 
 - Lookup order is CC first, then IC: `FUN_00461400(...,2,...)` (CC table)
   is tried, and only if it fails does the `DAT_00a730b4`/`DAT_00a730b8`
   branch try `FUN_00461400(...,5,...)` (IC table). Confirmed by the log
@@ -227,22 +227,26 @@ Archive layout (both `VOICE.PAK` and `IC/VOICE.PAK`): `LAC\0`, u32 count,
 then `count × 40`-byte records — 32-byte XOR-0xFF name (NUL padded), u32
 size, u32 payload offset — payloads at `8 + count*40`. Verified exactly:
 main `38736 × 40 + 8 = 1549448` = first `OggS`, and the sum of entry sizes
-equals the byte length after that offset (`1447111922`). Exact inventories
-(measured from both archives):
+equals the byte length after that offset (`1447111922`).
 
-| | entries | canonical names | distinct line keys | malformed |
-|---|---|---|---|---|
-| `VOICE.PAK` | 38,736 | 38,734 | **38,728** | 2 |
-| `IC/VOICE.PAK` | 7,271 | 7,270 | **7,266** | 1 |
+Counts below are what `extract_assets.py` (`voice_line_key`, rule
+`[A-Za-z0-9]+(?:_[0-9]+)+_[0-9]+`) actually keeps, not a strict
+`%04d_%04d_%02d` match — the two differ:
 
-Malformed names (dropped, matching `extract_assets.py`):
-`3012_9010_01\x81H.OGG`, `3204_0075126_02.OGG` (main) and
-`1012_03625_10.OGG` (IC) — all three have a take or token field that does
-not fit the engine's `%04d_%04d_%02d` format. Keys with two takes (first
-wins in the extractor): 6 in main (`2406_8000/9000/9001/9002`,
-`2411_0070/0330`) and 4 in IC (`1005_0838`, `1007_0364`, `1010_0779`,
-`1011_0629`). Only 2 keys exist in both archives; the union is 45,992
-distinct line keys.
+| | entries | kept line keys | dropped |
+|---|---|---|---|
+| `VOICE.PAK` | 38,736 | **38,728** | 2 |
+| `IC/VOICE.PAK` | 7,271 | **7,267** | 0 |
+
+Dropped in main: `1010_0230B_04.OGG` and
+`3012_9010_01\x81H.OGG` (the latter has non-ASCII bytes). The union of both
+archives is **45,993** distinct keys (2 keys appear in both). Note that
+names such as `3204_0075126_02.OGG` and `1012_03625_10.OGG` violate the
+strict `%04d_%04d_%02d` shape but are **kept** by the extractor, because it
+accepts any run of numeric groups before the take; only the two above are
+discarded. Keys with two takes (first wins): 6 in main (`2406_8000/9000/
+9001/9002`, `2411_0070/0330`) and 4 in IC (`1005_0838`, `1007_0364`,
+`1010_0779`, `1011_0629`).
 
 ## `.bnr` presentation bytecode (LSCR, decoded statically)
 
@@ -276,13 +280,21 @@ then consumes the following `(6,30)`.
 Sub 14 = `||` is **shape inference, not verification**. The window cited
 earlier — `1010_020.bnr` entry 9999 offsets `196 (4,205)`, `204 (6,14)`,
 `212 (4,206)`, `220 (6,14)`, `228 (0,13)` — is byte-identical boilerplate
-present in *every* script's entry 9999 (2001–2005 included), so it does not
-discriminate between operators. Stack depth at all 310 `(6,14)` sites is
-≥ 2, which is compatible with `||` but equally with any other binary op.
-Treat 12/14 as `high`-by-shape only, on the same footing as the rest of the
-table; a genuine disambiguation needs the exe's operator handlers, which is
-still outstanding. What *is* verified about this section is the census
-itself (all 21 cells reproduce) and that subs 13/15 are unused.
+in **153 of 206** scripts' entry 9999, so it does not discriminate between
+operators. `OP0(13)` there *terminates* the condition
+(`build_cfg.py` reads cond ops up to `("OP0",13)`, then consumes the
+following `(6,30)`).
+
+The operators are in fact disambiguated by the exe, in `FUN_00451a60`
+(entered from `FUN_00453d30` at `0x4542c6`), which is a dense switch on
+sub-ops `0x8`–`0x1a`: `8` `==`, `9` `<`, `0xa` `>`, `0xb` `<=`, `0xc` `>=`,
+`0xd` `&&`, `0xe` `||`, `0xf` `!=`, `0x10` `+`, `0x11` `−`, `0x12` `*`,
+`0x13` `/`, `0x14` `%`, `0x15` `&`, `0x16` `|`, and `0x17`–`0x1a` unary
+`−`, `!`, `++`, `--`. In decimal that is exactly `build_cfg.py`'s
+`BIN_OPS` (8–22) and the 23/24/25/26 unary codes — the table in
+`tools/build_cfg.py` matches the engine 1:1 and needs no change. The
+census itself is also confirmed: all 21 cells reproduce, and subs
+3–7, 13, 15, 20, 24, 26 and 28–40 are unused by this corpus.
 
 | shape | meaning | confidence |
 |---|---|---|
@@ -353,11 +365,13 @@ docs/QA.md verification log):
   `FUN_00453ca0`), and ids ≥ 128 read the `.bss` array `0xb92440`.
   Because the `.fnc` copy places `param_2[id−128]` at `0xb92440 + id*4`,
   the effective handler for `id >= 128` is
-  `0x4c2610 + (id−128)*4`. Note this is **not** the same address as
-  `0x4c25c0 + id*4`: the two differ by 432 bytes (108×4), so the identity
-  `0x4c2610+(id−128)*4 == 0x4c25c0+id*4` (asserted in an earlier revision)
-  is false; the true relation is
-  `0x4c2610+(id−128)*4 == 0x4c25c0+(id−108)*4`.
+  `0x4c2610 + (id−128)*4`. The two bases are **80 bytes apart**
+  (`0x4c2610 − 0x4c25c0 = 0x50` = 20 entries), so these are different
+  addresses whenever the index differs: e.g. `id=146` gives
+  `0x4c2658` via `0x4c2610` but `0x4c2808` via raw-id indexing of
+  `0x4c25c0` — a **432-byte** (`108×4`) gap, which is why element 146 read
+  from `0x4c25c0` returns unrelated data (`0x22c9f00f`). An earlier
+  revision asserted `0x4c2610+(id−128)*4 == 0x4c25c0+id*4`, which is false.
 
   Handlers verified at `0x4c2610 + (id−128)*4`: `(4,146)`→`0x454f30`,
   `(4,147)`→`0x454fc0`, `(4,148)`→`0x455050`, `(4,164)`→`0x455720`,
