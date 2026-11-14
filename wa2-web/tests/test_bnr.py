@@ -245,8 +245,7 @@ def test_decode_amb_loop_volume_and_fade_args():
     assert amb == {"se": 3019, "ch": 2, "vol": 80, "loop": True}
 
 
-def test_decode_amb_166_fade_out_stops_channel():
-    # (4,166) [ch, V] ends the channel. V is a fade-out duration (V>0,
+def test_decode_amb_166_fade_out_stops_channel():    # (4,166) [ch, V] ends the channel. V is a fade-out duration (V>0,
     # often 300/360/420/480 in the corpus); V<=0 is an immediate stop.
     # 0x40f590 -> 0x4067a0(ch, target_volume=0, duration=V).
     for v in (0, 120, 360):
@@ -278,3 +277,18 @@ def test_decode_rejects_out_of_range_channels():
     assert not [r for r in recs if "ambStop" in r]
     recs = _decode_syn(pushes(20, 2210, 0, 0, 255, 0) + [4, 165])
     assert not [r for r in recs if "amb" in r]
+
+
+def test_split_image_records_anchor_to_base_token():
+    # A MAO `_N` split's (3,X) label maps through the base JP spine's
+    # next_event_map. 2504_2's grp CGs must land on base 2504 ev 730 etc.
+    from decode_bnr import split_image_records
+    payload = lscr_payload(
+        stmt(pushes(1, 20490, 0, 90, 0, 0, 0) + [4, 148])
+        + stmt([3, 730, 4, 144]),
+    )
+    recs = split_image_records(payload, [{"tok": 730}])
+    grp = [r for r in recs if r.get("layer") == "grp"]
+    assert len(grp) == 1
+    assert grp[0]["ev"] == 0
+    assert "204900" in grp[0]["stems"]

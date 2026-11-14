@@ -7,12 +7,12 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit + data (tools) | `pytest tests/` | 175 passed + 9 skipped |
+| unit + data (tools) | `pytest tests/` | 176 passed + 9 skipped |
 | web unit | `cd web && vitest run` | 247 passed + 6 BYOA-skipped |
 | real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | all 11 endings + special scenarios + branch ranges (BYOA) |
 | types+build | `tsc --noEmit && npm run build` | clean (`tsc --noEmit` 0 errors) |
-| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 182 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
-| save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 253 passed + 0 skipped (native slots 11/11 + 29 `Global.vrb` vars, `Sys.sav` profile) |
+| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 183 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
+| save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 254 passed + 0 skipped (native slots 11/11 + 29 `Global.vrb` vars, `Sys.sav` profile) |
 | CFG VM & bytecode | `pytest tests/test_build_cfg.py`; `vitest run cfg-vm playthrough` | 221 `.bnr` scripts compiled into `cfg.json`, zero overlapping `play` spans, `SCall`/`SetSelectMess` parity |
 | movie subtitles | `pytest tests/test_subtitles.py`; `vitest run vtt` | ASS→VTT conversion + cue/region parsing pinned (`test_subtitles.py`, `vtt.test.ts`) |
 | movie player | `vitest run reader-movie` | HUD/CC/skip/autoplay-fallback/missing-card behaviour, no DOM leak (`reader-movie.test.ts`) |
@@ -841,6 +841,24 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     already applies it. The 2502 office scene's black stage is different:
     it is an explicit `(4,147)` X=-2 clear with `sprClear:false` (the
     phone-call presentation), not a load failure.
+  - **MAO split H-scene CGs**: `2504_2.bnr` (and the other `_N` splits)
+    carries the H-scene `(4,148)` CG timeline, but the build kept it under
+    the unreachable `2504_2` key while the player reads `2504`. Its
+    `(3,X)` labels are JP token coordinates, so `decode_bnr.py` now merges
+    the split's image records into the base script through the base JP
+    spine's `next_event_map`. 2504 gets `v204900` at ev 730, `v205000` at
+    886 and `v205001` at 973; 10 split files merge this way. Live DOM
+    checks at 2504:730/886/954/973 resolve the expected `.stage-ov` CG
+    (no NSFW capture).
+  - **SE gain and settings**: `FUN_00432a50` reads `all_vol`
+    (`0x4be02c`), `bgm_vol` (`0x4be030`), `se_vol` (`0x4be034`) and
+    `voice_vol` (`0x4be038`); the exe `.data` defaults are 195/134/195/195
+    (0-255). The port had no SE gain at all (1.0), so SFX played at full
+    scale while voice used 0.9. `seVol` now defaults to **195/255
+    (0.765)** and scales direct SE, one-shots and ambient beds. A SE slider
+    was added to Settings, and the reader HUD's More menu now has
+    Settings, so levels can be changed mid-scene (audio continues while
+    the screen is open).
   - **Voice latency — HTTP Range**: packed `.vpk` refs now fetch only
     `bytes=start-end` (R2 answers 206; the measured voice line that used to
     pull a 1.5 MB chunk is 13-40 KB). A 200/416/failed range falls back to
@@ -863,10 +881,10 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     errors. Unit pins: `bgm.test.ts` one-shot/timeline cases + BYOA
     `2003` regression; `assets.test.ts` Range/fallback/preload cases;
     `tests/test_bnr.py` channel/loop/volume cases.
-  - Gates: `pytest tests/ -q` → **175 passed, 9 skipped**;
-    `WA2_EN_PAK=… pytest` → **182 passed, 2 skipped**;
+  - Gates: `pytest tests/ -q` → **176 passed, 9 skipped**;
+    `WA2_EN_PAK=… pytest` → **183 passed, 2 skipped**;
     `npx tsc --noEmit` clean; `npx vitest run` → **247 passed, 6 skipped**;
-    BYOA save corpora → **253 passed, 0 skipped**.
+    BYOA save corpora → **254 passed, 0 skipped**.
 
 ### Parity status by subsystem (measured, not asserted)
 

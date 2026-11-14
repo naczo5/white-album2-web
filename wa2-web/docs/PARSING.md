@@ -223,6 +223,35 @@ Cross-checked against the LAC archives: the five hardcoded cues in
 `2001_0086_04.OGG`, `2001_0198_05.OGG`, and **all five exist** in
 `VOICE.PAK`, which proves the CC-vs-IC order and the argument positions.
 
+### Volume stages (decompiled, high confidence)
+
+`FUN_00432a50` reads four independent gains from the game config with
+`FUN_0044d4e0`:
+
+| config key | global | exe `.data` default |
+|---|---|---|
+| `all_vol` | `0x4be02c` | 195 / 255 |
+| `bgm_vol` | `0x4be030` | 134 / 255 |
+| `se_vol` | `0x4be034` | 195 / 255 |
+| `voice_vol` | `0x4be038` | 195 / 255 |
+
+SE paths (`0x40f400`/`0x4065d0`) multiply `all_vol * se_vol`; voice
+(`0x40eda0`) multiplies `all_vol * voice_vol`. The port models the SE
+stage directly: `seVol` defaults to 195/255 and scales `(4,164)` SFX,
+one-shot `(4,165)` cues and looping beds. The reader's More → Settings
+panel and the `wa2web.seVol` setting apply it mid-scene.
+
+### MAO `_N` split image timelines
+
+MAO's `2504_2.bnr`-style splits carry the H-scene `(4,146/147/148)`
+image/CG timeline separately from the base `.bnr`. Their `(3,X)` labels
+are JP token coordinates, so `tools/decode_bnr.py` merges the split's
+image records into the base script through the base JP spine's
+`next_event_map` (`split_image_records`). 2504's `v204900`/`v205000`/
+`v205001` CGs land at ev 730/886/973; the player's CFG executed-range
+filter keeps CGs from unchosen branches off-stage.
+
+
 Archive layout (both `VOICE.PAK` and `IC/VOICE.PAK`): `LAC\0`, u32 count,
 then `count × 40`-byte records — 32-byte XOR-0xFF name (NUL padded), u32
 size, u32 payload offset — payloads at `8 + count*40`. Verified exactly:

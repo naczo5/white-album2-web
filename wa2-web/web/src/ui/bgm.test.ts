@@ -260,6 +260,18 @@ describe.skipIf(!HAS_BNR)("2003 ambience regression (BYOA bnr.json)", () => {
     expect([...timeline.values()].some((v) =>
       v.kind === "play" && v.cue.se === 8258)).toBe(false);
   });
+
+  it("merges MAO split H-scene CG records onto the base script", () => {
+    const bnr = JSON.parse(fs.readFileSync(BYOA_BNR, "utf8")) as {
+      recs: Record<string, { ev: number; layer?: string; stems?: string[] }[]>;
+    };
+    const recs = bnr.recs["2504"];
+    expect(recs).toBeTruthy();
+    const grp = recs.filter((r) => r.layer === "grp");
+    expect(grp.some((r) => r.stems?.includes("204900"))).toBe(true);
+    expect(grp.some((r) => r.stems?.includes("205000"))).toBe(true);
+    expect(grp.some((r) => r.stems?.includes("205001"))).toBe(true);
+  });
 });
 
 describe("read-only skip gate", () => {

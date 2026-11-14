@@ -102,6 +102,82 @@ def bak_stem(x: int, y: int, tod: int) -> str:
     return f"{x:04d}{y}{tod}"
 
 
+def image_records(s: list[int], ops: list[tuple[int, int]], ev: int,
+                  tod: int) -> list[dict]:
+    """Decode (4,146)/(4,147)/(4,148) image records for one statement.
+
+    Shared by the base script decoder and the MAO `_N` split merger so the
+    two paths cannot diverge.
+    """
+    out: list[dict] = []
+    has146 = any(o == 4 and a == 146 for o, a in ops)
+    has147 = any(o == 4 and a == 147 for o, a in ops)
+    has148 = any(o == 4 and a == 148 for o, a in ops)
+    if not (has146 or has147 or has148):
+        return out
+    x, y, fade = _extract_img_args(s, ops)
+    if x is None:
+        return out
+    if x == 0:
+        # X=0 is a fade/timing cue, but arg2 is independent of X:
+        # 146/148 still wipe every standing sprite, 147 keeps them.
+        spr_clear = has146 or has148
+        if fade or spr_clear:
+            out.append({"ev": ev, "fadeMs": fade or 0,
+                        "sprClear": spr_clear, "conf": "high"})
+    elif x == -2:
+        layer = "grp" if has148 else "bak"
+        spr_clear = has146 or has148
+        out.append({"ev": ev, "clear": True,
+                    "layer": layer,
+                    "sprClear": spr_clear,
+                    "conf": "high"})
+    elif x > 0:
+        layer = "grp" if has148 else "bak"
+        spr_clear = has146 or has148
+        stems = (stem_candidates(x, y) if layer == "grp"
+                 else [bak_stem(x, y, tod)])
+        out.append({"ev": ev,
+                    "layer": layer,
+                    "stems": stems,
+                    "fade": fade or 0,
+                    "sprClear": spr_clear,
+                    "conf": "high"})
+    return out
+
+
+def dedupe_recs(recs: list[dict]) -> list[dict]:
+    """Drop identical rows while keeping first-seen order."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for r in recs:
+        k = json.dumps(r, sort_keys=True)
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
+def split_image_records(payload: bytes, base_events: list[dict]) -> list[dict]:
+    """Image records from a MAO `_N` split, anchored onto the base IR.
+
+    A split .bnr still carries `(3,X)` JP-token labels; X maps through the
+    base JP spine's `next_event_map`, so 2504_2's grp CGs land on 2504's
+    ev 730/886/973 instead of being dropped with the split. Only image
+    records are merged: voices, sprites and ambience already come from the
+    base .bnr.
+    """
+    next_ev = bnr_anchor.next_event_map(base_events)
+    anchors = bnr_anchor.anchor_stmts(payload, next_ev)
+    out: list[dict] = []
+    tod = 0
+    for idx, _off, pushes, ops, _raw, _fl in iter_statements(payload):
+        s = [s32(x) for x in pushes]
+        tod = _update_tod(s, ops, tod)
+        out.extend(image_records(s, ops, anchors[idx], tod))
+    return out
+
+
 def decode_script(data: bytes, script: str) -> list[dict]:
     payload, _ = load_bnr(data, script)
     # Exact anchors via the JP token spine (bnr_anchor): the stream's
@@ -243,38 +319,7 @@ def decode_script(data: bytes, script: str) -> list[dict]:
         # 1 on 148 -> "v%06d.tga" (grp, 0x4a2a1c). Handlers 0x454f30,
         # 0x454fc0, 0x455050. Time-of-day digit comes from ds:0x5218ac via
         # (4,170) (0x455800); bak stems use (x, y, tod).
-        has146 = any(o == 4 and a == 146 for o, a in ops)
-        has147 = any(o == 4 and a == 147 for o, a in ops)
-        has148 = any(o == 4 and a == 148 for o, a in ops)
-        if has146 or has147 or has148:
-            x, y, fade = _extract_img_args(s, ops)
-            if x is None:
-                pass
-            elif x == 0:
-                # X=0 is a fade/timing cue, but arg2 is independent of X:
-                # 146/148 still wipe every standing sprite, 147 keeps them.
-                spr_clear = has146 or has148
-                if fade or spr_clear:
-                    recs.append({"ev": ev, "fadeMs": fade or 0,
-                                 "sprClear": spr_clear, "conf": "high"})
-            elif x == -2:
-                layer = "grp" if has148 else "bak"
-                spr_clear = has146 or has148
-                recs.append({"ev": ev, "clear": True,
-                             "layer": layer,
-                             "sprClear": spr_clear,
-                             "conf": "high"})
-            elif x > 0:
-                layer = "grp" if has148 else "bak"
-                spr_clear = has146 or has148
-                stems = (stem_candidates(x, y) if layer == "grp"
-                         else [bak_stem(x, y, tod)])
-                recs.append({"ev": ev,
-                             "layer": layer,
-                             "stems": stems,
-                             "fade": fade or 0,
-                             "sprClear": spr_clear,
-                             "conf": "high"})
+        recs.extend(image_records(s, ops, ev, tod))
         # fade: mode push + 1000ms + CMD(6,16)
         if (6, 16) in op_set and 1000 in s:
             recs.append({"ev": ev, "fadeMs": 1000, "conf": "high"})
@@ -287,15 +332,7 @@ def decode_script(data: bytes, script: str) -> list[dict]:
                              "cam": {"zoom": round(zoom, 2),
                                      "dur": round(dur, 1) if dur else 1.0},
                              "conf": "hypothesis"})
-    # de-dupe identical (ev, kind) rows, keep order
-    seen: set[str] = set()
-    out = []
-    for r in recs:
-        k = json.dumps(r, sort_keys=True)
-        if k not in seen:
-            seen.add(k)
-            out.append(r)
-    return out
+    return dedupe_recs(recs)
 
 
 # Standing-sprite prefix table, proven from WA2.exe .rdata strings
@@ -357,6 +394,35 @@ def main() -> None:
         rows = decode_script(src[script], script)
         if rows:
             recs[script] = rows
+    # MAO `_N` splits carry the H-scene image/CG timeline for a few scripts
+    # (e.g. 2504_2 -> 2504). Their (3,X) labels are JP token coordinates, so
+    # map them through the base JP spine and merge the image records; voices,
+    # sprites and ambience already come from the base .bnr.
+    if JPGAME is not None:
+        for split in sorted(recs):
+            if "_" not in split:
+                continue
+            base = split.rsplit("_", 1)[0]
+            if base not in recs:
+                continue
+            try:
+                e = {x.name: x for x in kcap.read_index(JPGAME)
+                     if not x.is_folder}[base + ".txt"]
+                txt = JPGAME[e.offset:e.offset + e.length]
+                if e.is_compressed:
+                    orig, lz = lzss.split_datahdr(txt)
+                    txt = lzss.decompress(lz, orig)
+                base_events = bnr_anchor.jp_spine_events(txt)
+                payload, _ = load_bnr(src[split], split)
+            except KeyError:
+                continue
+            extra = split_image_records(payload, base_events)
+            if extra:
+                merged = dedupe_recs(recs[base] + extra)
+                merged.sort(key=lambda r: r["ev"])
+                recs[base] = merged
+                print(f"bnr: merged {len(extra)} image recs "
+                      f"from {split} into {base}")
     n_high = sum(1 for v in recs.values() for r in v if r["conf"] == "high")
     n_hyp = sum(1 for v in recs.values() for r in v if r["conf"] != "high")
     print(f"bnr: {len(recs)} scripts, {n_high} high + {n_hyp} hypothesis recs")

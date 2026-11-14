@@ -5,7 +5,7 @@ import type { SaveData, SysProfile } from "./engine/types";
 import { loadGameData, resolvePackBase, type GameData } from "./ui/data";
 import { renderFlowchart, sceneLabel } from "./ui/flowchart";
 import { renderGuide, type GuideData } from "./ui/guide";
-import { ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetAudioCursors, resetPaintState, resetSkip, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
+import { applySeVolume, ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetAudioCursors, resetPaintState, resetSkip, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
 import { stopMovie } from "./ui/movie";
 import { applyProfileToRun, renderSaves } from "./ui/saves";
 import "./style.css";
@@ -18,6 +18,7 @@ interface Settings {
   textSpeed: number; // chars/sec, 0 = instant
   autoDelay: number; // ms, 0 = off
   voiceVol: number; // 0..1
+  seVol: number; // 0..1; engine default se_vol = 195/255
   bgmVol: number; // 0..1
   skipRead: boolean; // true: Ctrl skips only already-read lines
   dev: boolean; // dev mode: scene-jump buttons in the flowchart
@@ -45,6 +46,7 @@ const settings: Settings = {
   textSpeed: storedNumber("wa2web.textSpeed", 45, 0, 120),
   autoDelay: storedNumber("wa2web.autoDelay", 0, 0, 8000),
   voiceVol: storedNumber("wa2web.voiceVol", 0.9, 0, 1),
+  seVol: storedNumber("wa2web.seVol", 195 / 255, 0, 1),
   bgmVol: storedNumber("wa2web.bgmVol", 0.7, 0, 1),
   skipRead: safeStorageGet("wa2web.skipRead") === "1",
   dev: safeStorageGet("wa2web.dev") === "1",
@@ -61,6 +63,7 @@ function persistSettings(): void {
     localStorage.setItem("wa2web.textSpeed", String(settings.textSpeed));
     localStorage.setItem("wa2web.autoDelay", String(settings.autoDelay));
     localStorage.setItem("wa2web.voiceVol", String(settings.voiceVol));
+    localStorage.setItem("wa2web.seVol", String(settings.seVol));
     localStorage.setItem("wa2web.bgmVol", String(settings.bgmVol));
     localStorage.setItem("wa2web.skipRead", settings.skipRead ? "1" : "0");
     localStorage.setItem("wa2web.dev", settings.dev ? "1" : "0");
@@ -550,6 +553,7 @@ function render(): void {
         textSpeed: settings.textSpeed,
         autoDelay: settings.autoDelay,
         voiceVol: settings.voiceVol,
+        seVol: settings.seVol,
         bgmVol: settings.bgmVol,
         skipRead: settings.skipRead,
         dev: settings.dev,
@@ -720,6 +724,10 @@ function render(): void {
             <span class="range-row"><input type="range" id="vv" min="0" max="100" value="${Math.round(settings.voiceVol * 100)}"> <span class="range-out" id="vv-val">${Math.round(settings.voiceVol * 100)}%</span></span>
           </label>
           <label class="setting">
+            <span class="setting-label">Sound-effect volume<small>SFX and ambient cues. The original game's default is 77% (se_vol 195/255).</small></span>
+            <span class="range-row"><input type="range" id="sv" min="0" max="100" value="${Math.round(settings.seVol * 100)}"> <span class="range-out" id="sv-val">${Math.round(settings.seVol * 100)}%</span></span>
+          </label>
+          <label class="setting">
             <span class="setting-label">Music volume<small>Background music only; sound effects keep their own mix.</small></span>
             <span class="range-row"><input type="range" id="bv" min="0" max="100" value="${Math.round(settings.bgmVol * 100)}"> <span class="range-out" id="bv-val">${Math.round(settings.bgmVol * 100)}%</span></span>
           </label>
@@ -793,6 +801,14 @@ function render(): void {
       if (voice) voice.volume = settings.voiceVol;
       const out = app.querySelector("#vv-val");
       if (out) out.textContent = `${Math.round(settings.voiceVol * 100)}%`;
+      persistSettings();
+    };
+    const sv = app.querySelector("#sv") as HTMLInputElement;
+    sv.oninput = () => {
+      settings.seVol = Number(sv.value) / 100;
+      applySeVolume(settings.seVol);
+      const out = app.querySelector("#sv-val");
+      if (out) out.textContent = `${Math.round(settings.seVol * 100)}%`;
       persistSettings();
     };
     const bv = app.querySelector("#bv") as HTMLInputElement;

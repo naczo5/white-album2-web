@@ -13,6 +13,8 @@ export interface ReaderSettings {
   textSpeed: number; // chars per second, 0 = instant
   autoDelay: number; // ms after line completes, 0 = off
   voiceVol: number; // 0..1
+  /** Sound-effect/ambience gain; engine default se_vol = 195/255. */
+  seVol?: number; // 0..1
   bgmVol: number; // 0..1
   /** Skip mode: "all" skips everything, "read" stops at unread lines. */
   skipRead: boolean;
@@ -625,6 +627,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
             <button data-quick="load" class="hud-quick" title="Quick load">Q.Load</button>
             <button data-act="saves">Save</button>
             <span class="hud-more" role="menu" aria-label="More actions">
+              <button data-act="settings" role="menuitem">Settings</button>
               <button data-act="flow" role="menuitem">Chart</button>
               <button data-act="guide" role="menuitem">Guide</button>
               <button data-quick="save" class="hud-more-quick" role="menuitem" title="Quick save">Quick save</button>
@@ -759,9 +762,10 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   autoBtn.textContent = "Auto";
   autoBtn.title = autoOn ? "Auto-play on (click to pause)" : "Auto-play off";
 
+  const seVol = h.settings.seVol ?? 0.765;
   paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol, !!h.demo, !!h.settings.dev, ev?.t === "movie");
-  fireSe(save);
-  updateAmbient(save, ev?.t === "movie");
+  fireSe(save, seVol);
+  updateAmbient(save, seVol, ev?.t === "movie");
   // Hide-text state survives a re-render (Auto toggle, settings) but never
   // leaks in from another screen with no visible way to undo it.
   const shell = el.querySelector(".reader") as HTMLElement;
@@ -2030,7 +2034,8 @@ export function setBnrLookup(fn: BnrLookup | null): void {
 // directive events must still fire theirs.
 let seCursor: { script: string; ev: number } | null = null;
 
-function playSeUrl(url: string): void {
+function playSeUrl(url: string, volume: number): void {
+  const level = Math.max(0, Math.min(1, volume));
   const start = (src: string) => {
     const audio = document.getElementById("se") as HTMLAudioElement | null;
     if (!audio) return;
@@ -2038,9 +2043,11 @@ function playSeUrl(url: string): void {
       // Two SEs can share one anchor event. Keep the shared element for the
       // first and play overlaps on a transient element instead of cutting.
       const extra = new Audio(src);
+      extra.volume = level;
       extra.play().catch(() => undefined);
       return;
     }
+    audio.volume = level;
     audio.src = src;
     audio.play().catch(() => undefined);
   };
@@ -2053,7 +2060,7 @@ function playSeUrl(url: string): void {
   });
 }
 
-function fireSe(save: SaveData): void {
+function fireSe(save: SaveData, seVol = 0.765): void {
   const script = save.position.script;
   const ev = save.position.event;
   const cur = seCursor;
@@ -2067,7 +2074,7 @@ function fireSe(save: SaveData): void {
   const ch = chapterOfScript(script);
   for (const id of resolveSeIds(recs, from, ev, activeExecutedRanges(save))) {
     const url = seUrl(id, ch);
-    if (url) playSeUrl(url);
+    if (url) playSeUrl(url, seVol);
   }
 }
 
@@ -2196,7 +2203,7 @@ function stopAllOneShots(): void {
 /** Play a one-shot channel cue, replacing whatever the channel played.
  * The resolved blob may arrive after the story moved on; the per-channel
  * sequence makes that stale result a no-op. */
-function playChannelOneShot(cue: AmbCue, url: string): void {
+function playChannelOneShot(cue: AmbCue, url: string, seVol = 0.765): void {
   const ch = cue.ch;
   stopOneShotChannel(ch);
   const seq = oneShotSeq.get(ch) ?? 0;
@@ -2210,7 +2217,8 @@ function playChannelOneShot(cue: AmbCue, url: string): void {
     }
     a.pause();
     a.loop = false;
-    a.volume = Math.max(0, Math.min(1, cue.vol / 255));
+    a.dataset.vol = String(cue.vol / 255);
+    a.volume = Math.max(0, Math.min(1, (cue.vol / 255) * seVol));
     a.src = src;
     a.play().catch(() => undefined);
   };
@@ -2240,7 +2248,7 @@ export function resetAudioCursors(): void {
   (document.getElementById("se") as HTMLAudioElement | null)?.pause();
 }
 
-function updateAmbient(save: SaveData, movieNext = false): void {
+function updateAmbient(save: SaveData, seVol = 0.765, movieNext = false): void {
   if (audioSuspended || moviePlaying() || movieNext) {
     for (const a of ambElsPlaying()) if (!a.paused) a.pause();
     return;
@@ -2283,7 +2291,7 @@ function updateAmbient(save: SaveData, movieNext = false): void {
         stopOneShotChannel(cue.ch);
         continue;
       }
-      playChannelOneShot(cue, url);
+      playChannelOneShot(cue, url, seVol);
     }
     ambCursor = { script, ev };
   }
@@ -2312,7 +2320,8 @@ function updateAmbient(save: SaveData, movieNext = false): void {
     if (a.dataset.cur === url) {
       // Same loop still active: never restart it on a re-render.
       a.loop = true;
-      a.volume = Math.max(0, Math.min(1, cue.vol / 255));
+      a.dataset.vol = String(cue.vol / 255);
+      a.volume = Math.max(0, Math.min(1, (cue.vol / 255) * seVol));
       if (a.paused && a.src) a.play().catch(() => undefined);
       continue;
     }
@@ -2321,7 +2330,8 @@ function updateAmbient(save: SaveData, movieNext = false): void {
     stopOneShotChannel(chan);
     a.dataset.cur = url;
     a.loop = true;
-    a.volume = Math.max(0, Math.min(1, cue.vol / 255));
+    a.dataset.vol = String(cue.vol / 255);
+    a.volume = Math.max(0, Math.min(1, (cue.vol / 255) * seVol));
     if (!url.includes("#")) {
       a.src = url;
       a.play().catch(() => undefined);
@@ -2534,6 +2544,19 @@ let audioSuspended = false;
 
 function ambElsPlaying(): HTMLAudioElement[] {
   return [...ambEls.values()];
+}
+
+/** Apply a new sound-effect gain to everything already playing. Each
+ * element stores its cue's base gain in data-vol, so moving the SE slider
+ * scales the current mix without losing per-cue volume. */
+export function applySeVolume(vol: number): void {
+  const level = Math.max(0, Math.min(1, vol));
+  const se = document.getElementById("se") as HTMLAudioElement | null;
+  if (se) se.volume = level;
+  for (const a of [...ambEls.values(), ...oneShotEls.values()]) {
+    const base = Number(a.dataset.vol ?? 1);
+    a.volume = Math.max(0, Math.min(1, (Number.isFinite(base) ? base : 1) * level));
+  }
 }
 
 /** Pause every music/voice/ambience element, remembering which were live. */
