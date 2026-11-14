@@ -7,11 +7,11 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit + data (tools) | `pytest tests/` | 172 passed + 9 skipped |
+| unit + data (tools) | `pytest tests/` | 175 passed + 9 skipped |
 | web unit | `cd web && vitest run` | 247 passed + 6 BYOA-skipped |
 | real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | all 11 endings + special scenarios + branch ranges (BYOA) |
 | types+build | `tsc --noEmit && npm run build` | clean (`tsc --noEmit` 0 errors) |
-| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 179 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
+| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 182 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
 | save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 253 passed + 0 skipped (native slots 11/11 + 29 `Global.vrb` vars, `Sys.sav` profile) |
 | CFG VM & bytecode | `pytest tests/test_build_cfg.py`; `vitest run cfg-vm playthrough` | 221 `.bnr` scripts compiled into `cfg.json`, zero overlapping `play` spans, `SCall`/`SetSelectMess` parity |
 | movie subtitles | `pytest tests/test_subtitles.py`; `vitest run vtt` | ASS→VTT conversion + cue/region parsing pinned (`test_subtitles.py`, `vtt.test.ts`) |
@@ -832,6 +832,15 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     51 V≤0 stops). And `(4,165)` requires the op-first six-push shape. Six intro statements with
     `(4,5),(3,X),(4,165)` carry only five pushes and were producing fake
     `ch:15` loops (SE 3019 in `1008_020`, etc.); they are rejected.
+  - **Sprite clear on fade-only image cues**: `(4,146)` and `(4,148)`
+    pass `arg2=0` (wipe standing sprites) even when X=0 is a fade/timing
+    cue, but the decoder emitted only `fadeMs`. In 2503 the ev230/272
+    fades therefore left the ev218 `you002104` sprite on stage through
+    ev330 (a character from the previous scene). X=0 records now carry
+    `sprClear:true` for 146/148 (147 keeps), +55 records. `resolveSprites`
+    already applies it. The 2502 office scene's black stage is different:
+    it is an explicit `(4,147)` X=-2 clear with `sprClear:false` (the
+    phone-call presentation), not a load failure.
   - **Voice latency — HTTP Range**: packed `.vpk` refs now fetch only
     `bytes=start-end` (R2 answers 206; the measured voice line that used to
     pull a 1.5 MB chunk is 13-40 KB). A 200/416/failed range falls back to
@@ -854,8 +863,8 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     errors. Unit pins: `bgm.test.ts` one-shot/timeline cases + BYOA
     `2003` regression; `assets.test.ts` Range/fallback/preload cases;
     `tests/test_bnr.py` channel/loop/volume cases.
-  - Gates: `pytest tests/ -q` → **172 passed, 9 skipped**;
-    `WA2_EN_PAK=… pytest` → **179 passed, 2 skipped**;
+  - Gates: `pytest tests/ -q` → **175 passed, 9 skipped**;
+    `WA2_EN_PAK=… pytest` → **182 passed, 2 skipped**;
     `npx tsc --noEmit` clean; `npx vitest run` → **247 passed, 6 skipped**;
     BYOA save corpora → **253 passed, 0 skipped**.
 

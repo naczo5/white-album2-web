@@ -128,6 +128,30 @@ def test_decode_img_op146_bak_sprclear_tod_default():
     _img_row(recs, layer="bak", sprClear=True, stems=["100100"])
 
 
+def test_decode_img_op146_x0_fade_still_wipes_sprites():
+    # (4,146) passes arg2=0 to 0x4167e0 regardless of X; a fade cue must
+    # still clear sprites. This is the 2503 ev230/272 transition that left
+    # a previous-scene character on stage.
+    recs = _decode_syn(pushes(1, 0, 0, 120, 0, 0, 0) + [4, 146])
+    fade = [r for r in recs if "fadeMs" in r]
+    assert len(fade) == 1
+    assert fade[0]["sprClear"] is True
+
+
+def test_decode_img_op147_x0_fade_keeps_sprites():
+    recs = _decode_syn(pushes(1, 0, 0, 120, 0, 0, 0) + [4, 147])
+    fade = [r for r in recs if "fadeMs" in r]
+    assert len(fade) == 1
+    assert not fade[0].get("sprClear")
+
+
+def test_decode_img_op148_x0_fade_wipes_sprites():
+    recs = _decode_syn(pushes(1, 0, 0, 120, 0, 0, 0) + [4, 148])
+    fade = [r for r in recs if "fadeMs" in r]
+    assert len(fade) == 1
+    assert fade[0]["sprClear"] is True
+
+
 def test_decode_img_op147_bak_keeps_sprites():
     recs = _decode_syn(pushes(1, 1001, 0, 60, 0, 0, 0) + [4, 147])
     _img_row(recs, layer="bak", sprClear=False, stems=["100100"])

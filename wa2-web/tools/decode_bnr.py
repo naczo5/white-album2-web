@@ -251,8 +251,12 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             if x is None:
                 pass
             elif x == 0:
-                if fade:
-                    recs.append({"ev": ev, "fadeMs": fade, "conf": "high"})
+                # X=0 is a fade/timing cue, but arg2 is independent of X:
+                # 146/148 still wipe every standing sprite, 147 keeps them.
+                spr_clear = has146 or has148
+                if fade or spr_clear:
+                    recs.append({"ev": ev, "fadeMs": fade or 0,
+                                 "sprClear": spr_clear, "conf": "high"})
             elif x == -2:
                 layer = "grp" if has148 else "bak"
                 spr_clear = has146 or has148
