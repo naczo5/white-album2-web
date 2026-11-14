@@ -782,7 +782,8 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     clip). This is the desired failure direction.
   - **Known unmodelled field**: line base `DAT_00a391ec` is added to the
     voice line number and persists at save slot `[0x445]`
-    (`0x423650+0x163` write, `0x423ea0+0x119` restore).
+    (`0x423a18` write — `mov [ebx+0x1114], edx`, `0x1114/4 = 0x445`;
+    `0x423e33` restore — `mov [0xa391ec], ebx`).
     `native-save.ts` does not read `0x445`; it is 0 in all 13 observed
     saves, so no current divergence. Left as a tracked gap, not guessed.
   - **Root cause of "voices stopped" (deploy, not engine)**: the R2 bucket

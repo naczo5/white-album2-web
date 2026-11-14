@@ -189,26 +189,32 @@ wsprintfA(buf, "%04d_%04d_%02d.ogg", script, line, take);
 
 - `take` is argument 2, `script` argument 3, **`line` argument 4** — so the
   engine indexes voice by *script id + line number*, never by comma-token.
-- `line` is offset before formatting: `param_4 + DAT_00a391ec`
-  (`0x40eda0+0x20`). `DAT_00a391ec` is a persistent **line base** that is
-  written to save slot `[0x445]` (`0x423650+0x163`) and restored on load
-  (`0x423ea0+0x119`). Our importer does not read `0x445` yet; it is 0 in
-  every observed save, so no current divergence — but it is a real field.
+- `line` is offset before formatting (`mov ... add`, the `0xa391ec` reference
+  at `0x40edcb` inside the function body). `DAT_00a391ec` is a persistent
+  **line base**: written to save slot `[0x445]` by
+  `0x423a18` (`89 93 14 11 00 00` = `mov [ebx+0x1114], edx`; `0x1114/4 =
+  0x445`) and restored at `0x423e33` (`89 1d ec 91 a3 00` = `mov
+  [0xa391ec], ebx`); read back at `0x423fff`. Our importer does not read
+  `0x445` yet; it is 0 in every observed save, so no current divergence. 
 - Lookup order is CC first, then IC: `FUN_00461400(...,2,...)` (CC table)
   is tried, and only if it fails does the `DAT_00a730b4`/`DAT_00a730b8`
   branch try `FUN_00461400(...,5,...)` (IC table). Confirmed by the log
-  strings `PLAY_CC` / `ERR_NO_FILE_CC` then `PLAY_IC` / `ERR_NO_FILE_IC`
-  at `0x4a2558`/`0x4a2578`.
+  strings `PLAY_CC` (`0x4a25a9`), `ERR_NO_FILE_CC` (`0x4a2625`) then
+  `PLAY_IC` (`0x4a25c5`), `ERR_NO_FILE_IC` (`0x4a25e1`). (`0x4a2558` /
+  `0x4a2578` are instead the `FIND_FILE_CC` / `FIND_FILE_IC` messages,
+  used by the pre-check branch at `0x40f3xx` — an earlier revision cited
+  those two as the PLAY strings, which was wrong.)
 - `_a` variant: when `DAT_00a391fc != 0` the engine formats
-  `"%04d_%04d_%02d_a"` first and falls back to the plain form
-  (`0x40eda0+0xd7`). Nothing in the image stores to `0x00a391fc` — a
+  `"%04d_%04d_%02d_a"` first and falls back to the plain form (the
+  `0x4a2644` format push is at `0x40ef71`). Nothing in the image stores to
+  `0x00a391fc` — a
   scan for `A2`/`A3`/`88 05`/`89 05`/`C6 05`/`C7 05` stores at that
   address finds none, and both references (`0xe31d`, `0xe6c7`) are
   `cmp [0xa391fc],0` reads — so the flag stays at its `.data` default and
   the branch is dead. Consistent with retail `VOICE.PAK`/`IC/VOICE.PAK`
   shipping **zero** `_a` clips (0 of 46,007 entry names checked).
-- `voice\buf\%s` is the streaming copy target (`CopyFileA` at
-  `0x40eda0+0x28`), not a second asset namespace.
+- `voice\buf\%s` is the streaming copy target (`CopyFileA` import call at
+  `0x40ee50`, the `0x4a1068` IAT slot), not a second asset namespace.
 
 Cross-checked against the LAC archives: the five hardcoded cues in
 `0x41f990` — `(0,1,0x9c7,99)`, `(0,2,0x7d2,0xf2)`, `(0,3,0x7eb,0xdf)`,
@@ -263,24 +269,20 @@ files (statement stream decoded with the project's own
 
 `30` (300,153×) is the statement terminator, `27` (2,804×) the array-index
 op, `23` (11,888×) unary minus, `16` add. **13 and 15 never occur**, which
-is why `&&`/`||` at 13/14 cannot both be right — and the bytecode settles
-it: in `1010_020.bnr` entry 9999 the sequence
+is why `&&`/`||` at 13/14 cannot both be right. `OP0(13)` is the IF-condition
+**terminator**: `build_cfg.py` reads condition ops *up to* `("OP0",13)` and
+then consumes the following `(6,30)`.
 
-```
-196 (4,205)   204 (6,14)   212 (4,206)   220 (6,14)   228 (0,13)
-```
-
-is two engine calls joined by `(6,14)`, with `(0,13)` opening the
-conditional block that consumes the combined boolean — i.e.
-`if (call(205) || call(206))`, so **14 = `||`** (310 uses; 13 = `&&` with
-0 uses, consistent — no `&&` anywhere in this corpus).
-Likewise `1002.bnr` @105528–105564 reads `(2,19)` array base,
-`(6,27)` index, then `(6,11)`, i.e. an index comparison ending in `<=`
-(sub 11), and `1010_020` entry 9994 @1336 applies `(6,12)` directly to a
-global gate, consistent with `>=`. Rows 12 and 14 are therefore
-**corpus-verified**; 8-10 and 17-22 remain `high` from the exe's dispatch
-(`0x41f990` family) but are exercised far less, so treat single-script
-divergence there as the first thing to re-check.
+Sub 14 = `||` is **shape inference, not verification**. The window cited
+earlier — `1010_020.bnr` entry 9999 offsets `196 (4,205)`, `204 (6,14)`,
+`212 (4,206)`, `220 (6,14)`, `228 (0,13)` — is byte-identical boilerplate
+present in *every* script's entry 9999 (2001–2005 included), so it does not
+discriminate between operators. Stack depth at all 310 `(6,14)` sites is
+≥ 2, which is compatible with `||` but equally with any other binary op.
+Treat 12/14 as `high`-by-shape only, on the same footing as the rest of the
+table; a genuine disambiguation needs the exe's operator handlers, which is
+still outstanding. What *is* verified about this section is the census
+itself (all 21 cells reproduce) and that subs 13/15 are unused.
 
 | shape | meaning | confidence |
 |---|---|---|
@@ -323,33 +325,48 @@ occur exactly 2× each).
 Static findings from WA2.exe (.text 0x401000, .rdata 0x4a1000; see
 docs/QA.md verification log):
 
-- LSCR dispatch table: **.data VA `0x4c2610`**, 112 handler thunks, indexed
-  by **`id − 128`**. This is the registration default, not the live call
-  target. `FUN_004178f0`/`FUN_00417a40` call
+- LSCR function dispatch is **two separate pointer arrays** in `.data`:
+  - `0x4c25c0` — **19** entries (indices 0–18), terminated by a NULL at
+    `0x4c260c` (index 19).
+  - `0x4c2610` — a **separate 112-entry** block running to `0x4c27d0`,
+    where the next word is NULL again.
+  `FUN_004178f0`/`FUN_00417a40` register the second one as the **`script`
+  (index 9)** function table via
   `FUN_004505c0("LFScriptFuncEx.fnc", &PTR_LAB_004c2610)` after
-  `FUN_00452ae0(0,"script",9,0,0)` — this is the **`script` (index 9)
-  function table**. `FUN_004505c0` reads the `.fnc` header count and, when
-  it exceeds `0x7f`, copies `param_2` into the runtime array
-  `DAT_00b92440` (in `.bss`, so absent from the file image).
+  `FUN_00452ae0(0,"script",9,0,0)` (push sites `0x4179c3`/`0x417b3a`).
+  `FUN_004505c0` reads the `.fnc` header count and, when it exceeds `0x7f`,
+  copies `param_2` into the runtime array `DAT_00b92440` (in `.bss`, so
+  absent from the file image).
+
   The live dispatch is `FUN_00453d30` @`0x453f8c`:
-  `mov eax,[esi+0x8b3c]` (`0x8b3c` holds the current function id) →
-  `cmp eax,0x80` → `jge` → for `id < 0x80` an inlined chain (0 →
-  `FUN_00452490`, 1 → `FUN_00453c10`, 2 → `FUN_00453ca0`, else
-  `PTR_LAB_004c25c0[id]`), and for `id >= 0x80`
-  `(**(code **)(&DAT_00b92440 + id*4))(ctx)`. Byte-level: `8b 0c 85 c0 25
-  4c 00` at `0x453fc3` is `mov ecx,[eax*4+0x4c25c0]` (the small-id path),
-  while the ≥128 path reads `DAT_00b92440`. Because the `.fnc` copy puts
-  element `id` of `param_2` at `DAT_00b92440 + id*4`, and
-  `param_2 = 0x4c2610 = 0x4c25c0 + 20*4`, the effective address is
-  `0x4c2610 + (id−128)*4` — so the documented `id − 128` arithmetic is
-  correct, just achieved through the copied array rather than a direct
-  read of `0x4c2610`.
-  Handlers verified at their documented ids: `(4,146)`→idx 18→`0x454f30`,
-  `(4,147)`→idx 19→`0x454fc0`, `(4,148)`→idx 20→`0x455050`,
-  `(4,170)`→idx 42→`0x455800`, plus `(4,164)`→idx 36→`0x455720` and
-  `(4,165)`→idx 37→`0x455740`, all matching the rows below; `0x454f30`
-  decompiles to a `FUN_004167e0` call with **arg3 = 0** exactly as the
-  `(4,146)` row claims.
+
+  ```
+  453f8c: 8b 86 3c 8b 00 00      mov  eax,[esi+0x8b3c]   ; current fn id
+  453f92: 3d 80 00 00 00         cmp  eax,0x80
+  453f9e: 7d 34                  jge  0x453fd4          ; ids >= 128
+  453fc9: 8b 0c 85 c0 25 4c 00   mov  ecx,[eax*4+0x4c25c0]  ; 3<=id<128
+  453fd4: 8b 14 85 40 24 b9 00   mov  edx,[eax*4+0xb92440]  ; id >= 128
+  ```
+
+  So the `0x4c25c0` read is the **fall-through for ids < 128** that are not
+  0/1/2 (those three are inlined: `FUN_00452490`, `FUN_00453c10`,
+  `FUN_00453ca0`), and ids ≥ 128 read the `.bss` array `0xb92440`.
+  Because the `.fnc` copy places `param_2[id−128]` at `0xb92440 + id*4`,
+  the effective handler for `id >= 128` is
+  `0x4c2610 + (id−128)*4`. Note this is **not** the same address as
+  `0x4c25c0 + id*4`: the two differ by 432 bytes (108×4), so the identity
+  `0x4c2610+(id−128)*4 == 0x4c25c0+id*4` (asserted in an earlier revision)
+  is false; the true relation is
+  `0x4c2610+(id−128)*4 == 0x4c25c0+(id−108)*4`.
+
+  Handlers verified at `0x4c2610 + (id−128)*4`: `(4,146)`→`0x454f30`,
+  `(4,147)`→`0x454fc0`, `(4,148)`→`0x455050`, `(4,164)`→`0x455720`,
+  `(4,165)`→`0x455740`, `(4,170)`→`0x455800`, all matching the rows below.
+  `0x454f30` decompiles to a `FUN_004167e0` call with **arg3 = 0** exactly
+  as the `(4,146)` row claims; `0x455740` pushes **6** arguments and calls
+  `0x40f400`; `0x455720` pushes 2. Reading `0x4c25c0` at a raw index ≥ 19
+  returns data past that array (e.g. index 146 → `0x4c2808` → `0x22c9f00f`),
+  which is why the `id−128` form is the one to use.
   **handler index = opcode − 128** (validated: entry 36 = op 164 = SE
   thunk 0x455720, entry 37 = op 165 = channel-SE 0x40f400). Push values
   reach handlers from ctx `+0x18 + 0x14*i` (push[i] at 0x18, 0x2c, 0x40…).
