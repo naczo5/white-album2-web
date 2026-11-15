@@ -117,9 +117,4 @@ choice history. Optional timed voice/SE captions come from
 `wa2-web/docs/QA.md`; self-packaging and size tiers:
 `wa2-web/docs/PACKAGING.md`.
 
-## Hosting
-
-I am currently not hosting a public full pack in this repository; hosting
-is treated independently from the engine/tooling source.
-If you want to discuss hosting, write to naczo5@proton.me.
 
