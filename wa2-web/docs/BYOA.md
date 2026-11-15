@@ -176,3 +176,54 @@ To minimize HTTP requests and object counts on external static hosts, run
 to merge `data/` into `data/bundle.json` and chunk `voice/` + `sfx/` into `assets/vpk/*.vpk`.
 The player has no server component and fetches the pack directly from the
 browser. See [LEGAL.md](LEGAL.md).
+
+## 5. Timed captions (optional)
+
+`data/captions.json` adds optional timed captions to voice clips and sound
+effects. It is BYOA input like the rest of `data/`: the repository ships no
+caption/subtitle text, and nothing breaks when the file is absent. Put it
+next to `bgm.json`/`bnr.json` (`web/public/data/captions.json` for a local
+build, `data/captions.json` under an external pack root).
+
+```json
+{
+  "version": 1,
+  "voice": {
+    "1008_0199": [
+      { "begin": 0, "end": 1400, "text": "…" },
+      { "begin": 1400, "end": 2650, "text": "…" }
+    ]
+  },
+  "se": {
+    "1234": [
+      { "begin": 250, "end": 900, "text": "…" }
+    ]
+  }
+}
+```
+
+- `version` is `1`.
+- `voice` maps a **manifest voice key** to its cues. Keys are the same
+  strings used in `assets/manifest.json` under `voice`: `{script}_{line}`
+  for the main game (for example `1008_0199`) and `ic/{script}_{line}` for
+  the introductory chapter (for example `ic/1002_0000`). To find one, open
+  your generated `assets/manifest.json` and read the keys of the `voice`
+  object (the value is the clip path), or read `data/voicemap.json` —
+  `map[script][event]` holds that key for a voiced line (a string value is
+  the exact manifest key). Older packs may use a numeric BNR token instead;
+  those lines have no manifest key and cannot bind a caption until the map
+  is rebuilt. Variant scripts share their family's clip, so use the key the
+  manifest actually contains.
+  This schema is inspired by the peer `galhack/WhiteAlbum2_iOS` timed
+  subtitle format (Apache-2.0); the JSON shape and controller here are
+  independent. See the root README credits.
+- `se` maps a numeric sound-effect id (as a JSON string) to its cues.
+  Sound-effect ids appear in `data/bnr.json` as `recs[script][].se`
+  (opcode `(4,164)`) and as `amb.se` (ambient, `(4,165)`); a cue is timed
+  from the start of that clip.
+- Every cue is `{begin, end, text}` with millisecond offsets from the start
+  of the clip. The interval is half-open: `begin` is inclusive, `end` is
+  exclusive. Cues for one key are independent; overlaps are allowed.
+- `text` is whatever you supply (your own translation or description).
+  Captions are presentation data, never a replacement for the scenario
+  text, and are not redistributed by this repository.

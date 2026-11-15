@@ -75,3 +75,36 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT
 OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
 THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
+
+## galhack/WhiteAlbum2_iOS — Apache-2.0 / MIT (reference and cross-validation)
+
+Unofficial native Godot port of WHITE ALBUM 2 for Apple platforms:
+<https://github.com/galhack/WhiteAlbum2_iOS>.
+
+- WA2 Godot porting code: Apache License, Version 2.0.
+  Copyright 2026 WA2 Godot port contributors.
+- `addons/wmv_video` WMV Video GDExtension: MIT License.
+- The complete upstream license texts are in that repository's `LICENSE`,
+  `LICENSES/Apache-2.0.txt` and `addons/wmv_video/LICENSE`.
+
+This project used `galhack/WhiteAlbum2_iOS` as a **reference and
+cross-validation source**, and **reproduces two functional tables** from its
+Apache-2.0 code: the 33-entry CK-GAL private glyph map
+(`script/Wa2Encoding.cs`) and the 24-row scene-replay table
+(`script/Wa2Def.cs`, `SceneSlots`). The web engine, player and all other data
+formats here are independent implementations. The material used is
+functional, not expressive:
+engine/script identifiers; the 33-glyph CK-GAL private glyph map for save
+text; PC save layout handling (`ScriptPos`, jump stack, locals, args) and
+its fail-closed conversion rules; LSCR `(4,2)` same-script call and
+helper-entry semantics; weather/shake/calendar behavior notes; the shape of
+a timed-caption schema (our JSON schema is independent); and CG
+gallery/scene replay slot tables.
+
+No game content was copied from that project or is distributed here: no
+scenario text, images, audio, movies, fonts or bundled subtitle data. All
+game assets remain user-supplied.
+
+The full Apache-2.0 license text is included in
+[`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt) and is also available at
+<https://www.apache.org/licenses/LICENSE-2.0>.

@@ -42,6 +42,17 @@ describe("saves", () => {
     expect(deserialize(raw).log).toEqual([{ speaker: "", text: "ok" }]);
   });
 
+  it("keeps a validated backlog voice position across reloads", () => {
+    const s = newSave("x", { script: "2019", event: 1 });
+    s.log = [
+      { speaker: "A", text: "hi", at: { script: "1007", event: 1837 } },
+      { speaker: "B", text: "bad", at: { script: 1007, event: -1 } as never },
+    ];
+    const back = deserialize(serialize(s));
+    expect(back.log[0]?.at).toEqual({ script: "1007", event: 1837 });
+    expect(back.log[1]?.at).toBeUndefined();
+  });
+
   it("rejects wrong versions and malformed positions", () => {
     expect(() => deserialize('{"version":2}')).toThrow();
     expect(() => deserialize('{"version":1}')).toThrow();

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- WHITE ALBUM 2 web port mark: a snowy album label.
+       Six-fold flake in the interface aqua, gold record label (the "2"
+       spindle hole), deep winter water behind it. Original engine art. -->
+  <title>WHITE ALBUM 2</title>
+  <defs>
+    <radialGradient id="water" cx="36%" cy="24%" r="95%">
+      <stop offset="0" stop-color="#155968"/>
+      <stop offset=".52" stop-color="#0a2c37"/>
+      <stop offset="1" stop-color="#04161d"/>
+    </radialGradient>
+    <linearGradient id="snow" gradientUnits="userSpaceOnUse" x1="32" y1="56" x2="32" y2="8">
+      <stop offset="0" stop-color="#a9f3ee"/>
+      <stop offset=".5" stop-color="#f4fffe"/>
+      <stop offset="1" stop-color="#ffffff"/>
+    </linearGradient>
+    <g id="spoke" fill="none" stroke="url(#snow)" stroke-linecap="round">
+      <path d="M32 11.8v40.4" stroke-width="4"/>
+      <path d="M32 19.4l5.14-3.47M32 19.4l-5.14-3.47M32 44.6l5.14 3.47M32 44.6l-5.14 3.47" stroke-width="3.6"/>
+    </g>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#water)"/>
+  <rect x=".75" y=".75" width="62.5" height="62.5" rx="13.5" fill="none" stroke="#a7f6f0" stroke-opacity=".2" stroke-width="1.5"/>
+  <circle cx="32" cy="31" r="21" fill="#52e3dd" opacity=".1"/>
+  <use href="#spoke"/>
+  <use href="#spoke" transform="rotate(60 32 32)"/>
+  <use href="#spoke" transform="rotate(120 32 32)"/>
+  <circle cx="32" cy="32" r="5.2" fill="#f0dc9a"/>
+  <circle cx="32" cy="32" r="1.7" fill="#04161d"/>
+</svg>

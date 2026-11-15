@@ -154,10 +154,24 @@ export function deserialize(json: string): SaveData {
   data.log = Array.isArray(data.log)
     ? data.log
       .filter((l) => l && typeof (l as { text?: unknown }).text === "string")
-      .map((l) => ({
-        speaker: typeof l.speaker === "string" ? l.speaker : "",
-        text: l.text,
-      }))
+      .map((l) => {
+        const entry: { speaker: string; text: string; at?: { script: string; event: number } } = {
+          speaker: typeof l.speaker === "string" ? l.speaker : "",
+          text: l.text,
+        };
+        // Backlog voice replay needs the source position; keep it across
+        // reloads, but only as a validated pair (a stale/hand-edited save
+        // must not point the player at an arbitrary script).
+        const at = (l as { at?: unknown }).at;
+        if (at && typeof at === "object") {
+          const cand = at as { script?: unknown; event?: unknown };
+          if (typeof cand.script === "string" && Number.isInteger(cand.event) &&
+            (cand.event as number) >= 0) {
+            entry.at = { script: cand.script, event: cand.event as number };
+          }
+        }
+        return entry;
+      })
     : [];
   if (data.lastLogged !== undefined && typeof data.lastLogged !== "string") {
     throw new Error("bad lastLogged");
@@ -190,6 +204,10 @@ export function deserialize(json: string): SaveData {
           : undefined,
         candidate: Number.isInteger(n.candidate) ? n.candidate : undefined,
         candidateCount: Number.isInteger(n.candidateCount) ? n.candidateCount : undefined,
+        scriptPos: Number.isInteger(n.scriptPos) ? n.scriptPos : undefined,
+        anchor: n.anchor === "exact" || n.anchor === "fuzzy" || n.anchor === "choice"
+          ? n.anchor
+          : undefined,
       };
     }
   }

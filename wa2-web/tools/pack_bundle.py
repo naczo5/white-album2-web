@@ -35,6 +35,9 @@ BUNDLE_TOP_FILES = (
     ("luts", "luts.json"),
     ("sysSlots", "sys-slots.json"),
     ("cfg", "cfg.json"),
+    # Captions are tiny boot data; native-pos.json is ~1.6 MB and import-only,
+    # so it stays a loose side file loaded lazily by the Save/Load importer.
+    ("captions", "captions.json"),
 )
 
 EXTRA_REDUNDANT_DATA = ("flags.json", "sprites.json")

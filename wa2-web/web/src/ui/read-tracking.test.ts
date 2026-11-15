@@ -2,7 +2,7 @@
 // skip-read, and why the cache must be keyed by the namespaced storage key.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ingestReadKeys } from "./reader";
+import { eroVoiceAllowed, ingestReadKeys, isForwardPresentationStep, resolveModes } from "./reader";
 import { setSaveNamespace, storageKey } from "../engine/save";
 
 function memoryStorage() {
@@ -96,5 +96,45 @@ describe("ingestReadKeys", () => {
     const res = ingestReadKeys(["1002:0"]);
     expect(res.added).toBe(1);
     expect(res.persisted).toBe(false);
+  });
+});
+
+describe("presentation forward steps", () => {
+  it("treats a script change as forward so scene-opening dates/shakes fire", () => {
+    // 134/140 scripts with calendar records put the first record at/before
+    // the first text event; requiring prev.script === script silently seeded
+    // the date and never showed it.
+    expect(isForwardPresentationStep({ script: "2001", ev: 4 }, "2002", 0)).toBe(true);
+    expect(isForwardPresentationStep({ script: "2001", ev: 4 }, "2001", 5)).toBe(true);
+    // Same event after a re-render is not a step; no cursor means seed-only.
+    expect(isForwardPresentationStep({ script: "2001", ev: 4 }, "2001", 4)).toBe(false);
+    expect(isForwardPresentationStep(null, "2001", 0)).toBe(false);
+  });
+
+  it("carries NovelMode/EroMode toggles forward and ignores hypothesis rows", () => {
+    const recs = [
+      { ev: 1, novel: true, conf: "high" as const },
+      { ev: 2, ero: true, conf: "high" as const },
+      { ev: 3, novel: false, conf: "hypothesis" as const },
+      { ev: 4, ero: false, conf: "high" as const },
+    ];
+    expect(resolveModes(recs, 1)).toEqual({ novel: true, ero: false });
+    expect(resolveModes(recs, 2)).toEqual({ novel: true, ero: true });
+    // Hypothesis rows never drive state; the later high record clears it.
+    expect(resolveModes(recs, 3)).toEqual({ novel: true, ero: true });
+    expect(resolveModes(recs, 4)).toEqual({ novel: true, ero: false });
+  });
+
+  it("applies the original ero_voice rule: female-only mutes non-heroines", () => {
+    // Slots 1..5 are kazusa/setsuna/koharu/izumi/mari; 0 is Haruki.
+    for (const chr of [1, 2, 3, 4, 5]) {
+      expect(eroVoiceAllowed(chr, true, false)).toBe(true);
+    }
+    expect(eroVoiceAllowed(0, true, false)).toBe(false);
+    expect(eroVoiceAllowed(10, true, false)).toBe(false);
+    // Normal playback and non-EroMode keep every voice; unknown ids are safe.
+    expect(eroVoiceAllowed(0, true, true)).toBe(true);
+    expect(eroVoiceAllowed(0, false, false)).toBe(true);
+    expect(eroVoiceAllowed(undefined, true, false)).toBe(true);
   });
 });

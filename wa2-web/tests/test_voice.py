@@ -157,3 +157,20 @@ def test_load_mao_lines_joins_continuations_for_speaker_votes():
         got = speaker_name_map(lines)
         assert got["武也"] == "Takeya" and got["朋"] == "Tomo"
         assert got["春希"] == "Haruki"
+
+
+def test_chars_from_payload_maps_character_slot_by_exact_anchor():
+    import struct
+    from build_voice import chars_from_payload
+
+    def stmt(words):
+        return words + [6, 30]
+
+    words = (stmt([5, 3, 0, 5, 3, 256, 5, 3, 0, 5, 3, 0, 5, 3, 7,
+                  4, 138])
+             + stmt([3, 0, 4, 131]))
+    payload = (b"LSCR" + struct.pack("<II", 0x14, 0) + b"\x00" * 16
+               + struct.pack(f"<{len(words)}I", *words))
+    assert chars_from_payload(payload, [0]) == {"0": 0}
+    # An out-of-range label is skipped instead of guessed.
+    assert chars_from_payload(payload, []) == {}

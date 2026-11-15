@@ -4,7 +4,13 @@ import os
 import struct
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+
+HERE = os.path.dirname(__file__)
+SCRIPT_PAK = os.environ.get("WA2_SCRIPT_PAK") or os.path.join(
+    HERE, "..", "..", ".cache", "game", "script.pak")
 
 from extract_assets import _pak_tag, decode_lac_name, voice_line_key  # noqa: E402
 from proto_bgm import find_bgm, find_se, iter_statements  # noqa: E402
@@ -292,3 +298,254 @@ def test_split_image_records_anchor_to_base_token():
     assert len(grp) == 1
     assert grp[0]["ev"] == 0
     assert "204900" in grp[0]["stems"]
+
+
+# ------------------------------------- weather / shake / calendar ops ---
+
+
+def test_decode_weather_set_173():
+    recs = _decode_syn(pushes(3, 10, 10, 128, 2, 0) + [4, 173])
+    weather = [r for r in recs if "weather" in r]
+    assert len(weather) == 1
+    assert weather[0]["weather"] == {
+        "mode": 3, "sx": 10, "sy": 10, "count": 128,
+        "flag2": 2, "index": 0,
+    }
+    assert weather[0]["conf"] == "high"
+
+
+def test_decode_weather_set_173_has_no_seven_arg_turbulence_path():
+    # Turbulence is arg 3 of SetWeather2 (0xe5), not (4,173). A leading
+    # extra value is ignored by taking the last six; the test pins that the
+    # old invented `turb = vals[6]` shape cannot reappear.
+    recs = _decode_syn(pushes(99, 6, 10, 20, 30, 2, 0) + [4, 173])
+    w = [r for r in recs if "weather" in r][0]["weather"]
+    assert "turb" not in w
+    assert (w["mode"], w["sx"], w["sy"], w["count"]) == (6, 10, 20, 30)
+
+
+def test_decode_weather_set_173_expression_fused_args():
+    # (6,22) OR and (6,23) negate sit between pushes; the stack evaluator
+    # must fold them instead of dropping the expression words.
+    recs = _decode_syn(
+        [5, 3, 3, 5, 3, 256, 6, 22] + pushes(10, 10, 128, 2, 0) + [4, 173],
+    )
+    w = [r for r in recs if "weather" in r][0]["weather"]
+    assert (w["mode"], w["sx"]) == (259, 10)
+
+    recs = _decode_syn(
+        [5, 3, 3, 5, 3, 2, 6, 23] + pushes(20, 256, 2, 0) + [4, 173],
+    )
+    w = [r for r in recs if "weather" in r][0]["weather"]
+    assert (w["mode"], w["sx"], w["sy"]) == (3, -2, 20)
+
+
+def test_decode_weather_change_174_changed_fields_only():
+    recs = _decode_syn(pushes(30, 30, 128, -1000, 1) + [4, 174])
+    weather = [r for r in recs if "weather" in r]
+    assert len(weather) == 1
+    assert weather[0]["weather"] == {"sx": 30, "sy": 30, "count": 128,
+                                     "index": 1}
+
+
+def test_decode_weather_change_174_all_unchanged_is_noop():
+    recs = _decode_syn(
+        pushes(-1000, -1000, -1000, -1000, -1000) + [4, 174])
+    assert not [r for r in recs if "weather" in r]
+
+
+def test_decode_weather_reset_175():
+    recs = _decode_syn([4, 175])
+    assert [r for r in recs if "weatherStop" in r] == [
+        {"ev": 0, "weatherStop": True, "conf": "high"}
+    ]
+
+
+def test_decode_shake_150_types_1_and_9_only():
+    recs = _decode_syn(pushes(9, 32, 30, 2, 32) + [4, 150])
+    shake = [r for r in recs if "shake" in r]
+    assert len(shake) == 1
+    assert shake[0]["shake"] == {"type": 9, "strength": 32, "frames": 30}
+
+    recs = _decode_syn(pushes(1, 16, 20, 2, 32) + [4, 150])
+    assert [r for r in recs if "shake" in r][0]["shake"]["type"] == 1
+
+    # 0/12/13 share (4,150) but are not the proven shake shape.
+    for typ in (0, 12, 13):
+        recs = _decode_syn(pushes(typ, 32, 30, 2, 32) + [4, 150])
+        assert not [r for r in recs if "shake" in r]
+
+
+def test_decode_calendar_203_computes_dow_and_handles_variants():
+    recs = _decode_syn(pushes(2010, 11, 24, -1, 1) + [4, 203])
+    cal = [r for r in recs if "cal" in r]
+    assert len(cal) == 1
+    assert cal[0]["cal"] == {"year": 2010, "month": 11, "day": 24,
+                             "dow": 3}
+
+    # Explicit dow is preserved.
+    recs = _decode_syn(pushes(2010, 11, 24, 7, 0) + [4, 203])
+    assert [r for r in recs if "cal" in r][0]["cal"]["dow"] == 7
+
+    # 6-push variant: one trailing unproven word is ignored, not emitted.
+    recs = _decode_syn(pushes(2015, 12, 25, -1, 1, 0) + [4, 203])
+    assert [r for r in recs if "cal" in r][0]["cal"] == {
+        "year": 2015, "month": 12, "day": 25, "dow": 5,
+    }
+
+
+def test_decode_calendar_op0_else_header():
+    # 3016.bnr @2148 starts `0,4` (OP0 ELSE), then push 2013, 1, 28, -1, 1.
+    # The generic statement iterator misreads this as (4,5) + (3,2013) and
+    # drops the year push; the local body evaluator must consume the OP0
+    # header instead of treating its operand as a call opcode.
+    recs = _decode_syn(
+        [0, 4] + pushes(2013, 1, 28, -1, 1) + [4, 203],
+    )
+    assert [r for r in recs if "cal" in r][0]["cal"] == {
+        "year": 2013, "month": 1, "day": 28, "dow": 1,
+    }
+
+    # 2014.bnr @55748 has the same shape with 2010-12-18.
+    recs = _decode_syn(
+        [0, 4] + pushes(2010, 12, 18, -1, 0) + [4, 203],
+    )
+    assert [r for r in recs if "cal" in r][0]["cal"] == {
+        "year": 2010, "month": 12, "day": 18, "dow": 6,
+    }
+
+
+def test_decode_calendar_does_not_use_line_label_as_year():
+    # (3,X) is a line-sync label, not the year. Without a year push the
+    # 4-argument calendar must stay undecoded.
+    recs = _decode_syn(
+        pushes(12, 18, -1, 0) + [3, 2010, 4, 5, 4, 203],
+    )
+    assert not [r for r in recs if "cal" in r]
+
+
+@pytest.mark.skipif(not os.path.isfile(SCRIPT_PAK),
+                    reason="BYOA JP script.pak not present")
+def test_corpus_calendar_op0_else_years_2014_3016():
+    import decode_bnr
+
+    with open(SCRIPT_PAK, "rb") as f:
+        data = f.read()
+    cals_2014 = [r["cal"] for r in decode_bnr.decode_script(data, "2014")
+                 if "cal" in r]
+    assert {"year": 2010, "month": 12, "day": 18,
+            "dow": 6} in cals_2014
+
+    cals_3016 = [r["cal"] for r in decode_bnr.decode_script(data, "3016")
+                 if "cal" in r]
+    assert {"year": 2013, "month": 1, "day": 28,
+            "dow": 1} in cals_3016
+
+
+def test_dedupe_preserves_presentation_only_records():
+    from decode_bnr import dedupe_recs
+    shake = {"type": 9, "strength": 32, "frames": 30}
+    cal = {"year": 2010, "month": 11, "day": 24, "dow": 3}
+    rows = [
+        {"ev": 1, "weather": {"sx": 30}, "conf": "high"},
+        {"ev": 1, "weather": {"sx": 30}, "conf": "high"},  # duplicate
+        {"ev": 1, "weatherStop": True, "conf": "high"},
+        {"ev": 1, "shake": shake, "conf": "high"},
+        {"ev": 1, "cal": cal, "conf": "high"},
+    ]
+    out = dedupe_recs(rows)
+    assert len(out) == 4
+    assert out[0]["weather"] == {"sx": 30}
+    assert out[1]["weatherStop"] is True
+    assert out[2]["shake"] == shake
+    assert out[3]["cal"] == cal
+
+
+def test_presentation_decoder_bails_on_unmodelled_value_producers():
+    # (2,N) is a global-variable read, not a no-op: it pushes a value, so a
+    # weather statement that consumes it must not emit a guessed high record.
+    recs = _decode_syn([2, 0] + pushes(3, 10, 10, 128, 2, 0) + [4, 173])
+    assert not [r for r in recs if "weather" in r]
+    # GetClick/GetSkip/GetTimer etc. are value-returning engine calls.
+    recs = _decode_syn(pushes(3, 10, 10, 128, 2, 0) + [4, 206, 4, 173])
+    assert not [r for r in recs if "weather" in r]
+
+
+# ------------------------------------------------ BMP overlays + modes ---
+
+
+def test_bmp_load_resolves_string_tokens_and_order():
+    import decode_bnr
+    body = ([5, 3, 0, 3, 0, 5, 3, 14, 5, 3, 2, 3, 1, 5, 3, 256,
+             3, 2, 5, 3, 1, 4, 176])
+    rows = decode_bnr.bmp_records(body, ["guitar.tga", "", "grp"], 7)
+    assert rows == [{"ev": 7,
+                     "bmp": {"id": 0, "file": "guitar.tga", "z": 14,
+                             "folder": "grp"},
+                     "conf": "high"}]
+
+
+def test_bmp_alpha_move_and_zoom_shapes():
+    import decode_bnr
+    alpha = decode_bnr.bmp_records(
+        pushes(0, 1, 128, 60) + [4, 185], None, 2)
+    assert alpha[0]["bmpAlpha"] == {"id": 0, "mode": 1, "alpha": 128,
+                                   "frames": 60}
+    move = decode_bnr.bmp_records(pushes(0, 641, 361) + [4, 188], None, 2)
+    assert move[0]["bmpMove"] == {"id": 0, "x": 641, "y": 361}
+    rect = decode_bnr.bmp_records(
+        pushes(3, 129, 243, 283, 199) + [4, 190], None, 2)
+    assert rect[0]["bmpRect"] == {"id": 3, "x": 129, "y": 243,
+                                  "w": 283, "h": 199}
+    scale = decode_bnr.bmp_records(pushes(0, 640, 360, 8) + [4, 191], None, 2)
+    assert scale[0]["bmpScale"] == {"id": 0, "x": 640, "y": 360, "scale": 8}
+    rel = decode_bnr.bmp_records(pushes(0) + [4, 180], None, 2)
+    assert rel[0]["bmpRelease"] == 0
+
+
+def test_novel_ero_and_wait_records():
+    import decode_bnr
+    assert decode_bnr.mode_records(pushes(1) + [4, 220], 3) == [
+        {"ev": 3, "novel": True, "conf": "high"}]
+    assert decode_bnr.mode_records(pushes(0) + [4, 220], 3) == [
+        {"ev": 3, "novel": False, "conf": "high"}]
+    assert decode_bnr.mode_records(pushes(1) + [4, 221], 4) == [
+        {"ev": 4, "ero": True, "conf": "high"}]
+    assert decode_bnr.mode_records(pushes(30, 0, 0) + [4, 194], 5) == [
+        {"ev": 5, "wait": 30, "conf": "high"}]
+
+
+@pytest.mark.skipif(not os.path.isfile(SCRIPT_PAK),
+                    reason="BYOA JP script.pak not present")
+def test_corpus_bmp_samples_1002_1003_1007():
+    import decode_bnr
+    with open(SCRIPT_PAK, "rb") as f:
+        data = f.read()
+    rows = decode_bnr.decode_script(data, "1002")
+    loads = [r["bmp"] for r in rows if "bmp" in r]
+    assert {"id": 0, "file": "ギター.tga", "z": 14, "folder": "grp"} in loads
+    assert any(r.get("bmpAlpha", {}).get("alpha") == 128 for r in rows)
+    assert any(r.get("bmpRelease") == 0 for r in rows)
+    rows = decode_bnr.decode_script(data, "1003")
+    assert any("bmpScale" in r for r in rows)
+    rows = decode_bnr.decode_script(data, "1007")
+    assert any(r.get("bmp", {}).get("folder") == "bak" for r in rows)
+
+
+def test_bmp_unary_operator_does_not_shift_arguments():
+    # push -128; (6,23) negate -> 128; SetBmpParam [0,1,128,60].
+    import decode_bnr
+    body = ([5, 3, 0, 5, 3, 1, 5, 3, -128, 6, 23,
+             5, 3, 60, 4, 185])
+    rows = decode_bnr.bmp_records(body, None, 1)
+    assert rows[0]["bmpAlpha"] == {"id": 0, "mode": 1, "alpha": 128,
+                                   "frames": 60}
+
+
+def test_dedupe_keeps_duplicate_waits():
+    import decode_bnr
+    rows = [{"ev": 1, "wait": 120, "conf": "high"}] * 3
+    assert len(decode_bnr.dedupe_recs(rows)) == 3
+    assert len(decode_bnr.dedupe_recs(
+        [{"ev": 1, "bmp": {"id": 0, "file": "a.tga", "z": 1},
+          "conf": "high"}] * 2)) == 1

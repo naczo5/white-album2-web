@@ -27,8 +27,23 @@ char\{prefix}{base+face:06d}.tga; face 4000 hides the slot. Proven by
 exe disassembly + corpus file-existence check (14315/14319); emitted as
 spr/sprHide recs with conf="high" (docs/PARSING.md).
 
+Presentation ops (peer cross-validated against galhack/WhiteAlbum2_iOS,
+Apache-2.0; see docs/PARSING.md):
+- (4,173) SetWeather [mode,sx,sy,count,flag2,index] -> weather
+- (4,174) ChangeWeather [sx,sy,count,ignored,index], -1000 = unchanged ->
+  partial `weather` rec (fields omitted when unchanged; renderer merges)
+- (4,175) ResetWeather (no pushes) -> weatherStop
+- (4,150) SetShake [type,strength,frames,...], emitted for proven types 1/9
+- (4,203) Calender [year,month,day,dow,(unproven 5th)], dow -1 computed -> cal
+- (4,176/180/185/188/190/191) BMP load/release/alpha/move/rect/zoom; the
+  image path is the first `(3,X)` string token -> bmp/bmpRelease/bmpAlpha/
+  bmpMove/bmpRect/bmpScale
+- (4,194) Wait [frames,0,0] -> wait (BMP clock only)
+- (4,220/221) NovelMode/EroMode [flag] -> novel/ero
+
 Output: {version: 1, recs: {script: [{ev, se?, amb?, ambStop?, cam?,
-fadeMs?, conf}]}}
+fadeMs?, weather?, weatherStop?, shake?, cal?, bmp?, bmpRelease?,
+bmpAlpha?, bmpMove?, bmpRect?, bmpScale?, wait?, novel?, ero?, conf}]}}
 Only conf="high" records drive playback (fades + SE); anything weaker is
 reference data the player ignores.
 Usage:
@@ -39,6 +54,7 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,9 +64,21 @@ import kcap  # noqa: E402
 import lzss  # noqa: E402
 import parse_txt  # noqa: E402
 import bnr_anchor  # noqa: E402
-from proto_bgm import find_se, iter_statements, load_bnr, s32  # noqa: E402
+from proto_bgm import (  # noqa: E402
+    code_off,
+    find_se,
+    iter_statements,
+    load_bnr,
+    s32,
+)
 
 JPGAME: bytes | None = None
+
+# (4,174) sentinel meaning "leave this field unchanged".
+WEATHER_UNCHANGED = -1000
+# Screen-shake types with a proven renderer shape; other subcommands are
+# different operations sharing opcode 150 and stay undecoded.
+SHAKE_TYPES = (1, 9)
 
 
 def _extract_img_args(
@@ -95,6 +123,425 @@ def _update_tod(
         if o0 == 4 and a0 == 5 and o1 == 3 and o2 == 4 and a2 == 170:
             return a1
     return tod
+
+
+def _stmt_bodies(payload: bytes) -> list[list[int]]:
+    """Raw u32 bodies of each statement (words before the (6,30) split).
+
+    `iter_statements` exposes pushes and ops separately, which loses their
+    interleaving. Weather arguments use `(6,22)` (bitwise OR) and `(6,23)`
+    (unary minus) between pushes, so the presentation decoders need the
+    original word order.
+    """
+    base = code_off(payload)
+    code = payload[base:]
+    n = len(code) // 4
+    if n == 0:
+        return []
+    vals = struct.unpack_from(f"<{n}I", code, 0)
+    bodies: list[list[int]] = []
+    cur: list[int] = []
+    for v in vals:
+        cur.append(v)
+        if len(cur) >= 2 and cur[-2] == 6 and cur[-1] == 30:
+            bodies.append(cur[:-2])
+            cur = []
+    return bodies
+
+
+def _eval_stmt_body(body: list[int]) -> tuple[list, list[tuple[int, int]], bool]:
+    """Evaluate a statement body's int stack down to the opcode calls.
+
+    Returns (stack, ops, tainted). Only the numeric `(6,N)` operators and
+    the target presentation calls used by these statements are modelled;
+    local/global variable reads (1/2), other engine calls that may return a
+    value, and unknown numeric operators set `tainted=True`, so the caller
+    must not trust the stack.
+    """
+    stack: list = []
+    ops: list[tuple[int, int]] = []
+    tainted = False
+
+    def pop() -> int:
+        v = stack.pop() if stack else 0
+        return v if isinstance(v, int) else 0
+
+    i = 0
+    while i < len(body):
+        w = body[i]
+        if w == 0 and i + 1 < len(body):
+            # OP0 control-flow headers (IF/ELSEIF/ELSE/FOR/WHILE/SWITCH/
+            # GOTO). These carry extra operand words; consuming only one
+            # word misaligns the following push, e.g. the `0,4` ELSE
+            # before a five-push (4,203) calendar statement.
+            sub = body[i + 1]
+            ops.append((0, sub))
+            if sub == 2:
+                width = 4
+            elif sub == 5:
+                width = 6
+            elif sub == 7 and i + 2 < len(body):
+                width = 4 + 2 * body[i + 2]
+            elif sub in (3, 6, 12):
+                width = 3
+            else:
+                width = 2
+            i += width
+            continue
+        if w == 5 and i + 2 < len(body) and body[i + 1] == 3:
+            stack.append(s32(body[i + 2]))
+            i += 3
+        elif w == 5 and i + 2 < len(body) and body[i + 1] == 4:
+            stack.append(struct.unpack(
+                "<f", struct.pack("<I", body[i + 2]))[0])
+            i += 3
+        elif w in (2, 3, 4, 6) and i + 1 < len(body):
+            op, arg = w, body[i + 1]
+            ops.append((op, arg))
+            i += 2
+            if op == 6:
+                if arg == 16:
+                    b, a = pop(), pop()
+                    stack.append(a + b)
+                elif arg == 17:
+                    b, a = pop(), pop()
+                    stack.append(a - b)
+                elif arg == 18:
+                    b, a = pop(), pop()
+                    stack.append(a * b)
+                elif arg == 19:
+                    b, a = pop(), pop()
+                    stack.append(int(a / b) if b else 0)
+                elif arg == 20:
+                    b, a = pop(), pop()
+                    stack.append(a % b if b else 0)
+                elif arg == 21:
+                    b, a = pop(), pop()
+                    stack.append(a & b)
+                elif arg == 22:
+                    b, a = pop(), pop()
+                    stack.append(a | b)
+                elif arg == 23:
+                    stack.append(-pop())
+                elif arg == 24:
+                    stack.append(0 if pop() else 1)
+                elif arg == 25:
+                    stack.append(pop() + 1)
+                elif arg == 26:
+                    stack.append(pop() - 1)
+                elif arg in (0, 28, 29):
+                    pass
+                else:
+                    tainted = True
+            elif op in (1, 2):
+                # Local/global variable reads push a value.
+                tainted = True
+            elif op == 4:
+                # Void side-effect calls are safe only for this small set;
+                # every other engine call may return a value (GetTimer,
+                # GetSkip, GetClick, Rand, ...) and must bail instead of
+                # shifting the argument stack.
+                if arg not in (5, 131, 144, 150, 173, 174, 175, 203):
+                    tainted = True
+        else:
+            i += 1
+    return stack, ops, tainted
+
+
+BMP_TARGETS = {176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
+               188, 189, 190, 191}
+
+
+def _eval_bmp_args(
+    body: list[int], tokens: list[str] | None,
+) -> tuple[list, int | None, bool]:
+    """Evaluate one BMP statement, preserving the mixed int/float/string
+    argument order the VM pushes.
+
+    The generic `iter_statements` split separates pushes from `(3,X)` string
+    tokens; BMP handlers need the original order (e.g. LoadBmp is
+    `[id, file, z, type, "", alpha, folder, flag]`). Returns
+    (args, target_call_id, tainted).
+    """
+    stack: list = []
+    target: int | None = None
+    tainted = False
+    i = 0
+    while i < len(body):
+        w = body[i]
+        if w == 0 and i + 1 < len(body):
+            sub = body[i + 1]
+            if sub == 2:
+                width = 4
+            elif sub == 5:
+                width = 6
+            elif sub == 7 and i + 2 < len(body):
+                width = 4 + 2 * body[i + 2]
+            elif sub in (3, 6, 12):
+                width = 3
+            else:
+                width = 2
+            i += width
+            continue
+        if w == 5 and i + 2 < len(body) and body[i + 1] == 3:
+            stack.append(s32(body[i + 2]))
+            i += 3
+        elif w == 5 and i + 2 < len(body) and body[i + 1] == 4:
+            stack.append(struct.unpack("<f", struct.pack("<I", body[i + 2]))[0])
+            i += 3
+        elif w == 3 and i + 1 < len(body):
+            idx = body[i + 1]
+            if tokens is None or not 0 <= idx < len(tokens):
+                tainted = True
+                stack.append("")
+            else:
+                stack.append(tokens[idx])
+            i += 2
+        elif w in (2, 4, 6) and i + 1 < len(body):
+            op, arg = w, body[i + 1]
+            i += 2
+            if op == 4:
+                target = arg
+                # The call terminates the statement's arguments.
+                break
+            if op == 2:
+                tainted = True
+                continue
+            if arg == 30 or arg in (0, 28, 29):
+                continue
+            if arg in (23, 24, 25, 26):
+                # Unary: pop one, push one (the shared `_eval_stmt_body` has
+                # the same distinction; popping two shifts later args).
+                b = stack.pop() if stack else 0
+                if not isinstance(b, int):
+                    tainted = True
+                    stack.append(0)
+                    continue
+                stack.append(-b if arg == 23 else
+                              0 if (arg == 24 and b) else
+                              1 if arg == 24 else
+                              b + 1 if arg == 25 else b - 1)
+                continue
+            b = stack.pop() if stack else 0
+            a = stack.pop() if stack else 0
+            if not isinstance(a, int) or not isinstance(b, int):
+                tainted = True
+                stack.append(0)
+                continue
+            try:
+                if arg == 16:
+                    stack.append(a + b)
+                elif arg == 17:
+                    stack.append(a - b)
+                elif arg == 18:
+                    stack.append(a * b)
+                elif arg == 19:
+                    stack.append(int(a / b) if b else 0)
+                elif arg == 20:
+                    stack.append(a % b if b else 0)
+                elif arg == 21:
+                    stack.append(a & b)
+                elif arg == 22:
+                    stack.append(a | b)
+                else:
+                    tainted = True
+            except (TypeError, ValueError):
+                tainted = True
+        elif w == 1:
+            tainted = True
+            i += 2
+        else:
+            i += 1
+    return stack, target, tainted
+
+
+def bmp_records(body: list[int], tokens: list[str] | None,
+                ev: int) -> list[dict]:
+    """Decode the BMP overlay family (0xb0..0xbf) used by the corpus.
+
+    LoadBmp is `[id, file, z, type, "", alpha, folder, flag]`; SetBmpParam
+    `[id, mode, alpha, frames]`; SetBmpMove `[id, x, y]`; SetBmpZoom
+    `[id, x, y, w, h]`; SetBmpZoom2 `[id, x, y, scale]`. Anime/AVI and the
+    peer's no-op parameter handlers are not emitted. Only the proven
+    identity/alpha/geometry records drive the renderer.
+    """
+    args, target, tainted = _eval_bmp_args(body, tokens)
+    if tainted or target not in BMP_TARGETS or not args:
+        return []
+    ints = [x for x in args if isinstance(x, int)]
+    strings = [x for x in args if isinstance(x, str)]
+    if target == 176:  # LoadBmp
+        if len(ints) < 1 or not strings:
+            return []
+        file = next((s for s in strings if s.lower().endswith(
+            (".tga", ".bmp", ".png", ".webp"))), "")
+        if not file:
+            return []
+        fid = ints[0]
+        z = ints[1] if len(ints) > 1 else 0
+        folder = next((s for s in reversed(strings) if s in ("grp", "bak")), "")
+        if not 0 <= fid <= 99 or not 0 <= z <= 99:
+            return []
+        rec = {"id": fid, "file": file, "z": z}
+        if folder:
+            rec["folder"] = folder
+        return [{"ev": ev, "bmp": rec, "conf": "high"}]
+    if target == 180:  # ReleaseBmp
+        if ints and 0 <= ints[0] <= 99:
+            return [{"ev": ev, "bmpRelease": ints[0], "conf": "high"}]
+        return []
+    if target == 185:  # SetBmpParam [id, mode, alpha, frames]
+        if len(ints) >= 4 and 0 <= ints[0] <= 99 and 0 <= ints[2] <= 255:
+            return [{"ev": ev,
+                     "bmpAlpha": {"id": ints[0], "mode": ints[1],
+                                  "alpha": ints[2],
+                                  "frames": max(0, ints[3])},
+                     "conf": "high"}]
+        return []
+    if target == 188:  # SetBmpMove [id, x, y]
+        if len(ints) >= 3 and 0 <= ints[0] <= 99 and all(
+                0 <= v <= 8192 for v in ints[1:3]):
+            return [{"ev": ev,
+                     "bmpMove": {"id": ints[0], "x": ints[1], "y": ints[2]},
+                     "conf": "high"}]
+        return []
+    if target == 190:  # SetBmpZoom [id, x, y, w, h]
+        if len(ints) >= 5 and 0 <= ints[0] <= 99 and all(
+                0 <= v <= 8192 for v in ints[1:5]) and ints[3] > 0 and ints[4] > 0:
+            return [{"ev": ev,
+                     "bmpRect": {"id": ints[0], "x": ints[1], "y": ints[2],
+                                 "w": ints[3], "h": ints[4]},
+                     "conf": "high"}]
+        return []
+    if target == 191:  # SetBmpZoom2 [id, x, y, scale]
+        if len(ints) >= 4 and 0 <= ints[0] <= 99 and all(
+                0 <= v <= 8192 for v in ints[1:3]) and 0.05 <= ints[3] <= 16:
+            return [{"ev": ev,
+                     "bmpScale": {"id": ints[0], "x": ints[1], "y": ints[2],
+                                  "scale": ints[3]},
+                     "conf": "high"}]
+        return []
+    return []
+
+
+def mode_records(body: list[int], ev: int,
+                 include_wait: bool = True) -> list[dict]:
+    """NovelMode (220) / EroMode (221) and the Wait (194) clock.
+
+    Wait records are only consumed by the BMP sequencer; scripts without a
+    BMP op do not need them in bnr.json at all.
+    """
+    args, target, tainted = _eval_bmp_args(body, None)
+    if tainted or not args:
+        return []
+    if target == 194:
+        if not include_wait:
+            return []
+        frames = args[0]
+        if isinstance(frames, int) and 0 <= frames <= 60_000:
+            return [{"ev": ev, "wait": frames, "conf": "high"}]
+        return []
+    if target not in (220, 221):
+        return []
+    flag = args[0]
+    if not isinstance(flag, int):
+        return []
+    if target == 220:
+        return [{"ev": ev, "novel": flag != 0, "conf": "high"}]
+    return [{"ev": ev, "ero": flag == 1, "conf": "high"}]
+
+
+def _weekday(year: int, month: int, day: int) -> int:
+    """Day-of-week for (4,203) dow == -1 (Sunday = 0).
+
+    Same Zeller-style reduction the engine/peer port applies after moving
+    January/February into the previous year.
+    """
+    y, m = year, month
+    if m in (1, 2):
+        y -= 1
+        m += 12
+    v = (day + y + y // 400 + (13 * m + 8) // 5
+         - y // 100 + y // 4)
+    return v % 7
+
+
+def presentation_records(body: list[int], ev: int) -> list[dict]:
+    """Decode weather/shake/calendar statements into per-event records.
+
+    Every target statement carries its five/six numeric arguments in the
+    same body after `_eval_stmt_body` consumes the OP0 header widths; there
+    is no cross-statement carry.
+    """
+    stack, ops, tainted = _eval_stmt_body(body)
+    if tainted or any(not isinstance(v, int) for v in stack):
+        return []
+    vals = [int(v) for v in stack]
+    out: list[dict] = []
+
+    if any(o == 4 and a == 173 for o, a in ops):
+        # SetWeather [mode, speedX, speedY, count, flag2, index]; the engine
+        # wrapper passes turbulence=0 (peer-verified Wa2Func.SetWeather).
+        # Turbulence is arg 3 only in the separate SetWeather2 (0xe5); a
+        # 7-value stack does not occur for (4,173) in any corpus pak, so the
+        # last six values are the proven shape.
+        if len(vals) >= 6:
+            mode, sx, sy, count, flag2, index = vals[-6:]
+            out.append({"ev": ev,
+                        "weather": {"mode": mode, "sx": sx, "sy": sy,
+                                    "count": count, "flag2": flag2,
+                                    "index": index},
+                        "conf": "high"})
+
+    if any(o == 4 and a == 174 for o, a in ops):
+        # ChangeWeather [speedX, speedY, count, ignored, index]; -1000
+        # means unchanged. Emit only changed fields, so the renderer merges
+        # them into the active weather state. All -1000 is a no-op.
+        if len(vals) >= 5:
+            sx, sy, count, _ignored, index = vals[-5:]
+            changed: dict[str, int] = {}
+            if sx != WEATHER_UNCHANGED:
+                changed["sx"] = sx
+            if sy != WEATHER_UNCHANGED:
+                changed["sy"] = sy
+            if count != WEATHER_UNCHANGED:
+                changed["count"] = count
+            if index != WEATHER_UNCHANGED:
+                changed["index"] = index
+            if changed:
+                out.append({"ev": ev, "weather": changed, "conf": "high"})
+
+    if any(o == 4 and a == 175 for o, a in ops):
+        out.append({"ev": ev, "weatherStop": True, "conf": "high"})
+
+    if any(o == 4 and a == 150 for o, a in ops):
+        # SetShake [type, strength, frames, ...]. Types 0/12/13 in the
+        # corpus are other operations sharing this id and are not emitted.
+        if len(vals) >= 3:
+            typ, strength, frames = vals[:3]
+            if typ in SHAKE_TYPES:
+                out.append({"ev": ev,
+                            "shake": {"type": typ, "strength": strength,
+                                      "frames": frames},
+                            "conf": "high"})
+
+    if any(o == 4 and a == 203 for o, a in ops):
+        # Calender [year, month, day, dow, (unproven 5th word)]. Every
+        # corpus statement has five pushes after the OP0 header is consumed;
+        # the peer handler reads only args[0..3], so the fifth word is not
+        # emitted. `dow == -1` means compute.
+        if len(vals) >= 5:
+            year, month, day, dow, _unproven = vals[:5]
+            if (1980 <= year <= 2100 and 1 <= month <= 12
+                    and 1 <= day <= 31):
+                if dow == -1:
+                    dow = _weekday(year, month, day)
+                out.append({"ev": ev,
+                            "cal": {"year": year, "month": month,
+                                    "day": day, "dow": dow},
+                            "conf": "high"})
+
+    return out
 
 
 def bak_stem(x: int, y: int, tod: int) -> str:
@@ -151,6 +598,11 @@ def dedupe_recs(recs: list[dict]) -> list[dict]:
     seen: set[str] = set()
     out: list[dict] = []
     for r in recs:
+        # Waits are a clock, not state: two identical waits at one event
+        # mean "twice as long" and must not be collapsed.
+        if "wait" in r:
+            out.append(r)
+            continue
         k = json.dumps(r, sort_keys=True)
         if k not in seen:
             seen.add(k)
@@ -180,12 +632,14 @@ def split_image_records(payload: bytes, base_events: list[dict]) -> list[dict]:
 
 def decode_script(data: bytes, script: str) -> list[dict]:
     payload, _ = load_bnr(data, script)
+    bodies = _stmt_bodies(payload)
     # Exact anchors via the JP token spine (bnr_anchor): the stream's
     # (4,131)/(4,144) line labels carry JP token coordinates; a record
     # belongs to the next label at-or-after it. Falls back to fractional
     # placement when no --jp spine is available.
     events: list[dict] = []
     anchors: list[int] | None = None
+    txt_tokens: list[str] | None = None
     if JPGAME is not None:
         try:
             e = {x.name: x for x in kcap.read_index(JPGAME)
@@ -194,6 +648,7 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             if e.is_compressed:
                 orig, lz = lzss.split_datahdr(txt)
                 txt = lzss.decompress(lz, orig)
+            txt_tokens = [t.decode("cp932", "replace") for t in txt.split(b",")]
             events = bnr_anchor.jp_spine_events(txt)
         except KeyError:
             events = []
@@ -209,6 +664,7 @@ def decode_script(data: bytes, script: str) -> list[dict]:
             if tentry.is_compressed:
                 orig, lz = lzss.split_datahdr(txt)
                 txt = lzss.decompress(lz, orig)
+            txt_tokens = [t.decode("cp932", "replace") for t in txt.split(b",")]
             toks = parse_txt.split_tokens(txt)
             events, _ = parse_txt.parse_tokens(toks)
         except KeyError:
@@ -218,8 +674,11 @@ def decode_script(data: bytes, script: str) -> list[dict]:
     tod = 0
     n = 0
     last_ev = 0
+    has_bmp = False
     for idx, _off, _pushes, _ops, _raw, _floats in iter_statements(payload):
         n = idx + 1
+        if any(o == 4 and a in BMP_TARGETS for o, a in _ops):
+            has_bmp = True
     # SE plays (opcode (4,164), conf high) mapped like BGM.
     se_by_stmt = {r["stmt"]: r["se"] for r in find_se(payload)}
     for idx, off, pushes, ops, _raw, fl in iter_statements(payload):
@@ -238,6 +697,10 @@ def decode_script(data: bytes, script: str) -> list[dict]:
         last_ev = ev
         s = [s32(x) for x in pushes]
         tod = _update_tod(s, ops, tod)
+        body = bodies[idx] if idx < len(bodies) else []
+        recs.extend(presentation_records(body, ev))
+        recs.extend(bmp_records(body, txt_tokens, ev))
+        recs.extend(mode_records(body, ev, has_bmp))
         if idx in se_by_stmt:
             recs.append({"ev": ev, "se": [se_by_stmt[idx]],
                          "conf": "high"})
@@ -425,7 +888,26 @@ def main() -> None:
                       f"from {split} into {base}")
     n_high = sum(1 for v in recs.values() for r in v if r["conf"] == "high")
     n_hyp = sum(1 for v in recs.values() for r in v if r["conf"] != "high")
+    flat = [r for v in recs.values() for r in v]
+    n_wset = sum(1 for r in flat
+                 if "weather" in r and "mode" in r["weather"])
+    n_wchg = sum(1 for r in flat
+                 if "weather" in r and "mode" not in r["weather"])
+    n_wstop = sum(1 for r in flat if "weatherStop" in r)
+    n_shake = sum(1 for r in flat if "shake" in r)
+    n_cal = sum(1 for r in flat if "cal" in r)
+    n_bmp = sum(1 for r in flat if "bmp" in r)
+    n_bmprel = sum(1 for r in flat if "bmpRelease" in r)
+    n_bmpa = sum(1 for r in flat if "bmpAlpha" in r)
+    n_bmpp = sum(1 for r in flat
+                 if any(k in r for k in ("bmpMove", "bmpRect", "bmpScale")))
+    n_novel = sum(1 for r in flat if "novel" in r)
+    n_ero = sum(1 for r in flat if "ero" in r)
     print(f"bnr: {len(recs)} scripts, {n_high} high + {n_hyp} hypothesis recs")
+    print(f"bnr: presentation ops: weather={n_wset} weatherChange={n_wchg} "
+          f"weatherStop={n_wstop} shake={n_shake} cal={n_cal}")
+    print(f"bnr: overlays: bmp={n_bmp} release={n_bmprel} alpha={n_bmpa} "
+          f"geometry={n_bmpp}; novel={n_novel} ero={n_ero}")
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump({"version": 1, "recs": recs}, f)
     print(f"wrote {out_path}")

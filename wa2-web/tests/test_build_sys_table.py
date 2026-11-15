@@ -163,6 +163,52 @@ def test_check_flow_detects_order_drift(tmp_path):
     assert problems and "choice table != flow.json order" in problems[0]
 
 
+def test_gate_slots_include_ending_clear_flags():
+    # GFLAG.dat semantics: 0 = IC clear, 3 = CC clear (all five CC endings),
+    # 4 = Coda clear. Slot 99 stays reserved/force-zeroed.
+    assert bst.GATE_SLOTS["icClearSlot"] == 0
+    assert bst.GATE_SLOTS["ccClearSlot"] == 3
+    assert bst.GATE_SLOTS["codaClearSlot"] == 4
+    assert bst.GATE_SLOTS["reservedSlot99"] == 99
+
+
+def test_committed_scene_slots_are_24_peer_rows():
+    # Exact peer table (galhack/WhiteAlbum2_iOS Wa2Def.SceneSlots,
+    # Apache-2.0 functional ids). Pin every tuple so a transcription error
+    # in cg/chapter/script/flag cannot slip through a length-only check.
+    expected = [
+        (101700, 0, "2031", 80),
+        (200800, 1, "2031", 300),
+        (201200, 1, "2031", 301),
+        (201700, 1, "2312", 302),
+        (202200, 1, "2314", 303),
+        (202400, 1, "2314", 304),
+        (202700, 1, "2401", 305),
+        (203400, 1, "2402", 306),
+        (203500, 1, "2402", 307),
+        (203800, 1, "2504", 308),
+        (204900, 1, "2507", 309),
+        (205100, 1, "2511", 310),
+        (205300, 1, "2513", 311),
+        (205500, 1, "3002", 312),
+        (205900, 2, "3016", 313),
+        (206500, 2, "2031", 314),
+        (208400, 2, "3211", 315),
+        (207003, 2, "3902", 316),
+        (209800, 2, "3902", 317),
+        (209900, 2, "3902", 318),
+        (210200, 2, "3904", 319),
+        (210500, 2, "3906", 320),
+        (210600, 2, "3908", 321),
+        (210800, 2, "3908", 322),
+    ]
+    with open(os.path.join(DATA, "sys-slots.json"), encoding="utf-8") as f:
+        table = json.load(f)
+    rows = table["sceneSlots"]
+    assert [(r["cg"], r["chapter"], r["script"], r["flag"])
+            for r in rows] == expected
+
+
 # -------------------------------------------------------- real WA2.exe ---
 def test_committed_sys_slots_matches_exe():
     """Regenerating from the user's exe reproduces the committed table."""
@@ -172,7 +218,7 @@ def test_committed_sys_slots_matches_exe():
     with open(os.path.join(DATA, "sys-slots.json"), encoding="utf-8") as f:
         committed = json.load(f)
     for key in ("scripts", "cgRows", "choiceTable", "endingSlots",
-                "endingSlotsConfidence", "gateSlots"):
+                "endingSlotsConfidence", "gateSlots", "sceneSlots"):
         assert table[key] == committed[key], f"{key} drifted from the exe"
 
 
@@ -193,6 +239,8 @@ def test_exe_extraction_counts_and_cross_checks():
     assert len(rows) == 168
     ids = [v for row in rows for v in row if v]
     assert len(ids) == 272
+    assert len(table["endingSlots"]) == 11
+    assert len(table["sceneSlots"]) == 24
 
 
 def test_exe_gallery_table_ends_before_ero_records():

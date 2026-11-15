@@ -55,6 +55,18 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
 - `main.ts` — optional `?pack=<root>` loads `data/` and `assets/` from an
   external BYOA host (CORS required); see `docs/BYOA.md`.
 
+## Static shell (web/public)
+
+- `_headers` — static host cache/security rules (see `docs/RELEASE.md`).
+- `favicon.svg` — the engine mark: six-fold snowflake in the interface
+  aqua, gold record label at the spindle, deep-water tile. Hand-authored
+  vector, 64x64 viewBox; `favicon.ico` (16/32/48) and the raster PWA
+  icons (`apple-touch-icon.png` 180, `icon-192.png`, `icon-512.png`) are
+  rendered from it. Original engine art — no game assets.
+- `site.webmanifest` — install name/theme plus the icon set above.
+- Vite copies these to `dist/`; `tools/pack_site.py` keeps the icon set
+  and drops only `data/` + `assets/`.
+
 ## Key findings baked in (see docs/FLOW_GRAPH.md, docs/PARSING.md)
 
 - 205 main + 49 special scenario files; 32 engine choices (5 recovered

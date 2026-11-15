@@ -1,13 +1,16 @@
 // Reader screen: dialogue/narration/choices/stage + backlog + quick menu.
 
 import { audioPreloadStatus, bgmIntroUrl, bgmLoopUrl, bgmSoloUrl, imageUrl, movieUrl, preloadAudio, preloadImage, resolveAudioUrl, seUrl, subtitleUrl, voiceUrl, voiceUrlByKey } from "../engine/assets";
+import { clearCaptionForAudio, clearCaptions, seCaptionCues, setCaptionBar, showCaption, voiceCaptionCues } from "../engine/captions";
 import { isEventInExecutedRanges } from "../engine/cfg-vm";
 import { Router, chapterOfScript } from "../engine/router";
 import { displayDate, plainText, renderText, spanize } from "../engine/text";
-import type { BgmData, BnrData, Flags, Position, SaveData, ScenarioEvent } from "../engine/types";
+import type { BgmData, BnrData, CaptionData, Flags, Position, SaveData, ScenarioEvent } from "../engine/types";
 import { storageKey, writeAutosave } from "../engine/save";
 import { newWheelState, normalizeWheelDelta, wheelGesture, type WheelState } from "../engine/wheel";
 import { moviePlaying, openMovie, preloadMovieAhead } from "./movie";
+import { applyShake, clearShake, disposeWeather, hideCalendar, mountWeather, pauseWeather, resolveCalendar, resolveShakeCue, resolveWeather, setWeatherLive, showCalendar } from "./weather";
+import { clearBmp, paintBmp, pauseBmp } from "./bmp";
 
 export interface ReaderSettings {
   textSpeed: number; // chars per second, 0 = instant
@@ -15,7 +18,10 @@ export interface ReaderSettings {
   voiceVol: number; // 0..1
   /** Sound-effect/ambience gain; engine default se_vol = 195/255. */
   seVol?: number; // 0..1
-  bgmVol: number; // 0..1
+  bgmVol: number;
+  /** Original `ero_voice` setting: true = play every voice during an
+   * EroMode scene; false = heroines only (slots 1..5). Default true. */
+  eroVoice?: boolean; // 0..1
   /** Skip mode: "all" skips everything, "read" stops at unread lines. */
   skipRead: boolean;
   /** Developer mode: mechanical labels, tooltips, scene ids. */
@@ -41,6 +47,19 @@ function clearTimers(): void {
 let readerLive = false;
 export function setReaderLive(live: boolean): void {
   readerLive = live;
+  setWeatherLive(live);
+  if (!live) {
+    // The reader DOM is about to be replaced: stop every presentation loop
+    // and drop the (soon-detached) weather canvas.
+    clearCaptions();
+    captionLineKey = null;
+    hideCalendar(typeof document !== "undefined"
+      ? document.querySelector(".reader") as HTMLElement | null
+      : null);
+    clearShake();
+    clearBmp();
+    disposeWeather();
+  }
 }
 
 /** Pause Auto and release skip: called when an overlay (backlog, saves,
@@ -52,6 +71,15 @@ export function pauseReader(): void {
     curHooks.skip.active = false;
     curHooks.onSkipStop();
   }
+  // Presentation loops pause with the reader; the next render remounts the
+  // weather layer / captions from the loaded position.
+  pauseWeather();
+  pauseBmp();
+  clearCaptions();
+  hideCalendar(typeof document !== "undefined"
+    ? document.querySelector(".reader") as HTMLElement | null
+    : null);
+  clearShake();
 }
 
 /** Reset skip state and stop a running typewriter without losing the line
@@ -66,6 +94,18 @@ export function resetSkip(): void {
  * never re-typed from character 0 (the "back from backlog retypes" bug). */
 let lastPainted: { key: string; full: string; done: boolean } | null = null;
 
+/** Captions / presentation state for the current render. The caption line
+ * key distinguishes a re-render of the same line (keep the playing caption)
+ * from a line change (clear). */
+let currentCaptions: CaptionData | null = null;
+let captionLineKey: string | null = null;
+/** Last rendered script:event, used to fire transient presentation records
+ * (shake) exactly once on a forward step and never on load/backlog re-entry. */
+let presentationCursor: { script: string; ev: number } | null = null;
+let calendarCursor: { script: string; ev: number; seq: number } | null = null;
+/** Latest high-confidence EroMode state (used by the voice filter). */
+let currentEro = false;
+
 /** Forget the painted line (new game, save load, screen jump): the next
  * render must type the line even if the position string repeats. */
 export function resetPaintState(): void {
@@ -74,6 +114,15 @@ export function resetPaintState(): void {
   warmCursor = null;
   blockedVoice = null;
   clearVoiceGate();
+  clearCaptions();
+  captionLineKey = null;
+  presentationCursor = null;
+  calendarCursor = null;
+  clearShake();
+  clearBmp();
+  hideCalendar(typeof document !== "undefined"
+    ? document.querySelector(".reader") as HTMLElement | null
+    : null);
 }
 
 /** Hide-text ("immersion") state: the dialogue plate and chrome fade out so
@@ -117,6 +166,12 @@ export interface ReaderHooks {
    * renders and made Ctrl-skip a no-op (and forced re-renders that
    * restarted the typewriter mid-line = the "flicker"). */
   skip: { active: boolean };
+  /** BYOA timed captions (voice by manifest key, SE by numeric id). Optional:
+   * a pack without captions compiles and plays exactly as before. */
+  captions?: CaptionData | null;
+  /** Gallery unlock hook: the CG id of a shown grp/v overlay (`h` ids are
+   * stored as `1_000_000 + cgId`, the Sys.sav Region B index). Idempotent. */
+  onCg?: (id: number) => void;
   onChange(): void;
   open(screen: string): void;
   notify(msg: string): void;
@@ -457,6 +512,26 @@ function positionIs(save: SaveData, script: string, event: number): boolean {
   return save.position.script === script && save.position.event === event;
 }
 
+/** Original `ero_voice` filter (pure, test-pinned). `playAll` = true is
+ * 通常再生; false is 女性ボイスのみ再生. Unknown character ids stay
+ * audible (never guess). */
+export function eroVoiceAllowed(
+  chr: number | undefined,
+  ero: boolean,
+  playAll: boolean,
+): boolean {
+  if (!ero || playAll || chr === undefined) return true;
+  return ERO_CHARS.has(chr);
+}
+
+function eroSuppressed(script: string, event: number): boolean {
+  return !eroVoiceAllowed(
+    voiceChrLookup?.(script, event),
+    currentEro,
+    curHooks?.settings.eroVoice !== false,
+  );
+}
+
 /** Decide whether a voiced line may paint now. Returns "wait" when the
  * caller must show the loading plate instead. */
 function gateVoice(h: ReaderHooks, save: SaveData, url: string | null): "paint" | "wait" {
@@ -585,14 +660,45 @@ function voiceUrlFor(script: string, index: number, ev: ScenarioEvent): string |
     : voiceUrl(script, ref, chapterOfScript(script));
 }
 
+/** Caption key for the line's voice clip: the exact manifest voice key
+ * (voicemap v2 strings). Legacy numeric refs have no key and stay uncaptioned. */
+function voiceKeyFor(script: string, index: number, ev: ScenarioEvent): string | null {
+  if (ev.t !== "say" && ev.t !== "narrate") return null;
+  const mapped = voiceLookup?.(script, index);
+  const ref = resolveVoiceRef(mapped, ev.tok);
+  return typeof ref === "string" ? ref : null;
+}
+
+/** Rebind the caption bar to an already-playing voice clip after a re-render
+ * (settings, Auto toggle, overlay return). A missing/stale source is ignored. */
+function syncVoiceCaption(script: string, event: number, ev: ScenarioEvent): void {
+  const cues = voiceCaptionCues(currentCaptions, voiceKeyFor(script, event, ev));
+  if (!cues) return;
+  const audio = document.getElementById("voice") as HTMLAudioElement | null;
+  if (!audio || !audio.dataset.cur) return;
+  const url = voiceUrlFor(script, event, ev);
+  if (!url || audio.dataset.cur !== url) return;
+  showCaption(audio, cues);
+}
+
 export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   clearTimers();
   curHooks = h;
   readerLive = true;
+  setWeatherLive(true);
+  currentCaptions = h.captions ?? null;
   const { router, save } = h;
   const pos = save.position;
   const ev = router.at(pos);
   const sc = router.scripts.get(pos.script);
+  // A new line/scene owns a new caption track. Re-rendering the same line
+  // (settings, auto toggle, returning from an overlay) keeps the one that is
+  // already running.
+  const lineKey = `${pos.script}:${pos.event}`;
+  if (lineKey !== captionLineKey) {
+    clearCaptions();
+    captionLineKey = lineKey;
+  }
 
   const total = sc ? sc.events.length : 1;
   const pct = sc && total > 0
@@ -639,6 +745,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
           </span>
         </div>
         <div class="reader-bottom">
+          <div class="reader-caption" id="caption" aria-live="polite" aria-atomic="true" hidden></div>
           <div class="textbox" id="textplate"><div class="textbox-scroll" id="textbox"></div></div>
           <div class="choices" id="choices"></div>
           <div class="advance-hint" id="hint">Click, Enter or Space to continue · hold Ctrl to skip · H hides the text · scroll up for the backlog</div>
@@ -743,6 +850,10 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     }
   }
 
+  // The skeleton is built once; point the caption controller at its bar on
+  // every render (a no-op while the element is unchanged).
+  setCaptionBar(el.querySelector("#caption") as HTMLElement | null);
+
   const prog = el.querySelector(".reader-progress > i") as HTMLElement;
   prog.style.width = `${pct}%`;
   const whereEl = el.querySelector(".reader-where") as HTMLElement;
@@ -764,6 +875,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
 
   const seVol = h.settings.seVol ?? 0.765;
   paintStage(el.querySelector("#stage") as HTMLElement, save, h.settings.bgmVol, !!h.demo, !!h.settings.dev, ev?.t === "movie");
+  paintPresentation(el.querySelector(".reader") as HTMLElement, save, ev);
   fireSe(save, seVol);
   updateAmbient(save, seVol, ev?.t === "movie");
   // Hide-text state survives a re-render (Auto toggle, settings) but never
@@ -896,6 +1008,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       // A muted player must not be held on the loading plate for audio they
       // cannot hear; the text is the whole line then.
       if (h.settings.voiceVol > 0 && !h.skip.active &&
+        !eroSuppressed(pos.script, pos.event) &&
         gateVoice(h, save, voice) === "wait") {
         // Keep the stage and chrome, but do not show text whose voice has
         // not arrived: the user cannot read past a silent line by clicking.
@@ -951,6 +1064,9 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       }
       stepForward(h);
     };
+    // Returning from an overlay re-renders the same line without starting a
+    // new clip: restore its caption from the still-playing element.
+    syncVoiceCaption(pos.script, pos.event, ev);
     preloadMovieAhead(nextMovieUrl(h, pos));
     warmAhead(h, pos);
     return;
@@ -960,6 +1076,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
     lastPainted = null;
     // The film owns the stage: hide the dialogue plate entirely and let
     // the movie layer render its own chrome (subtitles + HUD).
+    clearCaptions();
     plate.classList.add("movie-host");
     box.innerHTML = "";
     hint.style.display = "none";
@@ -1339,7 +1456,11 @@ export function pushLog(router: Router, save: SaveData): void {
     const key = `${save.position.script}:${save.position.event}`;
     if (save.lastLogged !== key) {
       save.lastLogged = key;
-      save.log.push({ speaker, text });
+      save.log.push({
+        speaker,
+        text,
+        at: { script: save.position.script, event: save.position.event },
+      });
       if (save.log.length > 500) save.log.shift();
     }
   }
@@ -1394,9 +1515,117 @@ function paintStage(
     tag?.remove();
   }
   stage.style.filter = stageFilter(save);
-  paintOverlay(stage, save);
+  const overlay = paintOverlay(stage, save);
+  // Gallery unlock: the overlay filename is the engine CG id (v%06d; h%06d
+  // is Region B part 1 = 1_000_000 + id). Fire on every paint; the parent
+  // hook is idempotent and only writes when the profile actually grows.
+  const cg = overlay ? /\/(tv|[vh])(\d{6})\.(?:png|webp|tga)$/i.exec(overlay) : null;
+  if (cg) {
+    const id = Number(cg[2]);
+    curHooks?.onCg?.(cg[1]!.toLowerCase() === "h" ? 1_000_000 + id : id);
+  }
   paintSprites(stage, save);
+  if (movieNext) clearBmp(stage);
+  else {
+    paintBmp(
+      stage,
+      save.position.script,
+      save.position.event,
+      bnrLookup?.(save.position.script) ?? null,
+      chapterOfScript(save.position.script),
+      activeExecutedRanges(save),
+    );
+  }
   paintBgm(save, bgmVol, movieNext);
+}
+
+/** NovelMode/EroMode state at `event`: persistent script toggles. EroMode
+ * feeds `eroVoiceAllowed` (the original `ero_voice` filter using
+ * `voicemap.chars`); the CSS class is also available for presentation. */
+export function resolveModes(
+  recs: BnrData["recs"][string] | null | undefined,
+  event: number,
+  ranges?: readonly [number, number][],
+): { novel: boolean; ero: boolean } {
+  let novel = false;
+  let ero = false;
+  // Persistent state at/before the line. When a seek provides executed
+  // ranges, ignore setters in untaken branches; an empty ranges list (demo/
+  // legacy packs) falls back to replaying every record.
+  for (const r of recs ?? []) {
+    if (r.conf !== "high" || r.ev > event) continue;
+    if (ranges && ranges.length > 0 &&
+      !isEventInExecutedRanges(ranges, Math.floor(r.ev))) continue;
+    if (r.novel !== undefined) novel = r.novel;
+    if (r.ero !== undefined) ero = r.ero;
+  }
+  return { novel, ero };
+}
+
+/** Presentation records for the current position: weather state (persistent
+ * timeline), calendar badge and shake (transient, forward-step only). All
+ * resolvers are conf:"high"-gated. */
+/** Pure forward-step decision for transient presentation (calendar/shake):
+ * a script change is forward as long as a previous cursor exists (scene
+ * openings put the date at/before the first line); same-script steps need a
+ * strictly later event. Exported for the regression test. */
+export function isForwardPresentationStep(
+  prev: { script: string; ev: number } | null,
+  script: string,
+  event: number,
+): boolean {
+  return !!prev && (prev.script !== script || event > prev.ev);
+}
+
+function paintPresentation(
+  reader: HTMLElement,
+  save: SaveData,
+  ev: ScenarioEvent | null,
+): void {
+  const script = save.position.script;
+  const event = save.position.event;
+  const prev = presentationCursor;
+  presentationCursor = { script, ev: event };
+  const recs = bnrLookup?.(script) ?? null;
+  const ranges = activeExecutedRanges(save);
+  // A script change is a normal forward step: scene-opening calendar/shake
+  // records sit at/before the first line, and requiring the same script
+  // silently seeded them and never showed the date. `resetPaintState()`
+  // nulls the cursor on load/new game/jumps, so a non-null cross-script
+  // cursor is a real transition.
+  const newScene = !!prev && prev.script !== script;
+  const forward = isForwardPresentationStep(prev, script, event);
+  const modes = resolveModes(recs, event, ranges);
+  currentEro = modes.ero;
+  reader.classList.toggle("novel-mode", modes.novel);
+  reader.classList.toggle("ero-mode", modes.ero);
+  const stamp = recs ? resolveCalendar(recs, event, ranges) : null;
+  if (stamp) {
+    const newRecord = !calendarCursor ||
+      calendarCursor.script !== script ||
+      calendarCursor.ev !== stamp.ev ||
+      calendarCursor.seq !== stamp.seq;
+    // Seed silently on the first render / load / backward jump: the badge is
+    // a transient popup, not persistent state. A film owns the frame, so its
+    // anchor is recorded without painting over the film.
+    if (newRecord && forward && ev?.t !== "movie") {
+      showCalendar(reader, stamp);
+    }
+    calendarCursor = { script, ev: stamp.ev, seq: stamp.seq };
+  } else {
+    calendarCursor = null;
+  }
+  if (!recs || !ev || ev.t === "movie") {
+    // A film owns the frame; no weather state is painted behind it.
+    mountWeather(reader, null);
+    return;
+  }
+  mountWeather(reader, resolveWeather(recs, event, ranges));
+  if (forward) {
+    const from = newScene ? -1 : prev!.ev;
+    const shake = resolveShakeCue(recs, from, event, ranges);
+    if (shake) applyShake(reader, shake);
+  }
 }
 
 const stageBusyTimers = new WeakMap<HTMLElement, number>();
@@ -1754,14 +1983,14 @@ export function resolveStageOverlay(
   return null;
 }
 
-function paintOverlay(stage: HTMLElement, save: SaveData): void {
+function paintOverlay(stage: HTMLElement, save: SaveData): string | null {
   const prev = stage.querySelector(":scope > img.stage-ov");
   const url = stageOverlayHint(save);
   if (!url) {
     prev?.remove();
-    return;
+    return null;
   }
-  if (prev instanceof HTMLImageElement && prev.dataset.cur === url) return;
+  if (prev instanceof HTMLImageElement && prev.dataset.cur === url) return url;
   prev?.remove();
   const img = document.createElement("img");
   img.className = "stage-ov";
@@ -1778,6 +2007,7 @@ function paintOverlay(stage: HTMLElement, save: SaveData): void {
   img.src = url;
   if (img.complete) img.style.opacity = "1";
   stage.appendChild(img);
+  return url;
 }
 
 /** BGM timeline state at the current position (data/bgm.json, .bnr (4,158)).
@@ -2034,7 +2264,7 @@ export function setBnrLookup(fn: BnrLookup | null): void {
 // directive events must still fire theirs.
 let seCursor: { script: string; ev: number } | null = null;
 
-function playSeUrl(url: string, volume: number): void {
+function playSeUrl(url: string, volume: number, captionId?: number): void {
   const level = Math.max(0, Math.min(1, volume));
   const start = (src: string) => {
     const audio = document.getElementById("se") as HTMLAudioElement | null;
@@ -2049,6 +2279,11 @@ function playSeUrl(url: string, volume: number): void {
     }
     audio.volume = level;
     audio.src = src;
+    const cues = captionId !== undefined
+      ? seCaptionCues(currentCaptions, captionId)
+      : null;
+    if (cues) showCaption(audio, cues);
+    else clearCaptionForAudio(audio);
     audio.play().catch(() => undefined);
   };
   if (!url.includes("#")) {
@@ -2074,7 +2309,7 @@ function fireSe(save: SaveData, seVol = 0.765): void {
   const ch = chapterOfScript(script);
   for (const id of resolveSeIds(recs, from, ev, activeExecutedRanges(save))) {
     const url = seUrl(id, ch);
-    if (url) playSeUrl(url, seVol);
+    if (url) playSeUrl(url, seVol, id);
   }
 }
 
@@ -2172,6 +2407,7 @@ let ambScript: string | null = null;
 function stopAmbChannel(ch: number): void {
   const a = ambEls.get(ch);
   if (a) {
+    clearCaptionForAudio(a);
     a.pause();
     a.removeAttribute("src");
     delete a.dataset.cur;
@@ -2182,6 +2418,7 @@ function stopOneShotChannel(ch: number): void {
   oneShotSeq.set(ch, (oneShotSeq.get(ch) ?? 0) + 1);
   const a = oneShotEls.get(ch);
   if (a) {
+    clearCaptionForAudio(a);
     a.pause();
     a.removeAttribute("src");
   }
@@ -2220,6 +2457,9 @@ function playChannelOneShot(cue: AmbCue, url: string, seVol = 0.765): void {
     a.dataset.vol = String(cue.vol / 255);
     a.volume = Math.max(0, Math.min(1, (cue.vol / 255) * seVol));
     a.src = src;
+    const cues = seCaptionCues(currentCaptions, cue.se);
+    if (cues) showCaption(a, cues);
+    else clearCaptionForAudio(a);
     a.play().catch(() => undefined);
   };
   if (!url.includes("#")) {
@@ -2425,6 +2665,16 @@ let voiceLookup: VoiceLookup | null = null;
 export function setVoiceLookup(fn: VoiceLookup | null): void {
   voiceLookup = fn;
 }
+
+/** Engine character slot for a voiced event (data/voicemap.json `chars`).
+ * Used only by the EroMode voice filter; undefined stays unfiltered. */
+type VoiceChrLookup = (script: string, ev: number) => number | undefined;
+let voiceChrLookup: VoiceChrLookup | null = null;
+export function setVoiceChrLookup(fn: VoiceChrLookup | null): void {
+  voiceChrLookup = fn;
+}
+/** Wa2Def.EroChar: kazusa, setsuna, koharu, izumi, mari. */
+const ERO_CHARS = new Set([1, 2, 3, 4, 5]);
 
 /** Display-name overrides (data/speakers.json, built from the MAO
  * manuscript's speakerEn): JP speaker labels map to EN names by
@@ -2643,20 +2893,35 @@ function playVoice(save: SaveData, ev: ScenarioEvent, vol: number): void {
     return;
   }
   audio.volume = Math.max(0, Math.min(1, vol));
+  if (eroSuppressed(save.position.script, save.position.event)) {
+    cutVoice();
+    return;
+  }
   const url = voiceUrlFor(save.position.script, save.position.event, ev);
+  const cues = voiceCaptionCues(
+    currentCaptions,
+    voiceKeyFor(save.position.script, save.position.event, ev),
+  );
   if (url) {
     if (audio.dataset.cur !== url) {
       const seq = ++voicePlaySeq;
       audio.dataset.cur = url;
+      const bindCaption = () => {
+        if (cues) showCaption(audio, cues);
+        else clearCaptionForAudio(audio);
+      };
       if (!url.includes("#")) {
         audio.src = url;
+        bindCaption();
         audio.play().catch((err) => rememberBlockedVoice(err, url, seq, save));
       } else {
         audio.pause();
         audio.removeAttribute("src");
+        clearCaptionForAudio(audio);
         void resolveAudioUrl(url).then((resolved) => {
           if (seq !== voicePlaySeq || !resolved || audio.dataset.cur !== url) return;
           audio.src = resolved;
+          bindCaption();
           audio.play().catch((err) => rememberBlockedVoice(err, url, seq, save));
         });
       }
@@ -2716,6 +2981,7 @@ function cutVoice(): void {
   ++voicePlaySeq;
   blockedVoice = null;
   const audio = document.getElementById("voice") as HTMLAudioElement | null;
+  if (audio) clearCaptionForAudio(audio);
   if (audio && audio.dataset.cur) {
     delete audio.dataset.cur;
     audio.pause();

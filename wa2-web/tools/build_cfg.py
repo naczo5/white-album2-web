@@ -12,6 +12,7 @@ line labels onto IR event spans [from, to), and emits structured CfgOp ASTs:
   - choice(...)         SetSelectMess gates + SetSelect commit
   - sload(script,entry) Cross-script jump (SLoad)
   - scall(script,entry) Subroutine call into another script entry (SCall)
+  - call(entry)         Same-script call to a helper entry point (4,2)
   - ret                 Subroutine return (4,5)
   - gotitle             Ending / return-to-title (GoTitle)
 
@@ -255,6 +256,14 @@ def _eval_expr_ops(ops: list[tuple], tokens: list[str] | None = None):
                 sname = _resolve_tok_name(target, tokens)
                 if sname and sname.lower() not in ENGINE_INTERNAL:
                     effects.append({"t": "scall", "script": sname, "entry": int(entry) if isinstance(entry, int) else 0})
+            elif fn == 2:  # same-script call to a helper entry point
+                # The single pushed argument is an LSCR point index (the
+                # corpus uses 9999, the timer/BMP helper section), NOT a
+                # byte offset. It is a statement-level call, not an
+                # expression value: emit a CfgOp and drop the stack.
+                entry = stack.pop() if stack else 0
+                effects.append({"t": "call", "entry": int(entry) if isinstance(entry, int) else 0})
+                stack.clear()
             elif fn == 5:  # ret (only when standalone statement without downstream consumers)
                 if not stack and i == len(ops) - 1 or (i + 1 < len(ops) and ops[i + 1] == (6, 30) and not stack):
                     effects.append({"t": "ret"})

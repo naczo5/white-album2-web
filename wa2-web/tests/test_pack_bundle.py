@@ -99,6 +99,32 @@ def test_bundle_delivers_cfg(tmp_path):
     assert not (data / "cfg.json").exists()
 
 
+def test_bundle_inlines_captions_but_keeps_native_pos_lazy(tmp_path):
+    """Captions are tiny boot data and can be inlined/pruned. Native-save
+    anchors are ~1.6 MB and import-only, so they must stay a loose side file
+    for `loadNativePos()` instead of inflating every boot bundle."""
+    data = tmp_path / "data"
+    (data / "scripts").mkdir(parents=True)
+    (data / "scripts" / "index.json").write_text(json.dumps(["1001"]), encoding="utf-8")
+    (data / "scripts" / "1001.json").write_text(
+        json.dumps({"script": "1001", "tokens": 1, "events": []}),
+        encoding="utf-8",
+    )
+    (data / "flow.json").write_text(json.dumps({"version": 1, "nodes": []}), encoding="utf-8")
+    anchors = {"version": 1, "anchors": {"1001": [[28, 0]]}}
+    captions = {"version": 1, "voice": {"1001_0000": [{"begin": 0, "end": 1, "text": "x"}]}}
+    (data / "native-pos.json").write_text(json.dumps(anchors), encoding="utf-8")
+    (data / "captions.json").write_text(json.dumps(captions), encoding="utf-8")
+
+    pack_bundle.bundle_data(str(data), prune=True)
+    bundle = json.loads((data / "bundle.json").read_text(encoding="utf-8"))
+    assert "nativePos" not in bundle
+    assert bundle["captions"] == captions
+    # Lazy side file survives prune; inlined captions do not.
+    assert json.loads((data / "native-pos.json").read_text(encoding="utf-8")) == anchors
+    assert not (data / "captions.json").exists()
+
+
 def test_pack_audio_groups_dedups_rolls_chunks_and_prunes(tmp_path):
     assets = tmp_path / "assets"
     (assets / "voice" / "ic").mkdir(parents=True)

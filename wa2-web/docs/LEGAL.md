@@ -9,9 +9,11 @@
   screenshot (`wa2-web/docs/preview.webp`); it depicts game art and a
   translated line, was captured from the maintainer's own legally-owned
   build, is never loaded by the engine, and is not part of any pack.
-  Remove it on request. Apart from that, the only words from the game
-  present in source are 65 short functional choice labels (e.g. option
-  texts) used as join keys between engine positions and walkthrough
+  Remove it on request. The favicon/PWA icon set under
+  `wa2-web/web/public/` is original engine art (snowflake + gold record
+  label), not game art. Apart from the screenshot, the only words from
+  the game present in source are 65 short functional choice labels (e.g.
+  option texts) used as join keys between engine positions and walkthrough
   research — comparable to quoting button labels — plus our own
   annotations. Everything substantive is supplied by the user at build
   time and never touches git.

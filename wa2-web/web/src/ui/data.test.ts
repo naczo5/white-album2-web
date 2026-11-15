@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadGameData, resolvePackBase } from "./data";
+import { loadGameData, loadNativePos, resolvePackBase } from "./data";
 
 const SCENARIO = {
   script: "1001",
@@ -75,17 +75,22 @@ describe("loadGameData external pack", () => {
     expect(data.scenarios).toEqual([SCENARIO]);
     expect(data.luts).toEqual({ sepia: lut });
     // The bundle has no slot table or cfg, so the loose copies are fetched;
-    // the committed sysSlots table backs it up when that 404s. Still no per-script calls.
+    // the committed sysSlots table backs it up when that 404s. Captions are
+    // optional loose boot data; native-pos is lazy (import-only), so boot
+    // must not fetch its ~1.6 MB. Still no per-script calls.
     expect(calls).toEqual([
       "https://pack.example/wa2/data/bundle.json",
       "https://pack.example/wa2/data/sys-slots.json",
       "https://pack.example/wa2/data/cfg.json",
+      "https://pack.example/wa2/data/captions.json",
     ]);
     expect(data.sysSlots.scripts.length).toBeGreaterThan(0);
     expect(data.cfg).toBeNull();
+    expect(data.nativePos).toBeNull();
+    expect(data.captions).toBeNull();
   });
 
-  it("takes the slot table and cfg from the bundle without extra requests", async () => {
+  it("takes the slot table and cfg from the bundle without re-fetching them", async () => {
     const calls: string[] = [];
     const sysSlots = {
       version: 1,
@@ -101,6 +106,8 @@ describe("loadGameData external pack", () => {
       vars: [{ idx: 0, name: "FLG_00", init: 0 }],
       scripts: { "1001": { "0": [{ t: "play", from: 0, to: 1 }] } },
     };
+    const nativePos = { version: 1, anchors: { "1001": [[8, 0] as [number, number]] } };
+    const captions = { version: 1, voice: { "1001_0000": [{ begin: 0, end: 100, text: "Hi" }] } };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       calls.push(url);
       if (url === "https://pack.example/wa2/data/bundle.json") {
@@ -110,6 +117,8 @@ describe("loadGameData external pack", () => {
           flow: FLOW,
           sysSlots,
           cfg,
+          nativePos,
+          captions,
         }), { status: 200 });
       }
       return new Response("not found", { status: 404 });
@@ -117,7 +126,27 @@ describe("loadGameData external pack", () => {
     const data = await loadGameData("https://pack.example/wa2");
     expect(data.sysSlots).toEqual(sysSlots);
     expect(data.cfg).toEqual(cfg);
+    // Boot deliberately ignores an inlined nativePos; the lazy loader is the
+    // single source so old bundle.json files cannot inflate first paint.
+    expect(data.nativePos).toBeNull();
+    expect(data.captions).toEqual(captions);
     expect(calls).toEqual(["https://pack.example/wa2/data/bundle.json"]);
+  });
+
+  it("lazy-loads native position anchors once, only when the importer asks", async () => {
+    const anchors = { version: 1, anchors: { "1001": [[8, 0] as [number, number]] } };
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url === "https://pack.example/wa2/data/native-pos.json") {
+        return new Response(JSON.stringify(anchors), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }));
+    expect(calls).toEqual([]);
+    expect(await loadNativePos("https://pack.example/wa2/")).toEqual(anchors);
+    expect(await loadNativePos("https://pack.example/wa2")).toEqual(anchors);
+    expect(calls).toEqual(["https://pack.example/wa2/data/native-pos.json"]);
   });
 
   it("fetches cfg.json when omitted from bundle", async () => {

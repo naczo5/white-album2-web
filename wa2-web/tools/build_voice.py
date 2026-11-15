@@ -50,6 +50,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import bnr_anchor  # noqa: E402
 import kcap  # noqa: E402
 import lzss  # noqa: E402
 import parse_txt  # noqa: E402
@@ -82,6 +83,43 @@ def voice_anchors(data: bytes, script: str) -> list[int]:
                     out.append(nnn)
                     break
     return out
+
+
+def chars_from_payload(payload: bytes, next_ev: list[int]) -> dict[str, int]:
+    """Event -> character slot from `(4,138)` [chr,256,0,0,NNN] records.
+
+    Uses the same exact `(3,X)` anchor as the voice map; the event index is
+    the JP-spine IR event. Unknown/unresolvable records are skipped (the
+    runtime then treats the voice as unfiltered, never as a guess).
+    """
+    stmts = list(iter_statements(payload))
+    out: dict[str, int] = {}
+    for idx, _off, pushes, ops, _raw, _fl in stmts:
+        if not any(o == 4 and a == 138 for o, a in ops) or len(pushes) < 5:
+            continue
+        ch = s32(pushes[0])
+        for j in range(idx + 1, min(idx + 4, len(stmts))):
+            ops2 = stmts[j][3]
+            xs = [a for o, a in ops2 if o == 3]
+            if (4, 131) in ops2 and xs:
+                x = xs[0]
+                if 0 <= x < len(next_ev):
+                    out[str(next_ev[x])] = ch
+                break
+    return out
+
+
+def voice_chars_exact(data: bytes, script: str,
+                      jp_data: bytes | None) -> dict[str, int]:
+    if jp_data is None:
+        return {}
+    try:
+        payload, _ = load_bnr(data, script)
+        txt = _jp_txt(jp_data, script)
+    except KeyError:
+        return {}
+    events = bnr_anchor.jp_spine_events(txt)
+    return chars_from_payload(payload, bnr_anchor.next_event_map(events))
 
 
 def anchor_toks(data: bytes, script: str) -> list[int]:
@@ -142,6 +180,18 @@ def jp_tokens(jp_data: bytes, script: str) -> list[str]:
                 orig, lz = lzss.split_datahdr(blob)
                 blob = lzss.decompress(lz, orig)
             return parse_txt.split_tokens(blob)
+    raise KeyError(script + ".txt")
+
+
+def _jp_txt(jp_data: bytes, script: str) -> bytes:
+    for e in kcap.read_index(jp_data):
+        if not e.is_folder and e.name == script + ".txt":
+            s, e2 = kcap.data_range(e)
+            blob = jp_data[s:e2]
+            if e.is_compressed:
+                orig, lz = lzss.split_datahdr(blob)
+                blob = lzss.decompress(lz, orig)
+            return blob
     raise KeyError(script + ".txt")
 
 
@@ -597,6 +647,7 @@ def main() -> None:
             print("mao: unreadable index; falling back to fractional maps")
 
     vmap: dict[str, dict[str, object]] = {}
+    cmap: dict[str, dict[str, int]] = {}
     smap: dict[str, dict[str, str]] = {}
     n_exact = n_frac = n_rec = n_spk = 0
     for script in sorted(src):
@@ -616,6 +667,11 @@ def main() -> None:
         if not recs:
             continue
         n_rec += len(recs)
+        # Character slot per voiced event (EroMode voice filtering). Only
+        # exact JP-spine anchors are emitted; unknown lines stay unfiltered.
+        chars = voice_chars_exact(src[script], script, jp_data)
+        if chars:
+            cmap[script] = chars
         rows: dict[str, object] = {}
 
         # ---- exact chain (JP txt + MAO + voice keys) ----
@@ -739,12 +795,12 @@ def main() -> None:
 
     out_dir = os.path.dirname(os.path.abspath(out_path))
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump({"version": 2, "map": vmap}, f)
+        json.dump({"version": 2, "map": vmap, "chars": cmap}, f)
     sp_path = os.path.join(out_dir, "speakers.json")
     with open(sp_path, "w", encoding="utf-8") as f:
         json.dump({"version": 1, "speakers": smap}, f)
     print(f"voice: {len(vmap)} scripts, {n_exact} exact + {n_frac} fractional "
-          f"of {n_rec} records -> {out_path}")
+          f"of {n_rec} records; character ids for {len(cmap)} scripts -> {out_path}")
     print(f"speakers: {len(smap)} scripts, {n_spk} overrides -> {sp_path}")
 
 

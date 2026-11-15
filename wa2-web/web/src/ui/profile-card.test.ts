@@ -28,20 +28,29 @@ describe("profileGateLabels", () => {
   it("names every cleared story gate", () => {
     expect(profileGateLabels({ replay: 1, codaEntered: 1, chiakiNormal: 1, setsunaCc: 1 }))
       .toEqual(["New Game+", "Coda unlocked", "Chiaki True route unlocked"]);
+    expect(profileGateLabels({ ccClear: 1, codaClear: 1 }))
+      .toEqual(["Coda unlocked", "Coda cleared"]);
+    expect(profileGateLabels({ ccClear: 1, codaClear: 1, replay: 1, chiakiNormal: 1 }))
+      .toEqual(["New Game+", "Coda unlocked", "Coda cleared", "Chiaki True route unlocked"]);
   });
 
-  it("treats cc-setsuna as the Coda unlock it implies", () => {
-    // `setsunaCc` is the CC Setsuna clear, the flag the engine gates Coda on:
-    // reporting "no Coda" for that save would be a lie.
+  it("treats any CC clear as the Coda unlock it implies", () => {
+    // `setsunaCc` is the CC Setsuna clear, `ccClear` any CC ending: both are
+    // the flags the engine gates Coda on, and reporting "no Coda" for that
+    // save would be a lie.
     expect(profileGateLabels({ setsunaCc: 1 })).toEqual(["Coda unlocked"]);
+    expect(profileGateLabels({ ccClear: 1 })).toEqual(["Coda unlocked"]);
     expect(profileGateLabels({ codaEntered: 1 })).toEqual(["Coda unlocked"]);
-    // Both set: one line, not a duplicate.
-    expect(profileGateLabels({ codaEntered: 1, setsunaCc: 1 })).toEqual(["Coda unlocked"]);
+    // All of them set: one line, not a duplicate.
+    expect(profileGateLabels({ codaEntered: 1, setsunaCc: 1, ccClear: 1 })).toEqual(["Coda unlocked"]);
   });
 
   it("is silent when no gate is set or the profile has none", () => {
     expect(profileGateLabels({})).toEqual([]);
-    expect(profileGateLabels({ replay: 0, codaEntered: 0, chiakiNormal: 0, setsunaCc: 0 })).toEqual([]);
+    expect(profileGateLabels({
+      replay: 0, codaEntered: 0, chiakiNormal: 0, setsunaCc: 0,
+      ccClear: 0, codaClear: 0,
+    })).toEqual([]);
     expect(profileGateLabels(null)).toEqual([]);
     expect(profileGateLabels(undefined)).toEqual([]);
   });
@@ -49,11 +58,12 @@ describe("profileGateLabels", () => {
 
 describe("profile card", () => {
   it("renders the gate line for an imported profile", () => {
-    const html = profileCard(profile({ replay: 1, codaEntered: 1, chiakiNormal: 0 }));
+    const html = profileCard(profile({ replay: 1, codaEntered: 1, chiakiNormal: 0, codaClear: 1 }));
     expect(html).toContain("Global profile");
     expect(html).toContain("profile-gates");
     expect(html).toContain("New Game+");
     expect(html).toContain("Coda unlocked");
+    expect(html).toContain("Coda cleared");
     expect(html).not.toContain("Chiaki True route unlocked");
     // The stat strip still carries the imported counters.
     expect(html).toContain("2 read lines");

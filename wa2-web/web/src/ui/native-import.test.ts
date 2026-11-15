@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "../engine/router";
-import type { FlowData, LinksData, SaveData, Scenario, SysSlotsTable, TerminalsData } from "../engine/types";
+import type { FlowData, LinksData, NativePosData, SaveData, Scenario, SysSlotsTable, TerminalsData } from "../engine/types";
 import type { NativeSave } from "../engine/native-save";
 import { readProfile, setSaveNamespace, writeProfile } from "../engine/save";
 import { SYS_SIZE } from "../engine/sys-save";
@@ -26,6 +26,15 @@ function native(route: string, text = "Shared line."): NativeSave {
     options: [],
     script: "1007",
     route,
+    signature: "exact",
+    vmVersion: "1.00",
+    layout: 4,
+    parseMode: 131,
+    scriptPos: 0,
+    locals: [],
+    jumpCount: 0,
+    jumpStack: [],
+    argCount: 0,
   };
 }
 
@@ -57,6 +66,23 @@ describe("native route candidates", () => {
     );
     const out = nativeCandidates(router, native("2"));
     expect(out.map((p) => p.event)).toEqual([0, 1]);
+  });
+
+  it("forwards nativePos so duplicates are ranked by ScriptPos", () => {
+    const router = new Router(
+      [scenario("1007", "Shared line.", 3)],
+      emptyFlow, emptyLinks, emptyTerms,
+    );
+    const nativePos: NativePosData = {
+      version: 1,
+      anchors: { "1007": [[100, 0], [500, 1], [900, 2]] },
+    };
+    const save = { ...native("2"), scriptPos: 620 };
+    const out = nativeCandidates(router, save, nativePos);
+    expect(out.map((p) => p.event)).toEqual([1, 0, 2]);
+    expect(out[0]?.anchor).toBe("exact");
+    // Without anchors the old text order is untouched.
+    expect(nativeCandidates(router, save).map((p) => p.event)).toEqual([0, 1, 2]);
   });
 });
 

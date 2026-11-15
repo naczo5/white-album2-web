@@ -3,7 +3,7 @@
 // Built data lives in /data (emitted by tools/build.py) and is gitignored;
 // demo content below is original placeholder text, not game content.
 
-import type { BgmData, BnrData, CfgData, FlowData, LinksData, Scenario, SpeakersData, SysSlotsTable, TerminalsData, VoiceMapData } from "../engine/types";
+import type { BgmData, BnrData, CaptionData, CfgData, FlowData, LinksData, NativePosData, Scenario, SpeakersData, SysSlotsTable, TerminalsData, VoiceMapData } from "../engine/types";
 import committedSysSlots from "../../../data/sys-slots.json";
 
 export type LutMap = Record<string, { r: number[]; g: number[]; b: number[] }>;
@@ -24,6 +24,12 @@ export interface GameData {
   voicemap: VoiceMapData | null;
   /** Display-name overrides (built by tools/build_voice.py); null = none. */
   speakers: SpeakersData | null;
+  /** `.bnr` label-statement anchors (tools/build_native_pos.py); null = the
+   * native-save importer falls back to plain text matching. */
+  nativePos: NativePosData | null;
+  /** BYOA timed captions for voice/SE clips (`data/captions.json`); null =
+   * no captions in this pack. Presentation only, never playback gating. */
+  captions: CaptionData | null;
   /** Color-grade LUTs (when delivered via data/bundle.json); null = fetch luts.json or fallback. */
   luts: LutMap | null;
   /** `Sys.sav` slot map (native global save import). Always present: the
@@ -135,6 +141,8 @@ interface BundlePayload {
   bnr?: BnrData | null;
   voicemap?: VoiceMapData | null;
   speakers?: SpeakersData | null;
+  nativePos?: NativePosData | null;
+  captions?: CaptionData | null;
   luts?: LutMap | { version?: number; luts?: LutMap } | null;
   sysSlots?: SysSlotsTable | null;
 }
@@ -179,6 +187,20 @@ function unwrapLuts(raw: BundlePayload["luts"]): LutMap | null {
   return raw as LutMap;
 }
 
+/** Lazy native-save anchors (`data/native-pos.json`, ~1.6 MB). Only the
+ * Save/Load importer needs them, so they must not inflate the boot payload.
+ * The promise is cached per pack prefix (including a cached 404). */
+const nativePosCache = new Map<string, Promise<NativePosData | null>>();
+export function loadNativePos(base = ""): Promise<NativePosData | null> {
+  const prefix = base ? `${base.replace(/\/+$/, "")}/` : "";
+  let pending = nativePosCache.get(prefix);
+  if (!pending) {
+    pending = tryFetch<NativePosData>(`${prefix}data/native-pos.json`);
+    nativePosCache.set(prefix, pending);
+  }
+  return pending;
+}
+
 export async function loadGameData(base = ""): Promise<GameData> {
   const prefix = base ? `${base.replace(/\/+$/, "")}/` : "";
   const bundle = await tryFetch<BundlePayload>(`${prefix}data/bundle.json`);
@@ -194,6 +216,12 @@ export async function loadGameData(base = ""): Promise<GameData> {
       const cfg = bundle.cfg !== undefined
         ? (bundle.cfg ?? null)
         : (await tryFetch<CfgData>(`${prefix}data/cfg.json`)) ?? null;
+      // Captions are presentation data loaded at boot (small). Native-save
+      // anchors are import-only and ~1.6 MB; they are lazy-loaded by
+      // `loadNativePos()` when the Save/Load importer needs them.
+      const captions = bundle.captions !== undefined
+        ? bundle.captions
+        : await tryFetch<CaptionData>(`${prefix}data/captions.json`);
       return {
         scenarios,
         flow: sanitizeFlow(bundle.flow),
@@ -205,6 +233,8 @@ export async function loadGameData(base = ""): Promise<GameData> {
         bnr: bundle.bnr ?? null,
         voicemap: bundle.voicemap ?? null,
         speakers: bundle.speakers ?? null,
+        nativePos: null,
+        captions: captions ?? null,
         luts: unwrapLuts(bundle.luts),
         sysSlots,
         demo: false,
@@ -212,7 +242,7 @@ export async function loadGameData(base = ""): Promise<GameData> {
       };
     }
   }
-  const [index, flow, endings, links, terminals, cfg, bgm, bnr, voicemap, speakers, sysSlotsRaw] =
+  const [index, flow, endings, links, terminals, cfg, bgm, bnr, voicemap, speakers, sysSlotsRaw, captions] =
     await Promise.all([
       tryFetch<string[]>(`${prefix}data/scripts/index.json`),
       tryFetch<FlowData>(`${prefix}data/flow.json`),
@@ -225,6 +255,7 @@ export async function loadGameData(base = ""): Promise<GameData> {
       tryFetch<VoiceMapData>(`${prefix}data/voicemap.json`),
       tryFetch<SpeakersData>(`${prefix}data/speakers.json`),
       tryFetch<SysSlotsTable>(`${prefix}data/sys-slots.json`),
+      tryFetch<CaptionData>(`${prefix}data/captions.json`),
     ]);
   const sysSlots = usableSysSlots(sysSlotsRaw) ?? DEFAULT_SYS_SLOTS;
   if (Array.isArray(index) && index.length > 0 && flow && Array.isArray(flow.nodes)) {
@@ -252,6 +283,8 @@ export async function loadGameData(base = ""): Promise<GameData> {
         endings: endings ?? { endings: [] },
         cfg: cfg ?? null,
         bgm, bnr, voicemap, speakers, luts: null,
+        nativePos: null,
+        captions: captions ?? null,
         sysSlots,
         demo: false,
         incomplete: failed,
@@ -266,6 +299,7 @@ export async function loadGameData(base = ""): Promise<GameData> {
     endings: { endings: [] },
     cfg: null,
     bgm: null, bnr: null, voicemap: null, speakers: null, luts: null,
+    nativePos: null, captions: null,
     sysSlots: DEFAULT_SYS_SLOTS,
     demo: true,
     incomplete: [],

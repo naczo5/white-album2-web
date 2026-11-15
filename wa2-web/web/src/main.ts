@@ -1,16 +1,17 @@
-import { loadManifest } from "./engine/assets";
+import { loadManifest, voiceUrl, voiceUrlByKey } from "./engine/assets";
 import { Router, chapterOfScript } from "./engine/router";
-import { newSave, readAutosave, readProfile, readQuicksave, setSaveNamespace, writeAutosave, writeProfile, writeQuicksave } from "./engine/save";
+import { newSave, readAutosave, readProfile, readQuicksave, setSaveNamespace, storageKey, writeAutosave, writeProfile, writeQuicksave } from "./engine/save";
 import type { SaveData, SysProfile } from "./engine/types";
-import { loadGameData, resolvePackBase, type GameData } from "./ui/data";
+import { loadGameData, loadNativePos, resolvePackBase, type GameData } from "./ui/data";
 import { renderFlowchart, sceneLabel } from "./ui/flowchart";
+import { playPreviewAudio, previewPlayingUrl, renderExtras, stopPreviewAudio } from "./ui/gallery";
 import { renderGuide, type GuideData } from "./ui/guide";
-import { applySeVolume, ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetAudioCursors, resetPaintState, resetSkip, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
+import { applySeVolume, ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetAudioCursors, resetPaintState, resetSkip, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceChrLookup, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
 import { stopMovie } from "./ui/movie";
 import { applyProfileToRun, renderSaves } from "./ui/saves";
 import "./style.css";
 
-type Screen = "title" | "read" | "flow" | "guide" | "special" | "saves" | "log" | "settings";
+type Screen = "title" | "read" | "flow" | "guide" | "special" | "extras" | "saves" | "log" | "settings";
 
 interface Settings {
   spoiler: boolean;
@@ -20,6 +21,8 @@ interface Settings {
   voiceVol: number; // 0..1
   seVol: number; // 0..1; engine default se_vol = 195/255
   bgmVol: number; // 0..1
+  /** Original `ero_voice`: play non-heroine voices during EroMode scenes. */
+  eroVoice: boolean;
   skipRead: boolean; // true: Ctrl skips only already-read lines
   dev: boolean; // dev mode: scene-jump buttons in the flowchart
   unlockAllChoices: boolean; // bypass choice flag locks (e.g. Chiaki True)
@@ -48,6 +51,9 @@ const settings: Settings = {
   voiceVol: storedNumber("wa2web.voiceVol", 0.9, 0, 1),
   seVol: storedNumber("wa2web.seVol", 195 / 255, 0, 1),
   bgmVol: storedNumber("wa2web.bgmVol", 0.7, 0, 1),
+  // Original default is ero_voice=0 (play every voice); only an explicit
+  // "off" suppresses non-heroine voices in EroMode.
+  eroVoice: safeStorageGet("wa2web.eroVoice") !== "0",
   skipRead: safeStorageGet("wa2web.skipRead") === "1",
   dev: safeStorageGet("wa2web.dev") === "1",
   unlockAllChoices: safeStorageGet("wa2web.unlockAllChoices") === "1",
@@ -65,6 +71,7 @@ function persistSettings(): void {
     localStorage.setItem("wa2web.voiceVol", String(settings.voiceVol));
     localStorage.setItem("wa2web.seVol", String(settings.seVol));
     localStorage.setItem("wa2web.bgmVol", String(settings.bgmVol));
+    localStorage.setItem("wa2web.eroVoice", settings.eroVoice ? "1" : "0");
     localStorage.setItem("wa2web.skipRead", settings.skipRead ? "1" : "0");
     localStorage.setItem("wa2web.dev", settings.dev ? "1" : "0");
     localStorage.setItem("wa2web.unlockAllChoices", settings.unlockAllChoices ? "1" : "0");
@@ -96,6 +103,55 @@ let packFromQuery = false;
 let assetsMissing = false;
 let backTo: Screen = "title";
 
+/** Scene replay is a detached preview: the reader still autosaves BGM and
+ * advances, but the player's real autosave must survive the detour. Keep the
+ * pre-replay bytes and put them back when the replay ends (or on unload). */
+let replayGuardActive = false;
+let replayAutosaveKey: string | null = null;
+let replayAutosaveRaw: string | null = null;
+/** The in-memory run the replay detached from. Restoring only localStorage
+ * left `save` pointing at the replay, so Title → Continue resumed the
+ * preview and its next advance overwrote the restored autosave. */
+let replaySaveSnapshot: SaveData | null = null;
+
+function beginReplayAutosaveGuard(): void {
+  if (replayGuardActive) return;
+  replayGuardActive = true;
+  replaySaveSnapshot = save;
+  try {
+    replayAutosaveKey = storageKey("autosave");
+    replayAutosaveRaw = localStorage.getItem(replayAutosaveKey);
+  } catch {
+    replayAutosaveKey = null;
+    replayAutosaveRaw = null;
+  }
+}
+
+/** Discard the guard, optionally restoring the pre-replay autosave.
+ * `restore = false` is used when a real save/new game replaces the replay. */
+function endReplayAutosaveGuard(restore = true): void {
+  if (!replayGuardActive) return;
+  replayGuardActive = false;
+  const key = replayAutosaveKey;
+  const raw = replayAutosaveRaw;
+  const snapshot = replaySaveSnapshot;
+  replayAutosaveKey = null;
+  replayAutosaveRaw = null;
+  replaySaveSnapshot = null;
+  if (!restore) return;
+  try {
+    if (key) {
+      if (raw === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, raw);
+    }
+  } catch {
+    /* storage unavailable: there is nothing durable to restore */
+  }
+  // Restore the live object too, not just the stored bytes: the title's
+  // Continue path renders `save` directly.
+  save = snapshot ?? readAutosave(localStorage) ?? freshStart();
+}
+
 /** Stable short id for save-key namespacing (FNV-1a). */
 function dataNamespace(): string {
   if (data.demo) return "demo";
@@ -124,8 +180,9 @@ function recordRunEnding(id: string): void {
   if (id && save && !save.endings.includes(id)) save.endings.push(id);
 }
 
-function recordGameFlag(id: number, val: number): void {
-  if (val === 0) return;
+/** Lazily materialize the global profile. A run can unlock endings, CGs,
+ * music and scene flags before any `Sys.sav` is imported. */
+function ensureProfile(): SysProfile {
   if (!profile) {
     profile = {
       version: 1,
@@ -142,22 +199,50 @@ function recordGameFlag(id: number, val: number): void {
       gameFlags: {},
     };
   }
+  return profile;
+}
+
+function recordGameFlag(id: number, val: number): void {
+  if (val === 0) return;
+  const p = ensureProfile();
   const key = String(id);
-  profile.gameFlags = { ...(profile.gameFlags ?? {}), [key]: val };
+  p.gameFlags = { ...(p.gameFlags ?? {}), [key]: val };
   const endingId = data.sysSlots?.endingSlots?.[key];
   if (endingId) {
-    if (!profile.endings.includes(endingId)) profile.endings.push(endingId);
+    if (!p.endings.includes(endingId)) p.endings.push(endingId);
     recordRunEnding(endingId);
   }
   if (data.sysSlots?.gateSlots) {
     for (const [slotKey, slotIdx] of Object.entries(data.sysSlots.gateSlots)) {
       if (slotIdx === id && GATE_SLOT_NAMES[slotKey]) {
-        profile.gates[GATE_SLOT_NAMES[slotKey]] = val;
+        p.gates[GATE_SLOT_NAMES[slotKey]] = val;
       }
     }
   }
-  writeProfile(localStorage, profile);
-  router.setProfileGameFlags(profile.gameFlags);
+  // Region C unlock bands. Sys.sav import fills these from a file; a live
+  // run must grow them too or the Extras menus stay empty until an import.
+  if (id >= 101 && id <= 199) {
+    const track = id - 100;
+    if (!p.music.includes(track)) p.music.push(track);
+  } else if (id >= 201 && id <= 224) {
+    const movie = id - 200;
+    if (!p.movies.includes(movie)) p.movies.push(movie);
+  } else if (id >= 300 && id <= 322) {
+    const ero = id - 300;
+    if (!p.ero.includes(ero)) p.ero.push(ero);
+  }
+  writeProfile(localStorage, p);
+  router.setProfileGameFlags(p.gameFlags);
+}
+
+/** Gallery unlock for a shown grp/v overlay. `h` CGs are stored as Region B
+ * part 1 (`1_000_000 + cgId`), matching `SysProfile.cg`/`Sys.sav`. */
+function recordCg(id: number): void {
+  if (!Number.isFinite(id) || id <= 0) return;
+  const p = ensureProfile();
+  if (p.cg.includes(id)) return;
+  p.cg.push(id);
+  writeProfile(localStorage, p);
 }
 
 async function boot(): Promise<void> {
@@ -191,6 +276,8 @@ async function boot(): Promise<void> {
   setBnrLookup((script) => data.bnr?.recs[script]);
   // Map hit (even null = unvoiced step) beats comma-tok; scripts without
   // a map fall back to tok via undefined.
+  setVoiceChrLookup((script, ev) =>
+    data.voicemap?.chars?.[script]?.[String(ev)]);
   setVoiceLookup((script, ev) => {
     const m = data.voicemap?.map[script];
     if (!m) return undefined;
@@ -247,7 +334,7 @@ async function boot(): Promise<void> {
     }
   }
   const scr = q.get("screen");
-  if (scr && ["flow", "guide", "settings", "saves", "special", "log"].includes(scr)) {
+  if (scr && ["flow", "guide", "settings", "saves", "special", "extras", "log"].includes(scr)) {
     screen = scr as Screen;
   }
   if (!save.flags.cfg || save.flags.cfg.script !== save.position.script) {
@@ -311,6 +398,8 @@ async function boot(): Promise<void> {
   window.addEventListener("blur", () => {
     if (skipState.active) setSkipping(false);
   });
+  // A reload mid-replay must not leave the preview in the Continue slot.
+  window.addEventListener("pagehide", () => endReplayAutosaveGuard());
   setReaderLive(screen === "read");
 }
 
@@ -353,6 +442,9 @@ function loadSaveIntoGame(next: SaveData): void {
     notify(`Save position ${next.position.script}:${next.position.event} is past this build; refusing.`);
     return;
   }
+  // A loaded save owns the autosave from here on; never restore the replay's
+  // pre-detour snapshot over it.
+  endReplayAutosaveGuard(false);
   save = next;
   if (!save.flags.cfg || save.flags.cfg.script !== save.position.script) {
     save.position = router.seek(save.position, save.flags, save.picks);
@@ -401,6 +493,7 @@ const hooks = {
   notify,
   quickSave,
   quickLoad,
+  onCg: recordCg,
   onSkipStop: () => {
     skipState.active = false;
   },
@@ -456,8 +549,14 @@ function screenHead(title: string, sub: string): string {
  * so nothing keeps advancing or playing behind a menu. Entering the reader
  * restores the mix and re-syncs BGM from the save. */
 function go(next: Screen): void {
+  // Extras music and backlog voice previews share one element; never let a
+  // menu clip keep playing behind the reader or the title.
+  if (next !== screen) stopPreviewAudio();
   const leavingRead = screen === "read" && next !== "read";
   if (leavingRead) {
+    // Title/Extras end a scene replay; overlay screens (log, saves, chart,
+    // guide, settings) return to it, so their own save paths clear the guard.
+    if (next === "title" || next === "extras") endReplayAutosaveGuard();
     pauseReader();
     resetSkip();
     skipState.active = false;
@@ -508,6 +607,7 @@ function render(): void {
             <button data-m="new">${data.demo ? "Restart demo" : "New game"}</button>
             <button data-m="flow">Flowchart</button>
             <button data-m="guide">Guide</button>
+            <button data-m="extras">Extras</button>
             <button data-m="special">Special contents</button>
             <button data-m="saves">Save / Load</button>
             <button data-m="settings">Settings</button>
@@ -524,6 +624,7 @@ function render(): void {
         const m = (b as HTMLElement).dataset.m!;
         if (m === "new") {
           if (confirm("Start a new game from the beginning? The autosave resets; existing slots, quick save, and imported saves are kept.")) {
+            endReplayAutosaveGuard(false);
             save = freshStart();
             save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
             writeAutosave(localStorage, save);
@@ -546,6 +647,8 @@ function render(): void {
       app.innerHTML = `<div id="reader"></div>`;
       readerEl = app.firstElementChild as HTMLElement;
     }
+    // Optional data side files: absent in older packs and the demo.
+    const captions = data.captions ?? null;
     renderReader(readerEl, {
       router, save,
       demo: data.demo,
@@ -555,10 +658,12 @@ function render(): void {
         voiceVol: settings.voiceVol,
         seVol: settings.seVol,
         bgmVol: settings.bgmVol,
+        eroVoice: settings.eroVoice,
         skipRead: settings.skipRead,
         dev: settings.dev,
       },
       skip: skipState,
+      captions,
       ...hooks,
     });
     return;
@@ -575,6 +680,7 @@ function render(): void {
       dev: settings.dev,
       profile,
       onJump: (script) => {
+        endReplayAutosaveGuard(false);
         save = newSave("debug", { script, event: 0 });
         save.visited.push(script);
         save.position = router.seek(save.position, save.flags, save.picks);
@@ -598,6 +704,41 @@ function render(): void {
       () => go(backTo),
       { profile, dev: settings.dev },
     );
+    return;
+  }
+  if (screen === "extras") {
+    app.innerHTML = `<div class="screen">
+      ${screenHead(
+        "Extras",
+        "CG gallery, music, and scene replay. Unlocks come from your profile: an imported system save plus what you have seen in play.",
+      )}
+      <div id="extras-body"></div>
+      <button class="back" data-back>← Back</button>
+    </div>`;
+    renderExtras(app.querySelector("#extras-body") as HTMLElement, {
+      profile,
+      cgRows: data.sysSlots.cgRows,
+      sceneSlots: data.sysSlots.sceneSlots,
+      settings: { dev: settings.dev, bgmVol: settings.bgmVol },
+      onReplay: (scene) => {
+        if (!router.scripts.has(scene.script)) {
+          notify("That replay scene is not in this build.");
+          return;
+        }
+        // Replay is a detached preview: keep the real autosave bytes and
+        // restore them when the replay ends (the reader still autosaves its
+        // own BGM/advance state in the meantime).
+        beginReplayAutosaveGuard();
+        save = newSave(`replay-${scene.cg}`, { script: scene.script, event: 0 });
+        save.position = router.seek(save.position, save.flags, save.picks);
+        save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
+        resetPaintState();
+        resetAudioCursors();
+        backTo = "extras";
+        go("read");
+      },
+    });
+    app.querySelector("[data-back]")?.addEventListener("click", () => go(backTo));
     return;
   }
   if (screen === "special") {
@@ -635,6 +776,7 @@ function render(): void {
       const b = document.createElement("button");
       b.textContent = `Extra scenario ${id}`;
       b.onclick = () => {
+        endReplayAutosaveGuard(false);
         save = newSave(`special-${id}`, { script: id, event: 0 });
         save.visited.push(id);
         save.position = router.seek(save.position, save.flags, save.picks);
@@ -662,6 +804,12 @@ function render(): void {
       sysSlots: data.sysSlots,
       flow: data.flow,
       profile,
+      nativePos: data.nativePos,
+      loadNativePos: async () => {
+        const np = await loadNativePos(packBase);
+        if (np) data.nativePos = np;
+        return np;
+      },
       dev: settings.dev,
       onProfileChange: (p) => {
         profile = p;
@@ -677,8 +825,13 @@ function render(): void {
   if (screen === "log") {
     app.innerHTML = `<div class="screen">
       ${screenHead("Backlog", "Every line shown in this playthrough, oldest first.")}
-      <ol class="log" id="log">${save.log.map((l) =>
-        `<li>${l.speaker ? `<b>${escapeHtml(l.speaker)}</b> ` : ""}${escapeHtml(l.text)}</li>`).join("")}
+      <ol class="log" id="log">${save.log.map((l, i) => {
+        const canPlay = !!(l.at && logVoiceUrl(l.at));
+        const btn = canPlay
+          ? `<button type="button" class="log-voice" data-log-voice="${i}" aria-label="Play voice clip" aria-pressed="false">▶</button>`
+          : "";
+        return `<li${canPlay ? ` class="has-voice"` : ""}>${btn}${l.speaker ? `<b>${escapeHtml(l.speaker)}</b> ` : ""}${escapeHtml(l.text)}</li>`;
+      }).join("")}
       </ol>
       <button class="back" id="back">← Back</button>
     </div>`;
@@ -689,6 +842,21 @@ function render(): void {
     app.querySelector("#back")?.addEventListener("click", () => go(backTo));
     // Esc / wheel-down / a tap outside the list returns to the story too.
     logEl?.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest("[data-log-voice]") as HTMLButtonElement | null;
+      if (btn) {
+        e.stopPropagation();
+        const entry = save.log[Number(btn.dataset.logVoice)];
+        const url = entry?.at ? logVoiceUrl(entry.at) : null;
+        if (!url) return;
+        if (previewPlayingUrl() === url) {
+          stopPreviewAudio();
+        } else {
+          pauseLineVoice();
+          playPreviewAudio(url, settings.voiceVol, { onStop: syncLogVoiceButtons });
+        }
+        syncLogVoiceButtons();
+        return;
+      }
       if (e.target === logEl) go(backTo);
     });
     return;
@@ -730,6 +898,10 @@ function render(): void {
           <label class="setting">
             <span class="setting-label">Music volume<small>Background music only; sound effects keep their own mix.</small></span>
             <span class="range-row"><input type="range" id="bv" min="0" max="100" value="${Math.round(settings.bgmVol * 100)}"> <span class="range-out" id="bv-val">${Math.round(settings.bgmVol * 100)}%</span></span>
+          </label>
+          <label class="setting">
+            <span class="setting-label">Female voices only in H scenes<small>Original H-scene voice setting: on = 女性ボイスのみ再生 (heroine slots 1–5 only; Haruki and side characters muted), off = 通常再生 (all voices).</small></span>
+            <input type="checkbox" id="ev" ${settings.eroVoice ? "" : "checked"}>
           </label>
         </section>
 
@@ -820,9 +992,59 @@ function render(): void {
       if (out) out.textContent = `${Math.round(settings.bgmVol * 100)}%`;
       persistSettings();
     };
+    const ev = app.querySelector("#ev") as HTMLInputElement;
+    ev.onchange = () => {
+      // Checkbox is the original "female voices only" choice; the stored
+      // flag is eroVoice=true for normal playback.
+      settings.eroVoice = !ev.checked;
+      persistSettings();
+    };
     app.querySelector("#back")?.addEventListener("click", () => go(backTo));
     return;
   }
+}
+
+function logVoiceUrl(at: { script: string; event: number }): string | null {
+  // Mirror the reader's voice lookup exactly: an explicit table entry wins
+  // (string = exact manifest key, number = legacy BNR line id); a table hit
+  // with no event entry means unvoiced; a script with no table at all falls
+  // back to the event's comma token, which is how 32/221 scripts still play
+  // voices in the reader.
+  const table = data.voicemap?.map[at.script];
+  if (table) {
+    const mapped = table[String(at.event)];
+    if (mapped === undefined) return null;
+    if (typeof mapped === "string") return voiceUrlByKey(mapped);
+    if (typeof mapped === "number") {
+      return voiceUrl(at.script, mapped, chapterOfScript(at.script));
+    }
+    return null;
+  }
+  const ev = router.at({ script: at.script, event: at.event });
+  if (!ev || (ev.t !== "say" && ev.t !== "narrate")) return null;
+  return voiceUrl(at.script, ev.tok, chapterOfScript(at.script));
+}
+
+/** Stop the reader's line voice without leaving a stale `dataset.cur` that
+ * would make the next render think it is still playing; the backlog preview
+ * must not overlap it. */
+function pauseLineVoice(): void {
+  const audio = document.getElementById("voice") as HTMLAudioElement | null;
+  if (!audio) return;
+  audio.pause();
+  delete audio.dataset.cur;
+}
+
+function syncLogVoiceButtons(): void {
+  const current = previewPlayingUrl();
+  app.querySelectorAll<HTMLButtonElement>("[data-log-voice]").forEach((btn) => {
+    const entry = save.log[Number(btn.dataset.logVoice)];
+    const url = entry?.at ? logVoiceUrl(entry.at) : null;
+    const on = !!url && current === url;
+    btn.textContent = on ? "■" : "▶";
+    btn.setAttribute("aria-pressed", String(on));
+    btn.setAttribute("aria-label", on ? "Stop voice clip" : "Play voice clip");
+  });
 }
 
 function escapeHtml(s: string): string {

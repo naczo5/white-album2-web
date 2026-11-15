@@ -135,6 +135,45 @@ def test_eval_expr_ops_expressions_and_calls():
     assert build_cfg._unwrap_select([eff2[2]]) == (4, {"t": "L", "idx": 0})
 
 
+def test_eval_expr_ops_same_script_call_is_not_an_expression():
+    # (4,2) is a statement-level same-script call: the pushed value is an
+    # LSCR point index (9999 = timer/BMP helper), not a byte offset and not
+    # an expression result.
+    _expr, effects, smess, labels = build_cfg._eval_expr_ops(
+        [("PUSH", 3, 9999), (4, 2)]
+    )
+    assert effects == [{"t": "call", "entry": 9999}]
+    assert smess == [] and labels == []
+
+
+def test_compile_script_cfg_emits_call_and_vm_ignores_it():
+    #   label tok 0; push 9999; (4,2); label tok 1; GoTitle()
+    base = 20  # one LSCR entry: 12-byte header + 8-byte table row
+    code = (
+        _op(3, 0) + _op(4, 131) + _op(6, 30)
+        + _push_int(9999) + _op(4, 2) + _op(6, 30)
+        + _op(3, 1) + _op(4, 131) + _op(6, 30)
+        + _op(4, 197) + _op(6, 30)
+    )
+    assert base == 20
+    raw = _pack_lsr([(0, code)])
+    tokens = ["line0", "line1"]
+    events = [{"t": "say", "tok": 0}, {"t": "say", "tok": 1}]
+    out = build_cfg.compile_script_cfg(raw, tokens, events)
+    ops = out["0"]
+    assert ops[0] == {"t": "play", "from": 0, "to": 1}
+    assert ops[1] == {"t": "call", "entry": 9999}
+    assert ops[2] == {"t": "play", "from": 1, "to": 2}
+    assert ops[3] == {"t": "gotitle"}
+
+    # The CFG VM (web/src/engine/cfg-vm.ts) has no `case "call"`; the op is
+    # a deliberate no-op there. The Python simulator mirrors that switch.
+    vm = CfgVM({"version": 1, "vars": [], "scripts": {"0": {"0": ops}}})
+    vm.run("0")
+    assert vm.played == [("0", 0, 1), ("0", 1, 2)]
+    assert vm.ended_title
+
+
 def test_compile_script_cfg_if_else_and_skip_9000():
     # Build entry 0 with:
     #   line tok 0

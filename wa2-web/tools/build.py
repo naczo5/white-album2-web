@@ -7,10 +7,10 @@ Steps:
   2. parse to event IR JSON (two-pass corpus census for mega resolution)
   3. emit web data dir: build/data/{scripts/*.json, flow.json, endings.json,
      links.json, terminals.json, sprites.json, sys-slots.json, bgm.json,
-     bnr.json, luts.json} (flow/links from IR; endings/terminals/sprites/
-     sys-slots from data/; bgm/bnr/voicemap from .bnr bytecode; luts from
-     grp.pak with --game; flags.json flag reference + .bnr choice gate need
-     script.pak)
+     bnr.json, luts.json, native-pos.json} (flow/links from IR; endings/
+     terminals/sprites/sys-slots from data/; bgm/bnr/voicemap from .bnr
+     bytecode; luts from grp.pak with --game; flags.json flag reference +
+     .bnr choice gate + native-pos.json ScriptPos anchors need script.pak)
   4. run parity gates (all engine choices covered, option text exact)
 
 Install: cp -r build/data/* web/public/data/  (see docs/BYOA.md)
@@ -187,9 +187,19 @@ def main() -> None:
             subprocess.run([sys.executable, os.path.join(HERE, "build_luts.py"),
                             grp, os.path.join(data_dir, "luts.json")],
                            check=True)
+        # Native-save ScriptPos -> IR event anchors (JP spine labels; the
+        # IC variant pack adds `ic/<id>` keys when present).
+        spak = os.path.join(game, "script.pak")
+        if os.path.isfile(spak):
+            np_cmd = [sys.executable,
+                      os.path.join(HERE, "build_native_pos.py"),
+                      spak, os.path.join(data_dir, "native-pos.json")]
+            ic_spak = os.path.join(game, "IC", "script.pak")
+            if os.path.isfile(ic_spak):
+                np_cmd += ["--ic", ic_spak]
+            subprocess.run(np_cmd, check=True)
         # Engine flag reference + .bnr choice-marker parity gate
         # (both need the installed script.pak; skipped without --game).
-        spak = os.path.join(game, "script.pak")
         if os.path.isfile(spak):
             ir_for_flags = ir_dir
             subprocess.run([sys.executable,

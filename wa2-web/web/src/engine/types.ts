@@ -121,6 +121,10 @@ export interface BgmData {
 export interface VoiceMapData {
   version: number;
   map: Record<string, Record<string, string | number>>;
+  /** Event -> engine character slot from the same (4,138) record. Used by
+   * the EroMode voice filter (slots 1..5 are the five heroines). Missing
+   * events are unfiltered, never guessed. */
+  chars?: Record<string, Record<string, number>>;
 }
 
 /** Display-name overrides (tools/build_voice.py from the MAO manuscript):
@@ -161,6 +165,41 @@ export interface BnrRec {
   fade?: number | null;
   /** Stage clear (engine wipe): barrier for older cues. */
   clear?: boolean;
+  /** Weather start/replace (4,173): mode 1/3/4/6, pixel speeds and count.
+   * Decoded from the VM argument shape; renderer maps modes to particles. */
+  weather?: {
+    mode: number;
+    sx: number;
+    sy: number;
+    count: number;
+    turb?: number;
+    flag2?: number;
+    index?: number;
+  };
+  /** Weather stop (4,175). */
+  weatherStop?: boolean;
+  /** Screen shake (4,150) [type, strength, frames]; types 1/9 are valid. */
+  shake?: { type: number; strength: number; frames: number };
+  /** Calendar stamp (4,203) [year, month, day, weekday]. */
+  cal?: { year: number; month: number; day: number; dow: number; mode?: number };
+  /** BMP overlay layer (4,176): id, filename, z-order and source folder. */
+  bmp?: { id: number; file: string; folder?: string; z: number };
+  /** BMP release (4,180) [id]. */
+  bmpRelease?: number;
+  /** BMP opacity/fade (4,185) [id, mode, alpha 0-255, frames]. Mode 3/4 are
+   * additive (screen blend); mode 6 is a mask the web layer approximates. */
+  bmpAlpha?: { id: number; mode?: number; alpha: number; frames: number };
+  /** BMP position (4,188) [id, x, y] (centred). */
+  bmpMove?: { id: number; x: number; y: number };
+  /** BMP rectangle (4,190) [id, x, y, w, h]. */
+  bmpRect?: { id: number; x: number; y: number; w: number; h: number };
+  /** BMP centred zoom (4,191) [id, x, y, scale]. */
+  bmpScale?: { id: number; x: number; y: number; scale: number };
+  /** Engine wait (4,194) [frames,0,0] used to sequence BMP fades. */
+  wait?: number;
+  /** NovelMode (4,220) [flag] and EroMode (4,221) [flag] state. */
+  novel?: boolean;
+  ero?: boolean;
   conf: "high" | "hypothesis";
 }
 
@@ -206,6 +245,10 @@ export type CfgOp =
   | { t: "choice"; ev: number; nodeIdx: number; into?: { t: "L"; idx: number } | null; options: CfgChoiceOption[] }
   | { t: "sload"; script: string; entry: number }
   | { t: "scall"; script: string; entry: number }
+  /** Same-script `call` to a helper entry point (4,2). The helpers are
+   * engine timer/BMP utilities at entry ids >= 9000; the CFG VM treats
+   * this as a no-op, like the original helper's return. */
+  | { t: "call"; entry: number }
   | { t: "ret" }
   | { t: "gotitle" };
 
@@ -272,6 +315,11 @@ export interface NativeSaveMeta {
   /** 1-based candidate index when a native line is ambiguous. */
   candidate?: number;
   candidateCount?: number;
+  /** Exact bytecode program counter from the PC save (0x1c18c). */
+  scriptPos?: number;
+  /** `exact` = ScriptPos resolved through the .bnr label anchors;
+   * `fuzzy`/`choice` = text matching fallback. */
+  anchor?: "exact" | "fuzzy" | "choice";
 }
 
 /** Engine-side slot map for the native PC global save (`Sys.sav`), emitted by
@@ -309,7 +357,33 @@ export interface SysSlotsTable {
   endingSlotsConfidence: Record<string, "high" | "hypothesis" | "reserved">;
   gateSlots: Record<string, number>;
   gflagAliasSlots?: number[];
+  /** H-scene replay entries (numeric ids + script ids only): cgId, the
+   * chapter 0/1/2, the scenario script to load, and the Region C unlock
+   * flag. Extracted/peer-verified functional metadata, never game text. */
+  sceneSlots?: { cg: number; chapter: number; script: string; flag: number }[];
   openItems?: string[];
+}
+
+/** Native PC save -> IR event anchors (tools/build_native_pos.py). Each
+ * entry is a `.bnr` line-label statement offset and the IR event it owns.
+ * Used to resolve the save's exact `ScriptPos` without text matching. */
+export interface NativePosData {
+  version: number;
+  /** script -> ascending [byteOffset, eventIndex] pairs. */
+  anchors: Record<string, [number, number][]>;
+}
+
+/** BYOA timed captions for audio clips (voice/SE/drama). Keyed by the
+ * manifest voice key (`1008_0199`, `ic/1002_0000`) or the numeric SE id. */
+export interface CaptionCue {
+  begin: number; // ms, inclusive
+  end: number; // ms, exclusive
+  text: string;
+}
+export interface CaptionData {
+  version: number;
+  voice?: Record<string, CaptionCue[]>;
+  se?: Record<string, CaptionCue[]>;
 }
 
 /** Global progress imported from `Sys.sav`, kept apart from a run save: it
@@ -353,7 +427,9 @@ export interface SaveData {
   picks: Record<string, number>; // flow node id -> chosen option n
   visited: string[]; // script ids
   endings: string[];
-  log: { speaker: string; text: string }[];
+  /** `at` lets the backlog replay the line's voice clip; absent on legacy
+   * saves and on lines without a voiced event. */
+  log: { speaker: string; text: string; at?: { script: string; event: number } }[];
   lastLogged?: string; // position key of the last logged line
   /** Last BGM cue state for mid-scene restore: engine track number, or
    * null after an explicit stop. Absent in legacy saves. */

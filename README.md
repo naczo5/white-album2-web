@@ -42,6 +42,21 @@ runtime with `?pack=...`; the pack root must contain `data/` and
 The reference install this port is built and tested against is the
 Extended Edition + tokuten disc image.
 
+## Smoke test
+
+After `npm install` in `wa2-web/web`, a repeatable headless-browser check
+boots the asset-free demo, steps through dialogue, writes a save slot,
+reloads the page, and loads the slot back:
+
+```sh
+cd wa2-web/web && npm run smoke
+```
+
+It uses the Playwright Chromium already cached on the author's machine (no
+browser download); set `WA2_CHROME=/path/to/chrome` to point it at another
+binary, or `WA2_SMOKE_URL=http://127.0.0.1:5173` to test an already-running
+server instead of spawning Vite.
+
 ## Translation
 
 English scenario data comes from the
@@ -49,13 +64,57 @@ English scenario data comes from the
 release (used as build input via `tools/build.py --mao` / `fetch_mao.py`
 drift pin — never redistributed here).
 
+## Credits and peer projects
+
+This project is an independent web engine. The peer project below was used
+as a reference and cross-validation source while implementing compatible
+behavior. The CK-GAL glyph table and the 24-row scene-replay table are
+reproduced from its Apache-2.0 code (credited below); everything else was
+reimplemented independently. No game content was taken from it.
+
+### galhack/WhiteAlbum2_iOS
+
+[galhack/WhiteAlbum2_iOS](https://github.com/galhack/WhiteAlbum2_iOS) is an
+unofficial **native Godot port** of WHITE ALBUM 2 for Apple platforms; this
+repository is an **independent web engine**. Its original porting code is
+Apache-2.0 and its WMV video GDExtension is MIT. Ideas and functional data
+reimplemented or cross-validated here include:
+
+- **CK-GAL private glyph map (33 glyphs, reproduced)** — decoding
+  Chinese-patched save previews and speaker names.
+- **PC save layout validation** — `ScriptPos`, jump stack, locals and args,
+  plus the fail-closed conversion approach used when a VM tag or layout is
+  not proven.
+- **LSCR `(4,2)` same-script call / helper-entry semantics** — the
+  call-vs-expression interpretation and the 9993–9999 helper-entry range.
+- **Weather, shake and calendar behavior** — used as a behavior reference;
+  this renderer is independent.
+- **Timed caption schema** — inspiration for the BYOA contract in
+  [`wa2-web/docs/BYOA.md`](wa2-web/docs/BYOA.md#5-timed-captions-optional);
+  our JSON format is independent.
+- **CG gallery / scene replay table** — the 24-row scene table is
+  reproduced from the peer's Apache-2.0 `Wa2Def.SceneSlots`; the 168-row
+  gallery table was cross-validated against it (and our own exe extraction).
+- The full Apache-2.0 text is in
+  [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
+
+No game content or bundled subtitle data is copied from that project.
+Scenario text, images, audio and movies are never redistributed here; all
+game assets remain supplied by the user. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
 ## Status
 
 Experimental. Voices, BGM/SE, backdrops, event art, sprites, LUT color
-grades, flowchart/guide/saves work. Native PC `save_XX.sav` / `save_Q.sav`
-files import in Save/Load (script + line/choice mapping); `Sys.sav` global
-read/choice flags are recognized but not mapped yet. Full gate matrix and
-open parity items: `wa2-web/docs/QA.md`; self-packaging and size tiers:
+grades, weather/shake/calendar presentation, BMP overlays, NovelMode prose,
+the original EroMode voice filter, flowchart/guide/saves and the
+CG/Music/Scene extras screens work. Native PC `save_XX.sav` /
+`save_Q.sav` files import in Save/Load with an exact `ScriptPos` anchor
+when `data/native-pos.json` is present (line/choice fallback otherwise);
+`Sys.sav` imports read lines, endings, CG/music/movie/ero unlocks and
+choice history. Optional timed voice/SE captions come from
+`data/captions.json` (BYOA only). Full gate matrix and open parity items:
+`wa2-web/docs/QA.md`; self-packaging and size tiers:
 `wa2-web/docs/PACKAGING.md`.
 
 ## Hosting

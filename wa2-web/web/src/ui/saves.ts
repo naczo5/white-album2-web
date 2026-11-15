@@ -27,7 +27,7 @@ import {
 } from "../engine/sys-save";
 import { ingestReadKeys } from "./reader";
 import { sceneLabel } from "./flowchart";
-import type { FlowData, SaveData, SysProfile, SysSlotsTable } from "../engine/types";
+import type { FlowData, NativePosData, SaveData, SysProfile, SysSlotsTable } from "../engine/types";
 
 export interface SaveHooks {
   /** Used to resolve native save script ids and line text. */
@@ -44,6 +44,12 @@ export interface SaveHooks {
   profile?: SysProfile | null;
   /** Developer mode: display raw script:event ids in slot/import rows. */
   dev?: boolean;
+  /** `.bnr` label anchors (`GameData.nativePos`): ranks imported native
+   * saves by their exact ScriptPos instead of line text alone. */
+  nativePos?: NativePosData | null;
+  /** Lazy loader for the import-only `.bnr` anchors; called on the first
+   * native import when `nativePos` is null (boot does not fetch the file). */
+  loadNativePos?: () => Promise<NativePosData | null>;
   /** Called after an import/removal so callers can repaint and re-sync. */
   onProfileChange?(p: SysProfile | null): void;
 }
@@ -185,8 +191,13 @@ function writeNativeImports(list: SaveData[]): boolean {
 
 /** Prefer a route/variant script when the native save names one; fall back
  * to the base script. Returns every ambiguous line candidate so the user
- * can choose instead of silently landing in the wrong scene. */
-export function nativeCandidates(router: Router, native: NativeSave) {
+ * can choose instead of silently landing in the wrong scene. `nativePos`
+ * (.bnr label anchors) ranks duplicates by the save's own ScriptPos. */
+export function nativeCandidates(
+  router: Router,
+  native: NativeSave,
+  nativePos?: NativePosData | null,
+) {
   const base = native.script;
   const route = native.route.replace(/^0+/, "");
   const variants: string[] = [];
@@ -207,7 +218,7 @@ export function nativeCandidates(router: Router, native: NativeSave) {
   for (const id of variants) {
     const scenario = router.scripts.get(id);
     if (!scenario) continue;
-    for (const p of findNativeCandidates(native, scenario)) {
+    for (const p of findNativeCandidates(native, scenario, nativePos)) {
       if (p.confidence !== "exact") continue;
       const key = `${p.script}:${p.event}`;
       if (seen.has(key)) continue;
@@ -217,7 +228,7 @@ export function nativeCandidates(router: Router, native: NativeSave) {
   }
   if (exact.length > 0) return exact;
   const scenario = router.scripts.get(base);
-  return scenario ? findNativeCandidates(native, scenario) : [];
+  return scenario ? findNativeCandidates(native, scenario, nativePos) : [];
 }
 
 const CHAPTER_LABEL: Record<string, string> = {
@@ -235,6 +246,8 @@ const CHAPTER_LABEL: Record<string, string> = {
  *  - `replay`      = a second playthrough was started -> New Game+ exists.
  *  - `codaEntered` = the third part was entered -> Coda is open.
  *  - `setsunaCc`   = the CC Setsuna ending cleared, which also opens Coda.
+ *  - `ccClear`     = any CC ending cleared, which also opens Coda.
+ *  - `codaClear`   = a Coda ending cleared.
  *  - `chiakiNormal`= the CC Chiaki normal end cleared, which unlocks her
  *                    true-end option.
  * Returns an empty list when no gate is set, so the caller can omit the
@@ -243,7 +256,12 @@ export function profileGateLabels(gates: Record<string, number> | null | undefin
   if (!gates) return [];
   const out: string[] = [];
   if ((gates.replay ?? 0) > 0) out.push("New Game+");
-  if ((gates.codaEntered ?? 0) > 0 || (gates.setsunaCc ?? 0) > 0) out.push("Coda unlocked");
+  // Three different saves can prove Coda is open (entered it, cleared the
+  // Setsuna CC route, or cleared any CC ending): say it once.
+  if ((gates.codaEntered ?? 0) > 0 || (gates.setsunaCc ?? 0) > 0 || (gates.ccClear ?? 0) > 0) {
+    out.push("Coda unlocked");
+  }
+  if ((gates.codaClear ?? 0) > 0) out.push("Coda cleared");
   if ((gates.chiakiNormal ?? 0) > 0) out.push("Chiaki True route unlocked");
   return out;
 }
@@ -559,19 +577,21 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
           skipped++;
           continue;
         }
-        const positions = nativeCandidates(h.router, parsed.save);
+        const nativePos = h.nativePos ?? (h.loadNativePos ? await h.loadNativePos() : null);
+        const positions = nativeCandidates(h.router, parsed.save, nativePos);
         if (positions.length === 0) {
           if (/[\u3040-\u30ff\u4e00-\u9fff]/.test(parsed.save.text)) japanese++;
           skipped++;
           continue;
         }
-        positions.forEach((pos, i) => {
-          imported.unshift(nativeToSave(
-            parsed.save, pos, file.name, i + 1, positions.length,
-            { router: h.router, profileGameFlags: profile?.gameFlags },
-          ));
-          added++;
-        });
+        // Preserve the ranking: candidate 1 (the ScriptPos-ranked best)
+        // must render first, not last. `unshift(...group)` keeps group order.
+        const group = positions.map((pos, i) => nativeToSave(
+          parsed.save, pos, file.name, i + 1, positions.length,
+          { router: h.router, profileGameFlags: profile?.gameFlags, nativePos },
+        ));
+        imported.unshift(...group);
+        added += group.length;
       } catch {
         skipped++;
       }

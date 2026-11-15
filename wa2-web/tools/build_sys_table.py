@@ -28,8 +28,8 @@ shipped records share slot 210, so aliases are recorded as data.
 Output (committed functional metadata - numeric ids and addresses only, no
 game text)::
 
-  {version, source, sysSav, scripts, choiceTable, cgRows, endingSlots,
-   endingSlotsConfidence, gateSlots, gflagAliasSlots, openItems}
+  {version, source, sysSav, scripts, choiceTable, cgRows, sceneSlots,
+   endingSlots, endingSlotsConfidence, gateSlots, gflagAliasSlots, openItems}
 
 Usage:
   python3 build_sys_table.py [--exe WA2.EXE] [--out data/sys-slots.json]
@@ -70,8 +70,11 @@ REGION_A_SLOT_BITS = REGION_A_SLOT_BYTES * 8
 # Global flag ids that gate content. Names are functional English labels;
 # GFLAG.dat carries the original labels, which never enter this file.
 GATE_SLOTS = {
+    "icClearSlot": 0,  # IC cleared (GFLAG.dat record 0, written by 1013)
     "replaySlot": 2,  # 2nd-playthrough unlock
     "chiakiNormalSlot": 1,  # gates the Chiaki true-end option (2003 opt1)
+    "ccClearSlot": 3,  # CC cleared (written by all five CC endings)
+    "codaClearSlot": 4,  # Coda cleared
     "codaEnteredSlot": 5,  # third part entered
     "setsunaCcSlot": 21,  # cc-setsuna cleared -> coda unlocks
     "reservedSlot99": 99,  # system-reserved choice placeholder; setter forces it to 0
@@ -81,6 +84,39 @@ GATE_SLOTS = {
     "eroBandBase": 300,  # 300..322 ero-scene flags
     "choiceBandBase": CHOICE_BASE,
 }
+
+# Scene replay slots (gallery scene select): {cg, chapter, script, flag}.
+# Reproduced from galhack/WhiteAlbum2_iOS (Apache-2.0), the 24-row
+# Wa2Def.SceneSlots table at commit d2dec8f, which
+# maps gallery CG ids to a chapter group, source script id and the Region C
+# ero-scene flag (300..322). Numeric ids only; no game text copied. The
+# table is verified functional metadata from that port, not a PE read.
+SCENE_SLOTS = [
+    {"cg": 101700, "chapter": 0, "script": "2031", "flag": 80},
+    {"cg": 200800, "chapter": 1, "script": "2031", "flag": 300},
+    {"cg": 201200, "chapter": 1, "script": "2031", "flag": 301},
+    {"cg": 201700, "chapter": 1, "script": "2312", "flag": 302},
+    {"cg": 202200, "chapter": 1, "script": "2314", "flag": 303},
+    {"cg": 202400, "chapter": 1, "script": "2314", "flag": 304},
+    {"cg": 202700, "chapter": 1, "script": "2401", "flag": 305},
+    {"cg": 203400, "chapter": 1, "script": "2402", "flag": 306},
+    {"cg": 203500, "chapter": 1, "script": "2402", "flag": 307},
+    {"cg": 203800, "chapter": 1, "script": "2504", "flag": 308},
+    {"cg": 204900, "chapter": 1, "script": "2507", "flag": 309},
+    {"cg": 205100, "chapter": 1, "script": "2511", "flag": 310},
+    {"cg": 205300, "chapter": 1, "script": "2513", "flag": 311},
+    {"cg": 205500, "chapter": 1, "script": "3002", "flag": 312},
+    {"cg": 205900, "chapter": 2, "script": "3016", "flag": 313},
+    {"cg": 206500, "chapter": 2, "script": "2031", "flag": 314},
+    {"cg": 208400, "chapter": 2, "script": "3211", "flag": 315},
+    {"cg": 207003, "chapter": 2, "script": "3902", "flag": 316},
+    {"cg": 209800, "chapter": 2, "script": "3902", "flag": 317},
+    {"cg": 209900, "chapter": 2, "script": "3902", "flag": 318},
+    {"cg": 210200, "chapter": 2, "script": "3904", "flag": 319},
+    {"cg": 210500, "chapter": 2, "script": "3906", "flag": 320},
+    {"cg": 210600, "chapter": 2, "script": "3908", "flag": 321},
+    {"cg": 210800, "chapter": 2, "script": "3908", "flag": 322},
+]
 
 # GFLAG.dat slot -> endings.json id. All 11 endings are verified 1:1 from
 # GFLAG.dat records + .bnr SetGameFlag calls (`high` confidence).
@@ -362,6 +398,7 @@ def build_table(exe_path: str, flow_path: str | None = None,
                       "bit k (1<<k) = option k+1 taken at least once",
         },
         "cgRows": cg_rows,
+        "sceneSlots": SCENE_SLOTS,
         "endingSlots": {str(k): v[0] for k, v in sorted(ENDING_SLOTS.items())},
         "endingSlotsConfidence": {str(k): v[1]
                                   for k, v in sorted(ENDING_SLOTS.items())},
@@ -378,6 +415,15 @@ def build_table(exe_path: str, flow_path: str | None = None,
     if len(cg_rows) != GALLERY_ROWS:
         problems.append(f"gallery table has {len(cg_rows)} rows, "
                         f"expected {GALLERY_ROWS}")
+    if len(SCENE_SLOTS) != 24:
+        problems.append(f"sceneSlots has {len(SCENE_SLOTS)} rows, "
+                        "expected 24")
+    scene_cgs = [r["cg"] for r in SCENE_SLOTS]
+    scene_flags = [r["flag"] for r in SCENE_SLOTS]
+    if len(set(scene_cgs)) != len(scene_cgs):
+        problems.append("duplicate cg ids in sceneSlots")
+    if len(set(scene_flags)) != len(scene_flags):
+        problems.append("duplicate flag ids in sceneSlots")
     ids = [v for row in cg_rows for v in row if v]
     if len(ids) != len(set(ids)):
         problems.append("duplicate CG ids in gallery table")
@@ -417,6 +463,7 @@ def main() -> None:
     print(f"sys-slots: {len(table['scripts'])} scripts, "
           f"{len(table['choiceTable']['scriptIds'])} choice scripts, "
           f"{len(table['cgRows'])} cg rows / {ids} cg ids, "
+          f"{len(table['sceneSlots'])} scene slots, "
           f"{len(table['endingSlots'])} ending slots -> {args.out}")
     for p in problems:
         print(f"      WARN {p}")

@@ -6,6 +6,7 @@ import {
   getGameFlag,
   isEventInExecutedRanges,
   pickCfg,
+  seedCfgLocals,
   seekCfg,
   setGameFlag,
   stepCfg,
@@ -78,6 +79,35 @@ describe("CFG VM primitives", () => {
     expect(isEventInExecutedRanges([[0, 3], [8, 12]], 2)).toBe(true);
     expect(isEventInExecutedRanges([[0, 3], [8, 12]], 5)).toBe(false);
     expect(isEventInExecutedRanges([[0, 3], [8, 12]], 9)).toBe(true);
+  });
+
+  it("seeds native frame-0 locals (26 ints, 26 floats) after a seek", () => {
+    const flags: Flags = { aff: {}, set: {}, cfg: {
+      script: "2001",
+      entry: "0",
+      l: new Array(64).fill(0),
+      pcStack: [],
+      callStack: [],
+      executedRanges: [],
+    } };
+    flags.cfg!.l[0] = 7; // inferred by the replay
+    const locals = [...new Array(26).fill(0), ...new Array(26).fill(0)];
+    locals[0] = 42;
+    locals[25] = -3;
+    locals[26] = 1.5;
+    locals[51] = -960;
+    expect(seedCfgLocals(flags, locals)).toBe(true);
+    expect(flags.cfg!.l[0]).toBe(42);
+    expect(flags.cfg!.l[25]).toBe(-3);
+    expect(flags.cfg!.l[26]).toBe(1.5);
+    expect(flags.cfg!.l[51]).toBe(-960);
+    // Non-finite values are rejected instead of poisoning later conditions.
+    expect(seedCfgLocals(flags, [Number.NaN])).toBe(true);
+    expect(flags.cfg!.l[0]).toBe(42);
+    // No CFG and no locals are no-ops.
+    expect(seedCfgLocals({ aff: {}, set: {} }, locals)).toBe(false);
+    expect(seedCfgLocals(flags, [])).toBe(false);
+    expect(seedCfgLocals(flags, undefined)).toBe(false);
   });
 });
 

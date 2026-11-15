@@ -7,12 +7,13 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit + data (tools) | `pytest tests/` | 176 passed + 9 skipped |
-| web unit | `cd web && vitest run` | 247 passed + 6 BYOA-skipped |
+| unit + data (tools) | `pytest tests/` | 208 passed + 9 skipped |
+| web unit | `cd web && vitest run` | 302 passed + 9 BYOA-skipped |
+| browser smoke | `cd web && npm run smoke` | title → extras tabs → demo → advance → save → reload → load; no page errors |
 | real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | all 11 endings + special scenarios + branch ranges (BYOA) |
 | types+build | `tsc --noEmit && npm run build` | clean (`tsc --noEmit` 0 errors) |
-| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 183 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
-| save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 254 passed + 0 skipped (native slots 11/11 + 29 `Global.vrb` vars, `Sys.sav` profile) |
+| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 215 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
+| save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 311 passed + 0 skipped (native slots 11/11 + 29 `Global.vrb` vars, exact `ScriptPos` ranking, `Sys.sav` profile, `voicemap.chars`) |
 | CFG VM & bytecode | `pytest tests/test_build_cfg.py`; `vitest run cfg-vm playthrough` | 221 `.bnr` scripts compiled into `cfg.json`, zero overlapping `play` spans, `SCall`/`SetSelectMess` parity |
 | movie subtitles | `pytest tests/test_subtitles.py`; `vitest run vtt` | ASS→VTT conversion + cue/region parsing pinned (`test_subtitles.py`, `vtt.test.ts`) |
 | movie player | `vitest run reader-movie` | HUD/CC/skip/autoplay-fallback/missing-card behaviour, no DOM leak (`reader-movie.test.ts`) |
@@ -21,9 +22,16 @@ is proven, what is assumed, and exactly how to close each gap.
 | bnr choice gate | `check_bnr_choices.py IR script.pak` | 32/32 choices carry (4,208) markers |
 | flag reference | `build_flags.py script.pak` | 29 vars + 62 gflags, 15/15 pick flags mapped |
 | links | `build_links.py IR links.json` | 206 sites: 199 HINT + 7 SWITCH |
-| full sim | `simulate.py … routers/first/special` | 153/221 routers, 92/221 first, 49/221 special, 0 stalls |
-| MAO pin | `fetch_mao.py IR --clone …` | v2.1.0, 0.988 containment, 171 scripts / 45526 lines |
+| full sim | `simulate.py … routers/first/special` | 32 choices covered, clean walk, 0 stalls (routers/first/special) |
+| MAO pin | `fetch_mao.py IR --clone …` | v2.1.0 pinned; 171 scripts / 49,086 lines, mean 0.914 with 5 JP-only stubs (pre-existing, see log — the old 0.988 row measured a different IR) |
 | assets | `extract_assets.py --selftest` | KCAP+TGA+WAV round-trip |
+
+> **MAO note (2026-11-15):** the pin row is an audit, not a pass/fail
+> claim. Version 2.1.0 is correct, but the JP-spine IR contains five
+> JP-only stubs (`1010_060`, `5004`, `5100`, `5200`, `5300`), so mean
+> containment is 0.914 and four adaptation scripts fall below the 0.5
+> per-script threshold. The same numbers reproduce on the pre-pass build;
+> do not read the old 0.988/45,526-line figure as current.
 
 > Verified 2026-11-06 against the installed JP game directory in
 > `.cache/game` plus the MAO v2.1.0 release. `todokanai/subtitles` is absent
@@ -886,6 +894,194 @@ installed game in `.cache/game`, the MAO v2.1.0 release, and the
     `npx tsc --noEmit` clean; `npx vitest run` → **247 passed, 6 skipped**;
     BYOA save corpora → **254 passed, 0 skipped**.
 
+### 2026-11-14 — cross-project audit: galhack/WhiteAlbum2_iOS (read-only)
+
+Static read of the Apple port at `d2dec8f` (Godot 4 .NET, Apache-2.0
+porting code, built on `dorakyuraduang/wa2-godot`): `Wa2Func.cs` /
+`Wa2Script.cs` VM, `convert_pc_saves.py`, `Wa2Encoding.cs`, weather and
+subtitle code, README/APPLE_PORT/PC_SAVE_IMPORT. No game launch, no
+files copied into this repo.
+
+Independent agreement (confidence boost, not new data):
+
+- **LSCR layout** — their point table (count @8, `(id, offset)` pairs @12)
+  matches `build_cfg.parse_bnr_header`; `Points[0]` equals our
+  section-offset start on every sampled script (1001, 2001, 2019, 2413,
+  3016). Their VM reads the same op 0 subcodes 2..16 we compile.
+- **CG gallery** — their `Wa2Def.CgSlot` is byte-for-byte our
+  `data/sys-slots.json` `cgRows` (168 rows) after stripping zero padding.
+  Independent confirmation of the 0x4c01b0 extraction.
+- **Flags** — their writes match `cfg.json`: 1013→0; 2413→1/3/24;
+  2412→3/23; 2322→3/22; 2517→3/25; 2033→3/21; 3001→5; Coda endings→4/30..33.
+  29 `Global.vrb` names/slots match too.
+- **Audio** — BGM `_A` intro + `_B` loop pair, VV voice id in arg4, and
+  SE ids match our decoders.
+- **Sys.sav** — regions 0x0 / 0x80000 / 0x268480 match. Our 0x269480 is
+  the observed PC file length; they allocate a padded 0x26A000 file.
+
+Actionable for us:
+
+1. **Native save import can be exact.** Their converter gives the layout:
+   `ScriptPos` 0x1c18c; jump stack 0x1e4a8 (15 × 532 B); locals
+   0x1d594 / 0x1dc14 (26 vars × 16 frames, 64 B stride, frame 0 =
+   current); Args count 0x1d590 + 20 B records @0x1c190; parse mode
+   0x1c01c; `"1.00"` @0x134d4; layout 4 @0x134d8. Map `ScriptPos` through
+   `bnr_anchor` to an IR event and seed `flags.cfg.l` instead of
+   replay-inferring locals; fail closed on unknown VM tags/layouts
+   (they validate 71 samples this way).
+2. **CK-GAL text** — add their 33-glyph private map (0x89..0x9f and
+   0xe0..0xea with trail 0x7f) to `native-save.ts`. Without it, CN-patch
+   save previews/speakers decode wrong and line matching degrades.
+3. **Presentation ops still missing** — SetWeather/ChangeWeather/
+   ResetWeather (118/142/6 calls, 29/32/5 main scripts), SetShake
+   (85/45), LoadBmp/SetBmp* family (0xb0..0xbf, ~16 scripts), Calender
+   (238/133), NovelMode/EroMode (14/11, 50/19). Their particle shaders
+   (Apache-2.0) are a reference for a canvas weather layer.
+4. **`(4,2)` is same-script `call`** (point index), not an expression
+   function. Compiled story scripts emit 68 calls, all to point 9999
+   (offset 76); corpus-wide the other targets are `catch*` 99/199
+   (engine-internal) and 9994/9995 inside helper entries. Helper entries
+   9993..9999 are timer/BMP utilities and `build_cfg` skips them by design
+   (`eid>=9000`). Record the op as `call`/no-op instead of leaving an
+   unknown value on the expression stack.
+5. **Menu/QoL parity we lack** — CG gallery, BGM player, scene replay
+   (`Wa2Def.SceneSlots` + ero band), backlog voice replay, timed captions
+   for voice/SE/radio drama. Their YAML shape (`id`/`scene`/`begin`/
+   `end`/`text`) is a good BYOA contract; captions stay user-supplied.
+6. **One repeatable rendered check** — their device smoke tests catch
+   layout/asset errors. Turn the ad-hoc headless-Chromium passes into a
+   Playwright scenario (title → 1001 → choice → movie → save/load) with
+   console/network assertions.
+
+Where we are ahead (do not regress):
+
+- **MAO v2.1.0 two-stream `en.pak` support** — their single-script-archive
+  model (`Wa2Content.ScriptArchive`) cannot play MAO's overlay without a
+  merged pack; their English path requires a complete translation pak.
+- **PC save + full `Sys.sav` import in-browser** — they convert slotted
+  saves only and ignore PC system progress. Our semantic saves survive
+  pack revisions; their savestates are bytecode-offset/language-scoped.
+- **Movie ASS→VTT subtitles**, exact `.bnr` anchors, flowchart/guide/
+  spoiler modes. (`.AMP` is handled by both: ours as extracted curves,
+  theirs by baking the LUT into decoded textures.)
+
+**Their progression defect — do not copy.** `Wa2Progression.ClosingComplete
+= 1` is labelled "CC complete", but GFLAG slot 1 is the Chiaki Normal end
+only; slot 3 is written by all five CC endings, slot 4 by all Coda
+endings, slot 5 by 3001. A `0 && 1` title gate therefore hides Coda after
+the four non-Chiaki CC endings. Re-derive our own title gate from the
+engine before touching `GATE_SLOTS`; the candidates are slot 3 or any of
+20..25.
+
+**Doc check.** The "largest undocumented" census (1,682,125 statements;
+42,641 / 2.53%) does not reproduce. Direct u32 count of `(4,x)`:
+318,810 in `en_main.pak` (206 scripts), 319,708 in `script.pak` (187),
+32,344 in `en_special.pak`, 44,935 in `IC/script.pak` — 396,089 with
+duplicate content across paks. Re-run with a stated corpus and
+de-duplicated paks before prioritising the remaining handlers.
+
+Docs-only pass; no source, parser or data changes.
+
+### 2026-11-15 — engine parity pass: exact native saves, presentation ops, galleries, captions
+
+Static implementation/verification pass; no game launch, no game content
+added. Cross-project ideas are credited to `galhack/WhiteAlbum2_iOS`
+(Apache-2.0) in the root README, `THIRD_PARTY_NOTICES.md`, `PARSING.md`
+and the new BYOA caption section (which also names the peer project).
+
+**Implemented**
+
+- **LSCR `(4,2)` call** (`tools/build_cfg.py`): emits `{t:"call",entry}`;
+  the argument is a point index (all story pushes target 9999, the shared
+  timer/BMP helper), not a byte offset. `cfg-vm` treats it as a no-op.
+- **Flag gates** (`tools/build_sys_table.py`, `data/sys-slots.json`):
+  added `icClearSlot 0`, `ccClearSlot 3`, `codaClearSlot 4`; a live run
+  now grows the profile's music (101..199), movie (201..224) and ero
+  (300..322) bands, and CG unlocks are recorded from shown grp overlays.
+- **Presentation decode** (`tools/decode_bnr.py`): SetWeather (173),
+  ChangeWeather (174, partial/-1000 merge), ResetWeather (175), SetShake
+  (150, types 1/9 only), Calender (203, including the OP0-ELSE header
+  form), BMP overlays (176/180/185/188/190/191 + Wait 194), NovelMode/EroMode
+  (220/221). Corpus: 245 scripts, 34,205 high + 5 hypothesis records;
+  weather start/change/stop 115/146/3, shake 77, calendar 241, BMP
+  load/release/alpha/geometry 22/31/92/20, novel/ero 30/50.
+- **Reader presentation** (`ui/weather.ts`, `ui/bmp.ts`,
+  `engine/captions.ts`, `ui/reader.ts`): canvas weather modes 0/1/3/4/6,
+  shake, calendar badge, BMP overlay sequencer, NovelMode full-stage prose,
+  EroMode `ero_voice` filter (character slots from `(4,138)`), timed
+  voice/SE captions from BYOA
+  `data/captions.json`, backlog `at` metadata. One layer/rAF per reader;
+  reduced-motion aware.
+- **Exact native save import** (`engine/native-save.ts`,
+  `engine/cfg-vm.ts`, `ui/data.ts`): CK-GAL 33-glyph private map; strict
+  v2/VM 1.00/layout-4/parse-mode-131|209 validation; ScriptPos, jump
+  stack, 52 frame-0 locals, args; `data/native-pos.json` label anchors
+  rank duplicate text hits and seed `flags.cfg.l`. Unknown layouts are
+  rejected rather than guessed.
+- **Extras + backlog** (`main.ts`, `ui/gallery.ts`): CG gallery, BGM
+  player, scene replay (peer-derived 24-row table), per-line backlog
+  voice replay, replay autosave snapshot/restore.
+- **Verification** (`web/e2e/smoke.mjs`): repeatable Playwright title →
+  demo → advance → save → reload → load check.
+
+**Gates (actually run on 2026-11-15)**
+
+- `pytest tests/ -q` → **208 passed, 9 skipped**;
+  `WA2_EN_PAK=…` → **215 passed, 2 skipped**.
+- `npx tsc --noEmit` → clean; `npx vitest run` → **302 passed, 9 skipped**;
+  BYOA save corpus → **311 passed, 0 skipped**.
+- `npm run smoke` → title/extras/demo/advance/save/reload/load, 0 page errors.
+- Fresh `--game` build → 221 cfg scripts / 29 vars; native-pos 211
+  scripts (28 IC) / 134,289 anchors.
+- `check_flow.py` 32/32; `check_bnr_choices.py` 32/32; `simulate.py`
+  routers/first/special: 32 choices, clean walk, 0 stalls.
+- Headless real-pack spot checks (temporary pack, deleted): `1002:431`
+  paints the guitar BMP above `.stage-ov` (zoom-scaled wrapper, no
+  stacking context), fades to alpha 0.50, waits, fades out and releases at
+  ~4 s; `5000:1` enters NovelMode (full-stage plate); `3901:1` enters
+  EroMode; the voice setting defaults to 通常再生 (`ero_voice=0`).
+- MAO pin: version 2.1.0 OK; containment **0.914** with 5 JP-only stubs
+  (1010_060/5004/5100/5200/5300). This is unchanged from the pre-pass
+  build — a pre-existing stale gate row, not a regression.
+
+**Known gaps (do not read as parity)**
+
+- BMP **Anime/AVI** loaders (`(4,177)`/`(4,178)`/`(4,179)`/`(4,181)`/
+  `(4,182)`) have no frame decoder; only static BMP layers and their
+  alpha/geometry/waits are rendered.
+- EroMode implements the original `ero_voice` voice filter: when the
+  setting **Female voices only in H scenes** is checked, voices whose
+  `(4,138)` character slot is outside the five heroines (1..5) are muted.
+  The setting is unchecked by default = 通常再生 (`ero_voice=0`). There is
+  no visual content filter.
+- Weather mode → particle mapping is a cosmetic interpretation of modes
+  0/1/3/4/6; only the record itself is `high`.
+- BMP z-order/`bmpScale` geometry is applied in the 1280×720 stage space,
+  but no frame-accurate playback of the original `.ani`/AVI overlays.
+- BMP blend mode 3/4 is approximated with CSS `plus-lighter` (additive);
+  mode 6 (mask) is drawn as normal alpha.
+- Scene replay rows are peer-derived functional ids; replay starts at the
+  scene script's first event and is not a save-state restoration.
+- Native import is intentionally limited to the validated PC v2 / VM 1.00
+  main-game layout (parse modes 131/209).
+
+**Review passes:** three independent subagent reviews (tools/decoders,
+native-save engine, reader/UI/docs) ran against this tree. Fixed findings:
+nested script/local frames now fail closed; `log[].at` survives reload;
+multi-candidate imports keep the ranked order; speaker/choice-count bounds;
+route-zero normalization; fuzzy positions do not seed locals; lazy
+`native-pos.json` loading (no 1.6 MB boot fetch); calendar/shake fire on
+script changes; shake uses the 60 Hz engine frame; caption live region
+stays accessible with a height cap; replay restores the in-memory save as
+well as the autosave bytes; smoke checks console errors and no longer
+hardcodes a browser path; README/notices now state the reproduced glyph and
+scene tables and include the full Apache-2.0 text. BMP overlays and
+NovelMode/EroMode were added in the follow-up pass; the final review fixed
+the BMP stacking/blend isolation (zoom wrapper, no transform), the sticky
+fade, pause/resume, rect fit, and removed the temporary 23 MB test pack
+(now gitignored). Only `.ani`/AVI frame playback remains unwired (see known
+gaps).
+
 ### Parity status by subsystem (measured, not asserted)
 
 Do not read the gate table as "1:1 with the engine". Gates prove the
@@ -902,20 +1098,21 @@ everything. Current state, with the evidence behind each line:
 | routing | **partially proven** | 11/11 endings, 32/32 choices, 2146/2147 jump targets on instruction boundaries — but several opcode semantics are still inferred |
 | music | medium on some rows | BGM pause, camera/zoom, timed wait are `medium` in PARSING.md |
 
-**The concrete gap:** 83 distinct `(4,id)` opcodes appear across the 206
-`en_main.pak` scripts. Only **29** have a documented row in PARSING.md.
-Those 29 account for **97.47%** of the 1,682,125 `(4,*)` statements, so
-**42,641 statements (2.53%) are unimplemented**. The CFG VM's `default`
-branches return 0/`cur`, i.e. unknown ops are skipped rather than guessed
-— the intended confidence-gated behaviour, but it is not parity.
+**The concrete gap (re-measured 2026-11-15):** `tools/opcode_census.py`
+uses the OP0-width-aware CFG decoder and reports **83 distinct** decoded
+`(4,id)` opcodes in `en_main.pak` (318,810 raw u32 pairs / 299,375
+decoded pairs, all entries including the >=9000 helpers).
+`en_special.pak` has 63 distinct / 32,344 / 28,907; JP `script.pak` has
+84 / 319,708 / 299,575. The old 1,682,125-statement / 2.53% figures were not
+reproducible (most likely summed duplicate paks); the census tool now
+makes the corpus and dedupe explicit. The exact count of *documented*
+rows is the remaining open item — derive it from PARSING.md's table
+instead of an unstated percentage.
 
-Largest undocumented by volume: `(4,159)` 7,223 · `(4,225)` 3,103 ·
-`(4,210)` 2,859 · `(4,172)` 2,508 · `(4,171)` 2,466 · `(4,2)` 2,145 ·
-`(4,195)` 2,089 · `(4,139)` 2,036 · `(4,203)` 1,618 · `(4,207)` 1,558.
 The 2xx block is the UI/system layer, so skipping it drops menu and
-effect behaviour rather than stage content.
-
-To close it: for each undocumented id, index the dispatch table at
+effect behaviour rather than stage content. To close the rest: for each
+undocumented id, index the dispatch table at
 `0x4c2610 + (id-128)*4`, decompile the handler, and either implement it
-or record why it is a no-op. That addressing is now settled, so this is
-mechanical work over 54 handlers, not an open research problem.
+or record why it is a no-op. That addressing is settled, so this is
+mechanical work over the remaining handlers, not an open research
+problem.

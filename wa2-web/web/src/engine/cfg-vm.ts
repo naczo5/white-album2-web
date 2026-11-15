@@ -577,6 +577,26 @@ function runUntilPause(
   throw new Error(`CFG VM step limit exceeded at ${state.script}:${state.entry}`);
 }
 
+/** Overwrite the restored CFG locals with the native VM's frame-0 locals.
+ *
+ * Native slot saves store 26 int locals then 26 float locals (0..25 /
+ * 26..51 in this flat array). Call this *after* `seekCfg`: seeking replays
+ * the script from the top and can infer different values from choices than
+ * the ones the save actually holds. Without `flags.cfg` (packs that have no
+ * compiled CFG) there is nothing to seed and the flags stay untouched. */
+export function seedCfgLocals(flags: Flags, locals: number[] | null | undefined): boolean {
+  const state = flags.cfg;
+  if (!state || !locals || locals.length === 0) return false;
+  if (!Array.isArray(state.l)) state.l = [];
+  const count = Math.min(52, locals.length);
+  for (let i = 0; i < count; i++) {
+    const value = locals[i];
+    if (typeof value === "number" && Number.isFinite(value)) state.l[i] = value;
+  }
+  for (let i = state.l.length; i < 64; i++) state.l.push(0);
+  return true;
+}
+
 /** Position the CFG VM cleanly at `targetPos` (event 0 runs leading ops so
  * empty NG+ gates or SCall prologues resolve; event > 0 seeks within the script
  * while preserving restored `flags.g` / `flags.gflags` and collecting executedRanges). */

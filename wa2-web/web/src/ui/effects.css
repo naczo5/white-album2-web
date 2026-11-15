@@ -1,0 +1,237 @@
+/* Reader presentation effects: weather canvas, timed captions, calendar
+ * stamp, screen shake. Loaded from ui/weather.ts; the base reader layout and
+ * palette live in style.css. */
+
+/* ------------------------------------------------------------------ */
+/* Weather                                                             */
+/* ------------------------------------------------------------------ */
+
+/* One full-stage canvas per reader: above the backdrop/sprites inside the
+ * stage, below the dialogue plate (80) and movie layer (70). */
+.reader > .weather-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 65;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.reader > .weather-layer[hidden] {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* BMP overlays (engine 0xb0..0xbf)                                    */
+/* ------------------------------------------------------------------ */
+
+/* Script-driven bitmap layers (photos, phone screens, spotlights). The
+ * timeline owns z-index/geometry; this is only the base presentation. */
+.reader .stage > .stage-bmp-space {
+  position: absolute;
+  inset: 0;
+  width: 1280px;
+  height: 720px;
+  pointer-events: none;
+  /* No transform: it would create a stacking context and isolate
+   * mix-blend-mode. bmp.ts scales this wrapper with `zoom`. */
+}
+
+.reader .stage > .stage-bmp-space > img.stage-bmp {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Novel mode (4,220)                                                  */
+/* ------------------------------------------------------------------ */
+
+/* The engine hides the message window, shows a mask and lays the prose out
+ * over the stage (80,40; 39 chars per line). The web reader keeps its scroll
+ * and chrome, but turns the plate into a full-stage translucent page. */
+.reader.novel-mode .reader-bottom {
+  top: 0;
+  bottom: 0;
+  justify-content: flex-start;
+  padding-top: calc(var(--safe-t) + clamp(2rem, 6vh, 4.5rem));
+  pointer-events: none;
+}
+
+.reader.novel-mode .textbox {
+  width: min(100%, 1280px);
+  min-height: 0;
+  max-height: min(78%, 44rem);
+  background:
+    linear-gradient(180deg, rgb(3 20 26 / 0.78), rgb(1 10 14 / 0.84));
+  border: 1px solid rgb(160 250 245 / 0.18);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.35);
+  pointer-events: auto;
+}
+
+.reader.novel-mode .textbox::after {
+  display: none;
+}
+
+/* The stage behind the novel page must still take advance clicks, but the
+ * choice list stays interactive. */
+.reader.novel-mode .choices {
+  pointer-events: auto;
+}
+
+.reader.novel-mode .reader-progress {
+  opacity: 0.55;
+}
+
+/* EroMode (4,221) changes no artwork/layout by itself: the reader uses the
+ * state for the original `ero_voice` filter (heroines only when selected).
+ * The class remains a stable hook for presentation. */
+.reader.ero-mode {
+  --ero-mode: 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Timed captions (BYOA)                                               */
+/* ------------------------------------------------------------------ */
+
+/* Sits in the bottom stack above the dialogue plate, so it never covers the
+ * prose. It is a flex sibling: no absolute positioning to drift over the
+ * text on portrait layouts. */
+.reader-caption {
+  width: min(100%, 1120px);
+  margin: 0 auto;
+  padding: 0.3rem 0.9rem 0.32rem;
+  border: 1px solid rgb(160 250 245 / 0.26);
+  border-left: 3px solid var(--gold);
+  background:
+    linear-gradient(100deg, rgb(240 220 154 / 0.1), transparent 42%),
+    linear-gradient(180deg, rgb(3 26 33 / 0.86), rgb(2 16 21 / 0.9));
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: clamp(0.72rem, calc(var(--fontsize) * 0.82), 1.25rem);
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  text-align: center;
+  text-shadow:
+    0 1px 2px rgb(0 18 24 / 0.9),
+    0 0 12px rgb(0 40 52 / 0.55);
+  white-space: pre-line;
+  max-height: min(6rem, 22vh);
+  overflow-y: auto;
+  pointer-events: none;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  backdrop-filter: blur(2px);
+}
+
+.reader-caption[hidden] {
+  display: none;
+}
+
+/* Empty state stays in the aria-live tree but takes no layout space. */
+.reader-caption[data-empty] {
+  height: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ */
+/* Calendar stamp                                                      */
+/* ------------------------------------------------------------------ */
+
+/* Small, unobtrusive date card under the top HUD. Fades in on a new
+ * (4,203) record and auto-hides; never intercepts a click. */
+.reader > .calendar-stamp {
+  position: absolute;
+  top: calc(var(--safe-t) + clamp(2.6rem, 5.2vw, 3.4rem));
+  right: calc(var(--safe-r) + clamp(0.7rem, 2vw, 1.4rem));
+  z-index: 86;
+  max-width: min(70%, 22rem);
+  padding: 0.34rem 0.7rem 0.36rem;
+  border: 1px solid rgb(240 220 154 / 0.34);
+  background:
+    linear-gradient(180deg, rgb(6 38 46 / 0.84), rgb(2 16 21 / 0.86));
+  color: var(--gold);
+  font-family: var(--font-display);
+  font-size: clamp(0.62rem, 0.9vw, 0.78rem);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px #000;
+  opacity: 0;
+  translate: 0 -5px;
+  pointer-events: none;
+  transition:
+    opacity 520ms ease,
+    translate 520ms ease;
+}
+
+.reader > .calendar-stamp.show {
+  opacity: 1;
+  translate: 0 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Screen shake                                                        */
+/* ------------------------------------------------------------------ */
+
+/* Type 1 (4,150): horizontal. Animates the independent `translate`
+ * property, not `transform`, so a camera/zoom `transform` on the same stage
+ * still applies. Duration/amplitude are set inline by applyShake(). */
+.stage.stage-shake-x {
+  animation: wa2-shake-x var(--shake-ms, 300ms) linear;
+  will-change: translate;
+}
+
+@keyframes wa2-shake-x {
+  0%, 100% { translate: 0 0; }
+  10% { translate: calc(var(--shake-amp, 4px) * -1) 0; }
+  20% { translate: var(--shake-amp, 4px) 0; }
+  30% { translate: calc(var(--shake-amp, 4px) * -1) 0; }
+  40% { translate: var(--shake-amp, 4px) 0; }
+  50% { translate: calc(var(--shake-amp, 4px) * -0.7) 0; }
+  60% { translate: calc(var(--shake-amp, 4px) * 0.7) 0; }
+  70% { translate: calc(var(--shake-amp, 4px) * -0.4) 0; }
+  80% { translate: calc(var(--shake-amp, 4px) * 0.4) 0; }
+  90% { translate: calc(var(--shake-amp, 4px) * -0.15) 0; }
+}
+
+/* Type 9 (4,150): two axes. */
+.stage.stage-shake-2d {
+  animation: wa2-shake-2d var(--shake-ms, 300ms) linear;
+  will-change: translate;
+}
+
+@keyframes wa2-shake-2d {
+  0%, 100% { translate: 0 0; }
+  10% { translate: calc(var(--shake-amp, 4px) * -1) 0; }
+  20% { translate: var(--shake-amp, 4px) 0; }
+  30% { translate: 0 calc(var(--shake-amp, 4px) * -1); }
+  40% { translate: 0 var(--shake-amp, 4px); }
+  50% { translate: calc(var(--shake-amp, 4px) * -0.8) calc(var(--shake-amp, 4px) * -0.5); }
+  60% { translate: calc(var(--shake-amp, 4px) * 0.8) calc(var(--shake-amp, 4px) * 0.5); }
+  70% { translate: calc(var(--shake-amp, 4px) * -0.5) calc(var(--shake-amp, 4px) * 0.8); }
+  80% { translate: calc(var(--shake-amp, 4px) * 0.5) calc(var(--shake-amp, 4px) * -0.8); }
+  90% { translate: calc(var(--shake-amp, 4px) * -0.2) calc(var(--shake-amp, 4px) * 0.2); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The weather canvas is drawn once as a static layer by weather.ts. Shake
+   * is a strong vestibular trigger; keep the class lifecycle but drop the
+   * motion. */
+  .stage.stage-shake-x,
+  .stage.stage-shake-2d {
+    animation: none;
+  }
+
+  .reader > .calendar-stamp {
+    transition: opacity 200ms ease;
+    translate: none;
+  }
+}
