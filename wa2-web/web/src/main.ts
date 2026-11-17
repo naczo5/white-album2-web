@@ -582,7 +582,20 @@ function go(next: Screen): void {
   render();
 }
 
+const SCREEN_TITLES: Record<Screen, string> = {
+  title: "WHITE ALBUM 2 Extended Edition — Web Port & Browser Engine",
+  read: "Reader — WHITE ALBUM 2 Web Port",
+  flow: "Flowchart — WHITE ALBUM 2 Web Port",
+  guide: "Walkthrough Guide — WHITE ALBUM 2 Web Port",
+  extras: "Extras — WHITE ALBUM 2 Web Port",
+  special: "Special Contents — WHITE ALBUM 2 Web Port",
+  saves: "Save / Load — WHITE ALBUM 2 Web Port",
+  log: "Backlog — WHITE ALBUM 2 Web Port",
+  settings: "Settings — WHITE ALBUM 2 Web Port",
+};
+
 function render(): void {
+  document.title = SCREEN_TITLES[screen] ?? SCREEN_TITLES.title;
   if (screen === "title") {
     const autoNow = data.demo ? null : readAutosave(localStorage);
     const autoScript = autoNow ? router.scripts.get(autoNow.position.script) : null;
@@ -626,7 +639,7 @@ function render(): void {
         <div class="title-art">${snowflakeSvg()}</div>
         <div class="title-foot">
           <span>Fan-made web engine. Bring your own legally-owned assets.</span>
-          <span>No game content is bundled.</span>
+          <span>No game content is bundled · <a href="https://github.com/naczo5/white-album2-web" target="_blank" rel="noopener noreferrer">GitHub</a></span>
         </div>
       </div>`;
     app.querySelectorAll("[data-m]").forEach((b) =>

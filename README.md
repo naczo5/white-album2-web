@@ -1,8 +1,11 @@
 # white-album2-web
 
-Fan-made web port of **WHITE ALBUM 2 Extended Edition** — engine + tooling
-only. Game data and assets are supplied by the player; gameplay/path
-parity with the PC original is the top priority.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Fan-made **WHITE ALBUM 2 Extended Edition** web port, browser visual novel
+engine, and asset extraction pipeline — engine + tooling only. Game data and
+assets are supplied by the player; gameplay and route parity with the PC
+original is the top priority.
 
 ![Early Introductory Chapter gameplay in the web port](wa2-web/docs/preview.webp)
 
@@ -12,15 +15,38 @@ files; the only game-derived visual is this promotional screenshot, which
 depicts game art and translated text, is never loaded by the engine, and
 is not part of any pack.*
 
-**Engine, quickstart, verification:** see
-[`wa2-web/README.md`](wa2-web/README.md) and [`wa2-web/docs/`](wa2-web/docs/).
-Third-party translation notices: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-The original engine/tooling code is MIT-licensed ([`LICENSE`](LICENSE));
-game assets and the translation are not covered.
+## Features
+
+- **Browser visual novel reader:** voices, BGM intro/loop pairs (`_A` + `_B`),
+  sound effects, backdrops, event CGs, character sprites, `.AMP` color LUTs,
+  weather/shake/calendar overlays, NovelMode prose, EroMode voice filter, and
+  timed captions (`data/captions.json`).
+- **Interactive flowchart & walkthrough guide:** full scenario branch graph
+  with calendar dates, spoiler-safe hidden-unrevealed mode, and route guide.
+- **Native PC save & system import:** import `save_XX.sav` / `save_Q.sav`
+  files (with exact `ScriptPos` anchoring when `data/native-pos.json` is
+  present) and `Sys.sav` global progress (read lines, endings, CG/music/movie/ero
+  unlocks, choice history), plus browser slots, quick save/load, and JSON
+  export/import.
+- **Extras & Special contents:** CG gallery, music player, and 24-scene replay
+  powered by your unlocked profile.
+- **Offline & self-contained packaging:** build a portable static web bundle
+  via `tools/pack_site.py` or launch locally in one step with `./play.sh`.
+- **Asset-free demo mode:** boots with original placeholder prose and a CSS
+  winter scene when no game pack is present.
+
+## Quickstart
 
 **Fastest local play:** `cd wa2-web && ./play.sh --game-dir /path/to/game`
 (or `--image disc1.iso ...`); it extracts, builds, and serves the web app.
 See [`wa2-web/docs/ONECLICK.md`](wa2-web/docs/ONECLICK.md).
+
+**Engine documentation & verification:** see
+[`wa2-web/README.md`](wa2-web/README.md) and [`wa2-web/docs/`](wa2-web/docs/).
+Third-party translation notices: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+The original engine and tooling code is MIT-licensed ([`LICENSE`](LICENSE));
+game assets and the translation are not covered and must be supplied from your
+own legally-owned copy.
 
 ## Demo and external packs
 

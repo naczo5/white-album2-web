@@ -453,6 +453,19 @@ code {
   color: var(--ink-dim);
 }
 
+.title-foot a {
+  color: var(--ink-soft);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+
+.title-foot a:hover,
+.title-foot a:focus-visible {
+  color: var(--cyan-soft);
+  text-decoration-color: var(--cyan);
+}
+
 /* The Extras row makes the title menu one item taller. On short viewports
  * (and landscape phones) tighten the rows rather than pushing the last
  * action under the home indicator; very short frames may scroll. */

@@ -12,16 +12,62 @@
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <link rel="manifest" href="./site.webmanifest" />
+    <link rel="canonical" href="https://setsuna.rocks/" />
+    <title>WHITE ALBUM 2 Extended Edition — Web Port &amp; Browser Engine</title>
     <meta
       name="description"
-      content="Fan-made, bring-your-own-assets web engine for WHITE ALBUM 2 Extended Edition."
+      content="Play WHITE ALBUM 2 Extended Edition in your browser with an interactive flowchart, walkthrough guide, Extras gallery, and native PC save importer."
     />
-    <title>WHITE ALBUM 2 — Web Port (BYOA)</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="WHITE ALBUM 2 — Web Port" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://setsuna.rocks/" />
+    <meta property="og:title" content="WHITE ALBUM 2 Extended Edition — Web Port &amp; Browser Engine" />
+    <meta
+      property="og:description"
+      content="Fan-made web engine for WHITE ALBUM 2 Extended Edition featuring a browser reader, interactive flowchart, walkthrough guide, Extras gallery, and native PC save import."
+    />
+    <meta property="og:image" content="https://setsuna.rocks/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="WHITE ALBUM 2 Extended Edition web port emblem with winter snowflake and gold record center"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="WHITE ALBUM 2 Extended Edition — Web Port &amp; Browser Engine" />
+    <meta
+      name="twitter:description"
+      content="Fan-made web engine for WHITE ALBUM 2 Extended Edition featuring a browser reader, interactive flowchart, walkthrough guide, Extras gallery, and native PC save import."
+    />
+    <meta name="twitter:image" content="https://setsuna.rocks/og-image.png" />
+    <meta
+      name="twitter:image:alt"
+      content="WHITE ALBUM 2 Extended Edition web port emblem with winter snowflake and gold record center"
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "WHITE ALBUM 2 Extended Edition — Web Port",
+        "alternateName": ["white-album2-web", "wa2-web"],
+        "url": "https://setsuna.rocks/",
+        "description": "Fan-made web engine for WHITE ALBUM 2 Extended Edition featuring a browser reader, interactive scene flowchart, walkthrough guide, Extras gallery, and native PC save importer.",
+        "applicationCategory": "GameApplication",
+        "operatingSystem": "Any",
+        "browserRequirements": "Requires JavaScript",
+        "image": "https://setsuna.rocks/og-image.png",
+        "license": "https://opensource.org/licenses/MIT",
+        "sameAs": ["https://github.com/naczo5/white-album2-web"]
+      }
+    </script>
     <style>
       /* Critical shell only: the module CSS arrives after the JS bundle. */
       #boot {
         position: fixed;
         inset: 0;
+        z-index: 10;
         display: grid;
         place-content: center;
         justify-items: center;
@@ -38,6 +84,8 @@
       #boot .boot-bar { width: min(46vw, 320px); height: 2px; overflow: hidden; background: rgb(160 250 245 / 0.16); }
       #boot .boot-bar i { display: block; width: 34%; height: 100%; background: linear-gradient(90deg, #2b9ea0, #8ff4ed); animation: boot-slide 1.25s ease-in-out infinite; }
       #boot .boot-note { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.66rem; color: rgb(223 252 255 / 0.45); }
+      .boot-seo { max-width: 44rem; margin: 3rem auto; padding: 1.5rem; color: #b7d6d8; font-family: ui-sans-serif, system-ui, sans-serif; line-height: 1.6; }
+      .boot-seo a { color: #8ff4ed; }
       @keyframes boot-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(330%); } }
       @media (prefers-reduced-motion: reduce) { #boot .boot-bar i { animation-duration: 3s; } }
     </style>
@@ -52,7 +100,25 @@
         <div class="boot-bar" aria-hidden="true"><i></i></div>
         <div class="boot-note">First load may take a few seconds on a slow connection.</div>
       </div>
+      <main class="boot-seo">
+        <h1>WHITE ALBUM 2 Extended Edition — Web Port &amp; Browser Engine</h1>
+        <p>
+          Fan-made web port and visual novel engine for WHITE ALBUM 2 Extended Edition. Includes a
+          browser reader with voice, BGM, and sound effect playback, calendar-annotated scene
+          flowchart, walkthrough guide, CG/Music/Scene Extras gallery, and native PC
+          <code>save_XX.sav</code> / <code>Sys.sav</code> save importer.
+        </p>
+        <p>
+          Source code and setup documentation are available on
+          <a href="https://github.com/naczo5/white-album2-web">GitHub (naczo5/white-album2-web)</a>.
+        </p>
+      </main>
     </div>
+    <noscript>
+      <div class="boot-seo">
+        <p>JavaScript is required to run the interactive WHITE ALBUM 2 web engine.</p>
+      </div>
+    </noscript>
     <div id="toast" role="status" aria-live="polite"></div>
     <audio id="bgm" loop></audio>
     <audio id="voice"></audio>
