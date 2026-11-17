@@ -26,6 +26,9 @@ interface Settings {
   skipRead: boolean; // true: Ctrl skips only already-read lines
   dev: boolean; // dev mode: scene-jump buttons in the flowchart
   unlockAllChoices: boolean; // bypass choice flag locks (e.g. Chiaki True)
+  /** Flowchart: unreached scene cards show a black plate instead of a
+   * blurred still (default on = no visual spoilers at all). */
+  hideUnrevealed: boolean;
 }
 
 function safeStorageGet(key: string): string | null {
@@ -57,6 +60,9 @@ const settings: Settings = {
   skipRead: safeStorageGet("wa2web.skipRead") === "1",
   dev: safeStorageGet("wa2web.dev") === "1",
   unlockAllChoices: safeStorageGet("wa2web.unlockAllChoices") === "1",
+  // Default ON: unreached cards are black. Only an explicit "0" opts into
+  // the frosted (blurred) still.
+  hideUnrevealed: safeStorageGet("wa2web.hideUnrevealed") !== "0",
 };
 
 let skipState = { active: false };
@@ -75,6 +81,7 @@ function persistSettings(): void {
     localStorage.setItem("wa2web.skipRead", settings.skipRead ? "1" : "0");
     localStorage.setItem("wa2web.dev", settings.dev ? "1" : "0");
     localStorage.setItem("wa2web.unlockAllChoices", settings.unlockAllChoices ? "1" : "0");
+    localStorage.setItem("wa2web.hideUnrevealed", settings.hideUnrevealed ? "1" : "0");
   } catch {
     /* settings are a convenience; the app still runs with in-memory values */
   }
@@ -587,7 +594,10 @@ function render(): void {
       : hasContinue
         ? (settings.dev
           ? `${chapterLabel(at.position.script)} · ${escapeHtml(at.position.script)}:${at.position.event}`
-          : `${escapeHtml(sceneLabel(at.position.script, data.flow, { spoiler: true, visited: true }))} · continue where you left off`)
+          : `${escapeHtml(sceneLabel(at.position.script, data.flow, {
+            spoiler: true, visited: true,
+            bnr: data.bnr?.recs?.[at.position.script],
+          }))} · continue where you left off`)
         : "Begin the story";
     app.innerHTML = `
       <div class="title">
@@ -678,6 +688,9 @@ function render(): void {
       terminals: data.terminals.terminals,
       cfg: data.cfg,
       dev: settings.dev,
+      scenarios: router.scripts,
+      bnr: data.bnr,
+      hideUnrevealed: settings.hideUnrevealed,
       profile,
       onJump: (script) => {
         endReplayAutosaveGuard(false);
@@ -803,6 +816,7 @@ function render(): void {
       save,
       sysSlots: data.sysSlots,
       flow: data.flow,
+      bnr: data.bnr,
       profile,
       nativePos: data.nativePos,
       loadNativePos: async () => {
@@ -912,6 +926,10 @@ function render(): void {
             <input type="checkbox" id="sp" ${settings.spoiler ? "checked" : ""}>
           </label>
           <label class="setting">
+            <span class="setting-label">Hide unreached scene frames<small>Flowchart cards for scenes you have not reached stay black instead of showing a blurred still. Turn this off to see frosted previews.</small></span>
+            <input type="checkbox" id="hu" ${settings.hideUnrevealed ? "checked" : ""}>
+          </label>
+          <label class="setting">
             <span class="setting-label">Unlock all choice routes<small>Allow locked NG+ choice options (such as Chiaki True) on a first playthrough.</small></span>
             <input type="checkbox" id="ul" ${settings.unlockAllChoices ? "checked" : ""}>
           </label>
@@ -927,6 +945,11 @@ function render(): void {
     sp.onchange = () => {
       settings.spoiler = sp.checked;
       localStorage.setItem("wa2web.spoiler", sp.checked ? "1" : "0");
+    };
+    const hu = app.querySelector("#hu") as HTMLInputElement;
+    hu.onchange = () => {
+      settings.hideUnrevealed = hu.checked;
+      persistSettings();
     };
     const ul = app.querySelector("#ul") as HTMLInputElement;
     ul.onchange = () => {

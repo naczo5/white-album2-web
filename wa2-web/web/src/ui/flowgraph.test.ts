@@ -1,10 +1,10 @@
 // Flowchart graph builder: pure layout (tsukiweb-style chart), test-pinned.
 
 import { describe, expect, it } from "vitest";
-import { buildChartGraph, chartVisited, NODE_H, NODE_W, optionSeen, sceneLabel } from "./flowchart";
+import { buildChartGraph, calSceneDate, chartVisited, firstSceneImage, NODE_H, NODE_W, optionSeen, resolveInheritedArt, sceneImageCues, sceneLabel } from "./flowchart";
 import { guideEndings, guideOptionSeen } from "./guide";
 import { buildSpine } from "../engine/router";
-import type { CfgData, FlowData, LinkSite, SaveData, SysProfile, TerminalsData } from "../engine/types";
+import type { CfgData, FlowData, LinkSite, SaveData, Scenario, ScenarioEvent, SysProfile, TerminalsData } from "../engine/types";
 
 const link = (script: string, targets: string[]): LinkSite => ({
   id: `${script}-x`, engine: { script, events: [0] },
@@ -163,6 +163,84 @@ describe("global profile in the guide", () => {
   });
 });
 
+describe("scene thumbnails", () => {
+  const sc = (events: ScenarioEvent[]): Scenario => ({
+    script: "1002", tokens: 0, events, warnings: [],
+  });
+
+  it("orders cues by playback position, txt before bnr at one event", () => {
+    const scenario = sc([
+      { t: "narrate", text: "x" },
+      { t: "image", file: "B000002.tga", layer: "bak" },
+      { t: "image", file: "B000003.tga", layer: "bak" },
+    ]);
+    const cues = sceneImageCues(scenario, [
+      { ev: 1, layer: "bak", stems: ["000001"], conf: "high" },
+    ]);
+    expect(cues).toEqual([["B000002.tga"], ["b000001.tga"], ["B000003.tga"]]);
+  });
+
+  it("skips clears and low-confidence records; grp stems fall back to v/tv", () => {
+    const cues = sceneImageCues(undefined, [
+      { ev: 0, layer: "bak", clear: true, conf: "high" },
+      { ev: 1, layer: "grp", stems: ["123456"], conf: "hypothesis" },
+      { ev: 2, layer: "grp", stems: ["123456"], conf: "high" },
+    ]);
+    expect(cues).toEqual([["v123456.tga", "tv123456.tga"]]);
+  });
+
+  it("resolves the first installed image and passes the chapter namespace", () => {
+    const scenario = sc([{ t: "image", file: "B000009.tga", layer: "bak" }]);
+    const seen: string[] = [];
+    const url = firstSceneImage("1002", scenario, [
+      { ev: 3, layer: "bak", stems: ["000001"], conf: "high" },
+    ], (file, chapter) => {
+      seen.push(`${chapter}:${file}`);
+      // First cue is missing from a partial install; the .bnr falls through.
+      return file === "b000001.tga" ? "assets/bg/b000001.png" : null;
+    });
+    expect(url).toBe("assets/bg/b000001.png");
+    expect(seen).toEqual(["intro:B000009.tga", "intro:b000001.tga"]);
+  });
+
+  it("returns null when nothing resolves", () => {
+    expect(firstSceneImage("1010_040", sc([]), [], () => null)).toBeNull();
+  });
+
+  it("skips engine transition plates (white/black fades) for real art", () => {
+    const scenario = sc([
+      { t: "image", file: "B990000.tga", layer: "bak" },
+      { t: "image", file: "B101300.tga", layer: "bak" },
+    ]);
+    const bnr = [{ ev: 1, layer: "bak" as const, stems: ["990000"], conf: "high" as const }];
+    expect(firstSceneImage("2003", scenario, bnr, (f) => (f === "B101300.tga" ? "art" : null))).toBe("art");
+  });
+
+  it("inherits a parent's frame, cycle-safe (no stale nulls)", () => {
+    const own: Record<string, string | null> = { d: "d.png" };
+    const parents: Record<string, string[]> = {
+      c: ["a"],
+      a: ["b", "d"], // b first: the cycle arm is walked before d resolves
+      b: ["a"], // cycle a <-> b
+      d: [],
+    };
+    const got = resolveInheritedArt(
+      ["c", "a", "b", "d"],
+      (id) => parents[id] ?? [],
+      (id) => own[id] ?? null,
+    );
+    // b's only parent is a, which gets art from d AFTER the cycle guard
+    // fired inside b — b must not be stuck with the provisional null.
+    expect(got.get("b")).toBe("d.png");
+    expect(got.get("a")).toBe("d.png");
+    expect(got.get("c")).toBe("d.png");
+    expect(got.get("d")).toBe("d.png");
+    // An artless leaf with no parents stays null (a final null, memoized).
+    const lone = resolveInheritedArt(["x"], () => [], () => null);
+    expect(lone.get("x")).toBeNull();
+  });
+});
+
 describe("CFG flowchart graph and sceneLabel", () => {
   it("builds edges from CFG sload/scall + terminals and omits spine.next edges", () => {
     const scripts = ["1001", "1002", "1003", "1004"];
@@ -218,5 +296,31 @@ describe("CFG flowchart graph and sceneLabel", () => {
     expect(sceneLabel("2019", flow, { dev: false, visited: false, spoiler: true })).toBe("Closing · 12/24");
     expect(sceneLabel("1001", flow, { dev: false, visited: true })).toBe("Introductory");
     expect(sceneLabel("demo-1", flow, { dev: false, visited: true })).toBe("Demo");
+  });
+
+  it("falls back to the first .bnr calendar stamp when flow has no date", () => {
+    const flow: FlowData = { version: 1, nodes: [] };
+    const bnr = [
+      { ev: 62, cal: { year: 2010, month: 11, day: 26, dow: 5 }, conf: "high" as const },
+      { ev: 438, cal: { year: 2010, month: 11, day: 27, dow: 6 }, conf: "high" as const },
+      { ev: 1, cal: { year: 2010, month: 11, day: 25, dow: 4 }, conf: "hypothesis" as const },
+    ];
+    expect(calSceneDate(bnr)).toBe("11/26");
+    expect(calSceneDate([])).toBeNull();
+    expect(sceneLabel("2002", flow, { visited: true, bnr })).toBe("Closing · 11/26");
+    // A curated flow date (with its range/uncertainty formatting) wins.
+    const dated: FlowData = {
+      version: 1,
+      nodes: [{
+        id: "x", engine: { script: "2019", event: 1 }, options: [],
+        date: "12/24 ROUTER", effects: {}, gated: {}, walkthrough: null,
+        status: "EXPERT_SOURCED",
+      }],
+    };
+    const xmas = [{ ev: 1, cal: { year: 2010, month: 12, day: 25, dow: 6 }, conf: "high" as const }];
+    expect(sceneLabel("2019", dated, { visited: true, bnr: xmas })).toBe("Closing · 12/24");
+    // Spoiler-off still hides the date behind the chapter placeholder.
+    expect(sceneLabel("2002", flow, { visited: false, bnr })).toBe("Closing · ???");
+    expect(sceneLabel("2002", flow, { visited: false, spoiler: true, bnr })).toBe("Closing · 11/26");
   });
 });

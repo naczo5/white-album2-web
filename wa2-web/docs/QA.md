@@ -1082,6 +1082,97 @@ fade, pause/resume, rect fit, and removed the temporary 23 MB test pack
 (now gitignored). Only `.ani`/AVI frame playback remains unwired (see known
 gaps).
 
+### 2026-11-17 — flowchart scene frames (first frame + date, frosted until reached)
+
+User request: the chart should show each scene's image instead of an empty
+box, clear where the route has been read and blurred/darkened where it has
+not. Data stays derived, no new build artifact:
+
+- `ui/flowchart.ts` scene cards: 16:9 first frame + label footer. The frame
+  is the earliest resolvable image cue in the script — txt `image` events
+  and high-confidence `.bnr` `bak` records merged in playback order (txt
+  wins at one event), then grp CGs via the reader's `v%06d.tga`/`tv%06d.tga`
+  chain. Clears are skipped (black is not art), unresolvable cues fall
+  through to the next one, and variant scripts (`1010_040`) borrow the base
+  file's frame. Continuation scripts with no cue inherit the nearest parent
+  node's frame, so no card is empty.
+- Visited (`chartVisited`: run + imported `Sys.sav`) frames are clear.
+  Unreached cards are **black by default** — new setting *Hide unreached
+  scene frames* (Settings → Flowchart and guide, `wa2web.hideUnrevealed`,
+  default on). Off, they fall back to the frost treatment
+  (`blur(3.5px) brightness(.6) saturate(.6)` + dark veil). In hidden mode
+  the unreached card's PNG is never requested at all (no fetch, no decode),
+  and only the faint snowflake mark remains on the black plate. Spoiler mode
+  still changes labels only — it reveals text, not art.
+- Dates come from the curated `flow.json` date when present (keeps the
+  `12/18~19` ranges), else the script's first high-confidence `.bnr`
+  (4,203) calendar stamp (`cal.year/month/day` -> `M/D`). The intro
+  chapter has no calendar stamps (and no curated flow dates), so those
+  cards stay chapter-only instead of inventing one. Spoilers-off still
+  hides dates behind `???`; spoilers-on reveals them for every card.
+- `B990000.tga` (and the 990001-3 white family) is a transition plate,
+  not art: 192 scripts put it at event 0, which painted their cards
+  white. `firstSceneImage` now skips the plate and takes the following
+  backdrop/CG. Script-specific black backdrops are real scene art and
+  are kept.
+- 171-card real-pack chart: SVG `<image>` frames are created from
+  `data-src` by a scroll pass on `.fc-wrap` (600 px margin, node y
+  precomputed in `data-y`), so only the cards near the scroll viewport
+  fetch full-size PNGs. With no manifest/demo, the plate falls back to the
+  interface snowflake mark (no game art).
+- Node geometry + pure cue/label helpers are test-pinned
+  (`flowgraph.test.ts`: cue ordering, clear/low-confidence skip, chapter
+  namespace, fall-through, transition plate, flow-date precedence,
+  calendar fallback); `renderFlowchart` itself stays DOM-only.
+- Fake save + real pack in headless Chromium: 171 cards, 170 frosted /
+  1 current at boot; 10 frames loaded around the viewport, 0 console
+  errors; seen-route save (13 visited) paints clear frames and the gold
+  current card (1009). Blocked manifest → snowflake plate, no empty cards.
+- Deployed data refreshed for this feature only: the checked-in-world
+  `web/public/data/bnr.json` + `bundle.json` were missing calendar records
+  (built before the (4,203) decoder). Ran `decode_bnr.py --jp
+  ../.cache/game/script.pak ../.cache/en_main.pak ../.cache/en_special.pak`
+  (245 scripts, 34,205 high + 5 hypothesis) and merged the 241 high `cal`
+  records into the existing record lists; no other presentation records
+  were replaced. Generated/gitignored data, not committed.
+
+**Review pass:** one delegated review agent (fresh context, shared
+checkout) read the whole uncommitted diff, re-ran `tsc` and replayed the
+pure helpers against the local pack. Verdict: **clear to push**, with
+4 minor + 3 nit findings — all fixed in this pass:
+
+1. `thumbFor` could memoize a *wrong* null under the cycle guard (the
+   coda parent graph really loops: 3015 ↔ 3014_2/_3 ↔ 3024 …). Extracted
+   the walk into the pure, test-pinned `resolveInheritedArt`: found art is
+   always memoized; a null reached through the guard is provisional and
+   re-derived on the node's own top-level pass
+   (`flowgraph.test.ts` "inherits a parent's frame, cycle-safe").
+2. Save/Load slot labels missed the calendar-date fallback the chart and
+   the Continue button have; `SaveHooks.bnr` now feeds all three
+   `sceneLabel` call sites (a slot parked at 2003 now reads
+   `Closing · 12/1` there too).
+3. Dev mode now bypasses *Hide unreached scene frames* — it is the
+   verification view, and the default-on setting otherwise blanks the
+   cards a developer is trying to check.
+4. The lazy loader only listened to `scroll`, but `.fc-wrap` is 64vh tall:
+   maximizing the window exposes rows with no scroll event. A window
+   `resize` hook (one at a time, self-detaching once its chart is gone)
+   now feeds the same rAF-gated pass, and the pass early-returns once
+   every frame is painted.
+5. The current card keeps the `Now · You are here` affordance in player
+   mode; long dev annotations are clipped to the 144px card (full text
+   stays in the `<title>` tooltip).
+
+Gates: `pytest -q` 208 passed + 9 skipped; `tsc --noEmit` clean;
+`vitest run` 309 passed + 9 skipped (flowchart 20). Headless spot check:
+2001-2019 labels show 11/24 … 12/24 (flow ranges kept for 2009/2015),
+unvisited closing cards stay `???`, no console errors. Hidden-mode spot
+check: 139 locked cards → 0 `image` elements and 139 black plates with the
+setting on; toggling it off (localStorage) re-renders all 139 with frosted
+stills; 0 console errors. Post-review spot check: dev mode shows art on
+all 155 locked cards, the autosave row reads `Closing · 12/1`, and
+enlarging the viewport in frost mode loads 17 → 28 frames with no scroll.
+
 ### Parity status by subsystem (measured, not asserted)
 
 Do not read the gate table as "1:1 with the engine". Gates prove the

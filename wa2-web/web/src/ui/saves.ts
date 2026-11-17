@@ -27,7 +27,7 @@ import {
 } from "../engine/sys-save";
 import { ingestReadKeys } from "./reader";
 import { sceneLabel } from "./flowchart";
-import type { FlowData, NativePosData, SaveData, SysProfile, SysSlotsTable } from "../engine/types";
+import type { BnrData, FlowData, NativePosData, SaveData, SysProfile, SysSlotsTable } from "../engine/types";
 
 export interface SaveHooks {
   /** Used to resolve native save script ids and line text. */
@@ -40,6 +40,8 @@ export interface SaveHooks {
   sysSlots?: SysSlotsTable;
   /** Flow nodes: needed to map choice bitmasks onto node ids. */
   flow?: FlowData;
+  /** Presentation records, for calendar dates in slot scene labels. */
+  bnr?: BnrData | null;
   /** Global profile currently stored (read lines, endings, unlocks). */
   profile?: SysProfile | null;
   /** Developer mode: display raw script:event ids in slot/import rows. */
@@ -354,7 +356,10 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
     }
     const posText = h.dev
       ? `${s.position.script}:${s.position.event}`
-      : sceneLabel(s.position.script, h.flow, { spoiler: true, dev: false, visited: true });
+      : sceneLabel(s.position.script, h.flow, {
+          spoiler: true, dev: false, visited: true,
+          bnr: h.bnr?.recs?.[s.position.script],
+        });
     return `<li><span class="slot-no">${code}</span>
       <span class="slot-main"><b>${label}</b>
       <span>${escapeHtml(posText)} · ${escapeHtml(s.updatedAt.slice(0, 16).replace("T", " "))}</span></span>
@@ -385,7 +390,10 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
         : CHAPTER_LABEL[chapterOfScript(s.position.script)] ?? "Special";
       const slotPlace = h.dev
         ? `${chapter} · ${s.position.script}:${s.position.event}`
-        : sceneLabel(s.position.script, h.flow, { spoiler: true, dev: false, visited: true });
+        : sceneLabel(s.position.script, h.flow, {
+            spoiler: true, dev: false, visited: true,
+            bnr: h.bnr?.recs?.[s.position.script],
+          });
       html += `<li>
         <span class="slot-no">${String(i + 1).padStart(2, "0")}</span>
         <span class="slot-main"><b>${escapeHtml(s.name)}</b>
@@ -430,7 +438,10 @@ export function renderSaves(el: HTMLElement, h: SaveHooks): void {
       const line = n.preview || n.speaker || "Imported save";
       const where = h.dev
         ? `${n.script}:${s.position.event}`
-        : sceneLabel(s.position.script, h.flow, { spoiler: true, dev: false, visited: true });
+        : sceneLabel(s.position.script, h.flow, {
+            spoiler: true, dev: false, visited: true,
+            bnr: h.bnr?.recs?.[s.position.script],
+          });
       const meta = [
         where,
         n.speaker,

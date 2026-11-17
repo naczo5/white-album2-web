@@ -50,8 +50,8 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
   cue sanitising); `ui/movie.ts` renders the full-stage player (HUD,
   CC toggle, missing-asset card).
 - `ui/` — title, reader (dialogue/choices/stage/backlog), flowchart
-  (progress + spoiler modes + verification badges), guide (endings,
-  recommended order, key choices), saves, settings.
+  (scene-frame cards, progress + spoiler modes + verification badges),
+  guide (endings, recommended order, key choices), saves, settings.
 - `main.ts` — optional `?pack=<root>` loads `data/` and `assets/` from an
   external BYOA host (CORS required); see `docs/BYOA.md`.
 

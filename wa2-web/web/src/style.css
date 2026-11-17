@@ -946,8 +946,38 @@ h3::after {
   cursor: pointer;
 }
 
-.fc-node:hover rect {
+.fc-node:focus {
+  outline: none;
+}
+
+.fc-node:focus-visible .fc-frame,
+.fc-node:hover .fc-frame {
   stroke: var(--gold);
+}
+
+/* Scene frames: the card's opening still. Unreached scenes are hidden
+ * behind frost — blurred, desaturated and darkened — so the chart shows
+ * where the story can go without spoiling what it looks like. */
+.fc-thumb {
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+
+.fc-thumb[href] {
+  opacity: 1;
+}
+
+.fc-veil {
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+.fc-node.locked .fc-thumb {
+  filter: blur(3.5px) brightness(0.6) saturate(0.6);
+}
+
+.fc-node.locked .fc-veil {
+  opacity: 0.4;
 }
 
 .fc-detail {
