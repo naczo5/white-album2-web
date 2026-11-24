@@ -37,6 +37,12 @@ export interface GameData {
    * older packs that predate `bundle.sysSlots`. */
   sysSlots: SysSlotsTable;
   demo: boolean;
+  /** Active alternative translation ("" when the pack default is in use).
+   * Scripts, flow and speakers may come from `data/translations/<id>/`. */
+  translation: string;
+  /** True when a translation was requested but its data failed to load and
+   * the pack default was used instead (boot shows a warning). */
+  translationFallback: boolean;
   /** Scripts listed in the index that failed to load (stale cache/partial
    * copy). Empty when healthy; boot warns otherwise. */
   incomplete: string[];
@@ -67,6 +73,80 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
+}
+
+/** Alternative translation metadata (from `data/translations/index.json`,
+ * written by `tools/build.py --alt`). The first entry is the pack default. */
+export interface TranslationInfo {
+  id: string;
+  name?: string;
+  label?: string;
+  desc?: string;
+  repo?: string;
+}
+
+let translationsCache: { base: string; list: TranslationInfo[] } | null = null;
+
+export async function loadTranslations(base = ""): Promise<TranslationInfo[]> {
+  const prefix = base ? base.replace(/\/+$/, "") + "/" : "";
+  if (translationsCache && translationsCache.base === prefix) return translationsCache.list;
+  const raw = await tryFetch<{ version?: number; translations?: TranslationInfo[] }>(
+    `${prefix}data/translations/index.json`);
+  const list = raw && Array.isArray(raw.translations)
+    ? raw.translations.filter((t): t is TranslationInfo => !!t && typeof t.id === "string")
+    : [];
+  translationsCache = { base: prefix, list };
+  return list;
+}
+
+/** Pure pick: the stored id when the pack offers it, otherwise the pack
+ * default (first entry), otherwise "" (single-translation pack/demo). */
+export function activeTranslationId(
+  list: TranslationInfo[],
+  stored: string | null | undefined,
+): string {
+  if (stored && list.some((t) => t.id === stored)) return stored;
+  return list.length > 0 ? list[0].id : "";
+}
+
+/** Per-translation overlay: scripts (+index), flow and optional speakers
+ * from `data/translations/<id>/`. Everything else is shared. */
+interface TranslationOverlay {
+  scenarios: Scenario[];
+  failed: string[];
+  flow: FlowData;
+  speakers: SpeakersData | null;
+  /** Alt voice map (shared anchors minus scripts whose alt event stream
+   * does not align with the default build); null = use the shared map. */
+  voicemap: VoiceMapData | null;
+}
+
+async function loadTranslationOverlay(
+  prefix: string,
+  id: string,
+): Promise<TranslationOverlay | null> {
+  const tPrefix = `${prefix}data/translations/${id}/`;
+  const index = await tryFetch<string[]>(`${tPrefix}scripts/index.json`);
+  const flow = await tryFetch<FlowData>(`${tPrefix}flow.json`);
+  if (!index || index.length === 0 || !flow || !Array.isArray(flow.nodes)) return null;
+  const results = await mapLimit(index, 12, async (sid) => {
+    const sc = await tryFetch<Scenario>(`${tPrefix}scripts/${sid}.json`);
+    return [sid, sc && typeof sc.script === "string" && Array.isArray(sc.events) ? sc : null] as const;
+  });
+  const scenarios: Scenario[] = [];
+  const failed: string[] = [];
+  for (const [sid, sc] of results) {
+    if (sc) scenarios.push(sc);
+    else failed.push(sid);
+  }
+  if (scenarios.length === 0) return null;
+  return {
+    scenarios,
+    failed,
+    flow: sanitizeFlow(flow),
+    speakers: await tryFetch<SpeakersData>(`${tPrefix}speakers.json`),
+    voicemap: await tryFetch<VoiceMapData>(`${tPrefix}voicemap.json`),
+  };
 }
 
 const DEMO: Scenario[] = [
@@ -201,13 +281,37 @@ export function loadNativePos(base = ""): Promise<NativePosData | null> {
   return pending;
 }
 
-export async function loadGameData(base = ""): Promise<GameData> {
+export async function loadGameData(base = "", translation = ""): Promise<GameData> {
   const prefix = base ? `${base.replace(/\/+$/, "")}/` : "";
   const bundle = await tryFetch<BundlePayload>(`${prefix}data/bundle.json`);
   if (bundle && Array.isArray(bundle.scenarios) && bundle.flow && Array.isArray(bundle.flow.nodes)) {
-    const scenarios = bundle.scenarios.filter((sc) =>
+    const baseScenarios = bundle.scenarios.filter((sc) =>
       sc && typeof sc.script === "string" && Array.isArray(sc.events)
     );
+    let scenarios = baseScenarios;
+    let flow = sanitizeFlow(bundle.flow);
+    let speakers = bundle.speakers ?? null;
+    let voicemap = bundle.voicemap ?? null;
+    let incomplete: string[] = [];
+    let translationFallback = false;
+    if (translation && baseScenarios.length > 0) {
+      // Loose per-file alt layer next to the bundle (the bundler prunes
+      // only the pack default's files). All or nothing per file.
+      const alt = await loadTranslationOverlay(prefix, translation);
+      if (alt) {
+        if (alt.failed.length > 0) {
+          console.warn(`[wa2] translation ${translation}: ${alt.failed.length} script(s) failed to load:`, alt.failed.slice(0, 5));
+        }
+        scenarios = baseScenarios.map((sc) =>
+          alt.scenarios.find((a) => a.script === sc.script) ?? sc);
+        flow = alt.flow;
+        speakers = alt.speakers ?? speakers;
+        voicemap = alt.voicemap ?? voicemap;
+        incomplete = alt.failed;
+      } else {
+        translationFallback = true;
+      }
+    }
     const bundleSys = usableSysSlots(bundle.sysSlots);
     if (scenarios.length > 0) {
       const sysSlots = bundleSys
@@ -224,45 +328,46 @@ export async function loadGameData(base = ""): Promise<GameData> {
         : await tryFetch<CaptionData>(`${prefix}data/captions.json`);
       return {
         scenarios,
-        flow: sanitizeFlow(bundle.flow),
+        flow,
         links: bundle.links ?? { version: 1, links: [] },
         terminals: bundle.terminals ?? { version: 1, terminals: {} },
         endings: bundle.endings ?? { endings: [] },
         cfg,
         bgm: bundle.bgm ?? null,
         bnr: bundle.bnr ?? null,
-        voicemap: bundle.voicemap ?? null,
-        speakers: bundle.speakers ?? null,
+        voicemap,
+        speakers,
         nativePos: null,
         captions: captions ?? null,
         luts: unwrapLuts(bundle.luts),
         sysSlots,
         demo: false,
-        incomplete: [],
+        translation,
+        translationFallback,
+        incomplete,
       };
     }
   }
-  const [index, flow, endings, links, terminals, cfg, bgm, bnr, voicemap, speakers, sysSlotsRaw, captions] =
-    await Promise.all([
-      tryFetch<string[]>(`${prefix}data/scripts/index.json`),
-      tryFetch<FlowData>(`${prefix}data/flow.json`),
-      tryFetch<GameData["endings"]>(`${prefix}data/endings.json`),
-      tryFetch<LinksData>(`${prefix}data/links.json`),
-      tryFetch<TerminalsData>(`${prefix}data/terminals.json`),
-      tryFetch<CfgData>(`${prefix}data/cfg.json`),
-      tryFetch<BgmData>(`${prefix}data/bgm.json`),
-      tryFetch<BnrData>(`${prefix}data/bnr.json`),
-      tryFetch<VoiceMapData>(`${prefix}data/voicemap.json`),
-      tryFetch<SpeakersData>(`${prefix}data/speakers.json`),
-      tryFetch<SysSlotsTable>(`${prefix}data/sys-slots.json`),
-      tryFetch<CaptionData>(`${prefix}data/captions.json`),
+  // Loose per-file layout. With a translation selected, scripts + flow +
+  // speakers come from the translation dir; everything else is shared. A
+  // missing/broken alt set falls back to the pack default (and is flagged).
+  const loadLoose = async (
+    scriptPrefix: string,
+    flowUrl: string,
+    speakerUrl: string,
+  ): Promise<{ scenarios: Scenario[]; flow: FlowData; speakers: SpeakersData | null; failed: string[] } | null> => {
+    const [index, flowReq, speakersReq] = await Promise.all([
+      tryFetch<string[]>(`${scriptPrefix}index.json`),
+      tryFetch<FlowData>(flowUrl),
+      tryFetch<SpeakersData>(speakerUrl),
     ]);
-  const sysSlots = usableSysSlots(sysSlotsRaw) ?? DEFAULT_SYS_SLOTS;
-  if (Array.isArray(index) && index.length > 0 && flow && Array.isArray(flow.nodes)) {
+    if (!Array.isArray(index) || index.length === 0 || !flowReq || !Array.isArray(flowReq.nodes)) {
+      return null;
+    }
     const scenarios: Scenario[] = [];
     const failed: string[] = [];
     const results = await mapLimit(index, 12, async (id) => {
-      const sc = await tryFetch<Scenario>(`${prefix}data/scripts/${id}.json`);
+      const sc = await tryFetch<Scenario>(`${scriptPrefix}${id}.json`);
       if (!sc || typeof sc.script !== "string" || !Array.isArray(sc.events)) {
         return [id, null] as const;
       }
@@ -272,24 +377,66 @@ export async function loadGameData(base = ""): Promise<GameData> {
       if (sc) scenarios.push(sc);
       else failed.push(id);
     }
-    if (failed.length > 0) {
-      console.warn(`[wa2] ${failed.length}/${index.length} scripts failed to load (hard-refresh?):`, failed.slice(0, 5));
+    if (scenarios.length === 0) return null;
+    return { scenarios, flow: sanitizeFlow(flowReq), speakers: speakersReq, failed };
+  };
+
+  const [endings, links, terminals, cfg, bgm, bnr, voicemap, sysSlotsRaw, captions] =
+    await Promise.all([
+      tryFetch<GameData["endings"]>(`${prefix}data/endings.json`),
+      tryFetch<LinksData>(`${prefix}data/links.json`),
+      tryFetch<TerminalsData>(`${prefix}data/terminals.json`),
+      tryFetch<CfgData>(`${prefix}data/cfg.json`),
+      tryFetch<BgmData>(`${prefix}data/bgm.json`),
+      tryFetch<BnrData>(`${prefix}data/bnr.json`),
+      tryFetch<VoiceMapData>(`${prefix}data/voicemap.json`),
+      tryFetch<SysSlotsTable>(`${prefix}data/sys-slots.json`),
+      tryFetch<CaptionData>(`${prefix}data/captions.json`),
+    ]);
+  const sysSlots = usableSysSlots(sysSlotsRaw) ?? DEFAULT_SYS_SLOTS;
+  let picked = null;
+  let translationFallback = false;
+  let vmOverride: VoiceMapData | null = null;
+  if (translation) {
+    // Alt set first: an alt user never downloads the default script set.
+    picked = await loadLoose(
+      `${prefix}data/translations/${translation}/scripts/`,
+      `${prefix}data/translations/${translation}/flow.json`,
+      `${prefix}data/translations/${translation}/speakers.json`,
+    );
+    if (picked) {
+      vmOverride = await tryFetch<VoiceMapData>(
+        `${prefix}data/translations/${translation}/voicemap.json`);
+    } else {
+      translationFallback = true;
     }
-    if (scenarios.length > 0) {
-      return {
-        scenarios, flow: sanitizeFlow(flow),
-        links: links ?? { version: 1, links: [] },
-        terminals: terminals ?? { version: 1, terminals: {} },
-        endings: endings ?? { endings: [] },
-        cfg: cfg ?? null,
-        bgm, bnr, voicemap, speakers, luts: null,
-        nativePos: null,
-        captions: captions ?? null,
-        sysSlots,
-        demo: false,
-        incomplete: failed,
-      };
+  }
+  if (!picked) {
+    picked = await loadLoose(`${prefix}data/scripts/`, `${prefix}data/flow.json`,
+      `${prefix}data/speakers.json`);
+  }
+  if (picked) {
+    if (picked.failed.length > 0) {
+      console.warn(`[wa2] ${picked.failed.length}/${picked.scenarios.length + picked.failed.length} scripts failed to load (hard-refresh?):`, picked.failed.slice(0, 5));
     }
+    return {
+      scenarios: picked.scenarios,
+      flow: picked.flow,
+      links: links ?? { version: 1, links: [] },
+      terminals: terminals ?? { version: 1, terminals: {} },
+      endings: endings ?? { endings: [] },
+      cfg: cfg ?? null,
+      bgm, bnr, voicemap: vmOverride ?? voicemap,
+      speakers: picked.speakers,
+      luts: null,
+      nativePos: null,
+      captions: captions ?? null,
+      sysSlots,
+      demo: false,
+      translation,
+      translationFallback,
+      incomplete: picked.failed,
+    };
   }
   return {
     scenarios: DEMO,
@@ -302,6 +449,8 @@ export async function loadGameData(base = ""): Promise<GameData> {
     nativePos: null, captions: null,
     sysSlots: DEFAULT_SYS_SLOTS,
     demo: true,
+    translation: "",
+    translationFallback: false,
     incomplete: [],
   };
 }

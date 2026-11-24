@@ -13,7 +13,10 @@ MAO en.pak stream. Evidence (docs/PARSING.md §"MAO en.pak layout"):
 - Long EN tokens are truncated mid-word in the EN txt (the full line lives
   in the tail fragments); the MAO manuscript (script-data/*.json) carries
   the complete, punctuated English per line and aligns 1:1 with JP display
-  events by ordinal (fuzzy; drift <= ~16 lines/script).
+  events by ordinal (fuzzy; drift <= ~16 lines/script). Without a
+  manuscript (empty MAO dir — another patch's en.pak, e.g. TodokanaiTL)
+  the tail fragments fold back into their lines via the .bnr
+  `(3,src),(4,131),(3,frag),(4,131)` statements (`rejoin_tail_fragments`).
 - JP txt has zero `"` characters, so quote-aware splitting never fires on
   the spine; `parse_txt.split_tokens` == naive split for JP.
 
@@ -48,6 +51,7 @@ sys.path.insert(0, HERE)
 import kcap  # noqa: E402
 import lzss  # noqa: E402
 import parse_txt  # noqa: E402
+from proto_bgm import iter_statements  # noqa: E402
 from build_voice import (  # noqa: E402
     _fill_runs,
     _norm_en,
@@ -365,17 +369,79 @@ def _normalize_speakers(events: list[dict],
             e["speaker"] = _resolve_speaker_name(e["speaker"], speaker_map)
 
 
+def fold_fragments(en_toks: list[str], attach: dict[int, int],
+                   warnings: list[str]) -> tuple[list[str], int, int]:
+    """Apply a fragment->source map to the EN token list (pure).
+
+    Fragments fold in reverse index order so chains (a fragment continued
+    by a later fragment) concatenate completely; folded positions become ""
+    so the stream keeps its 1:1 spine alignment. Non-empty tokens the map
+    never pairs (truncated but unanchored) are counted and warned.
+    Returns (tokens, fragments folded, unlabeled orphans).
+    """
+    toks = list(en_toks)
+    for frag in sorted(attach, reverse=True):
+        toks[attach[frag]] = (toks[attach[frag]] or "") + (toks[frag] or "")
+        toks[frag] = ""
+    orphans = 0
+    if attach:
+        zone = range(min(attach), len(toks))
+        orphans = sum(1 for i in zone if i not in attach and toks[i])
+        if orphans:
+            warnings.append(f"{orphans} unlabeled tail fragments (dropped)")
+    return toks, len(attach), orphans
+
+
+def rejoin_tail_fragments(en_toks: list[str], bnr_payload: bytes | None,
+                          warnings: list[str]) -> tuple[list[str], int, int]:
+    """Fold EN tail-fragment tokens back into their source lines.
+
+    The patched exe truncates each EN line to the engine's token budget and
+    appends the overflow, in source order, after the file's last token; the
+    .bnr stream pairs every fragment with its source via the sync-label
+    statement `(3,src),(4,131),(3,frag),(4,131)` (docs/PARSING.md "MAO
+    en.pak layout"). Returns (tokens, fragments folded, unlabeled orphans).
+
+    Shape-preserving: folded fragment positions become "" so the naive EN
+    stream keeps its 1:1 spine alignment and the hybrid substitution replay
+    is untouched. With a manuscript pass upstream the fold is mostly
+    redundant (the manuscript replaces display text), but it still
+    completes the fallback lines and the option payloads.
+    """
+    if not bnr_payload or len(en_toks) < 2:
+        return en_toks, 0, 0
+    attach: dict[int, int] = {}
+    for stmt in iter_statements(bnr_payload):
+        ops = stmt[3] if len(stmt) > 3 and isinstance(stmt[3], list) else []
+        for k in range(len(ops) - 3):
+            if (ops[k][0], ops[k + 1][0], ops[k + 2][0], ops[k + 3][0]) != (3, 4, 3, 4):
+                continue
+            if ops[k + 1][1] != 131 or ops[k + 3][1] != 131:
+                continue
+            src, frag = ops[k][1], ops[k + 2][1]
+            if 0 <= src < frag < len(en_toks):
+                attach[frag] = src
+    if not attach:
+        return en_toks, 0, 0
+    return fold_fragments(en_toks, attach, warnings)
+
+
 def build_script_ir(jp_txt: bytes | None, en_txt: bytes | None,
                     mao_lines: list[dict] | None,
                     mao_parts: list[list[dict]] | None = None,
-                    speaker_map: dict[str, str] | None = None) -> tuple[dict, dict]:
+                    speaker_map: dict[str, str] | None = None,
+                    en_bnr: bytes | None = None) -> tuple[dict, dict]:
     warnings: list[str] = []
     stats = {"manuscript": 0, "fallback": 0}
     if jp_txt is not None and en_txt is not None:
         return _build_hybrid(jp_txt, en_txt, mao_lines, warnings,
-                             mao_parts=mao_parts, speaker_map=speaker_map)
+                             mao_parts=mao_parts, speaker_map=speaker_map,
+                             en_bnr=en_bnr)
     if en_txt is not None:
         toks = naive_tokens(en_txt)
+        if en_bnr is not None:
+            toks, n_fold, _ = rejoin_tail_fragments(toks, en_bnr, warnings)
+            stats["rejoined"] = n_fold
         events, w = parse_txt.parse_tokens(toks)
         warnings.extend(w)
         if mao_lines:
@@ -415,10 +481,14 @@ def _build_hybrid(jp_txt: bytes, en_txt: bytes,
                   mao_lines: list[dict] | None,
                   warnings: list[str],
                   mao_parts: list[list[dict]] | None = None,
-                  speaker_map: dict[str, str] | None = None) -> tuple[dict, dict]:
+                  speaker_map: dict[str, str] | None = None,
+                  en_bnr: bytes | None = None) -> tuple[dict, dict]:
     stats = {"manuscript": 0, "fallback": 0}
     jp_toks = naive_tokens(jp_txt)
     en_toks = naive_tokens(en_txt)
+    if en_bnr is not None:
+        en_toks, n_fold, _ = rejoin_tail_fragments(en_toks, en_bnr, warnings)
+        stats["rejoined"] = n_fold
 
     hyb: list[str] = []
     notes: dict[str, int] = {}
@@ -532,10 +602,10 @@ def _replay_spine(jp_events: list[dict], hy_events: list[dict],
             hy.update(jp)
 
 
-def txt_entry(data: bytes, script: str) -> bytes | None:
+def pak_entry(data: bytes, name: str) -> bytes | None:
     try:
         e = {x.name: x for x in kcap.read_index(data)
-             if not x.is_folder}[script + ".txt"]
+             if not x.is_folder}[name]
     except KeyError:
         return None
     t = data[e.offset:e.offset + e.length]
@@ -543,6 +613,10 @@ def txt_entry(data: bytes, script: str) -> bytes | None:
         orig, lz = lzss.split_datahdr(t)
         t = lzss.decompress(lz, orig)
     return t
+
+
+def txt_entry(data: bytes, script: str) -> bytes | None:
+    return pak_entry(data, script + ".txt")
 
 
 def main() -> None:
@@ -554,16 +628,20 @@ def main() -> None:
 
     # later paks override (mirrors build.py: special beats main stub)
     en_txts: dict[str, bytes] = {}
+    en_bnrs: dict[str, bytes] = {}
     for p in en_paks:
         d = open(p, "rb").read()
         for e in kcap.read_index(d):
-            if e.is_folder or not e.name.endswith(".txt"):
+            if e.is_folder:
                 continue
             t = d[e.offset:e.offset + e.length]
             if e.is_compressed:
                 orig, lz = lzss.split_datahdr(t)
                 t = lzss.decompress(lz, orig)
-            en_txts[e.name[:-4]] = t
+            if e.name.endswith(".txt"):
+                en_txts[e.name[:-4]] = t
+            elif e.name.endswith(".bnr"):
+                en_bnrs[e.name[:-4]] = t
 
     jp_scripts = sorted({e.name[:-4] for e in kcap.read_index(jp_data)
                          if not e.is_folder and e.name.endswith(".txt")})
@@ -589,7 +667,7 @@ def main() -> None:
     has_mao = bool(mao_dir) and os.path.isdir(mao_dir)
     g_spk = global_speaker_map(mao_dir) if has_mao else {}
     index: list[str] = []
-    tot_man = tot_fb = 0
+    tot_man = tot_fb = tot_rej = 0
     for script in sorted(emit):
         jp_txt = txt_entry(jp_data, script)
         en_txt = en_txts.get(script)
@@ -598,10 +676,12 @@ def main() -> None:
         spk_map = (speaker_name_map(mao, fallback_map=g_spk)
                    if mao else (g_spk or None))
         ir, stats = build_script_ir(jp_txt, en_txt, mao, mao_parts=parts,
-                                    speaker_map=spk_map)
+                                    speaker_map=spk_map,
+                                    en_bnr=en_bnrs.get(script))
         ir["script"] = script
         tot_man += stats["manuscript"]
         tot_fb += stats["fallback"]
+        tot_rej += stats.get("rejoined", 0)
         with open(os.path.join(ir_dir, script + ".json"), "w",
                   encoding="utf-8") as f:
             json.dump(ir, f, ensure_ascii=False, indent=1)
@@ -612,7 +692,8 @@ def main() -> None:
               encoding="utf-8") as f:
         json.dump(index, f)
     print(f"ir: {len(index)} jp-spine scripts; display text: "
-          f"{tot_man} manuscript + {tot_fb} en-token fallback")
+          f"{tot_man} manuscript + {tot_fb} en-token fallback "
+          f"({tot_rej} tail fragments rejoined)")
 
 
 if __name__ == "__main__":

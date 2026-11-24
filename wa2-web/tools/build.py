@@ -1,6 +1,13 @@
 """One-command build: user-supplied en.pak files (v2.1.0) -> playable web data.
 
-    python3 build.py MAIN_EN_PAK [SPECIAL_EN_PAK] [OUT_DIR=../build]
+    python3 build.py MAIN_EN_PAK [SPECIAL_EN_PAK] [OUT_DIR=../build] [--game GAMEDIR]
+                     [--mao MAO_SCRIPT_DATA] [--alt ID=MAIN_PAK[,SPECIAL_PAK]]...
+
+`--alt` (repeatable, needs --game) builds an extra translation into
+`data/translations/<ID>/` (scripts + flow; display text = the alt en.pak's
+own tokens with .bnr-anchored tail fragments rejoined — no manuscript) and
+publishes `data/translations/index.json` (metadata from
+`data/translations.json`).
 
 Steps:
   1. extract .txt scenario sources (KCAP) from each en.pak
@@ -75,6 +82,163 @@ def parse_corpus(txt_dirs: list[str], ir_dir: str) -> list[str]:
     return index
 
 
+def parse_alt(spec: str) -> tuple[str, list[str]]:
+    """--alt ID=PAK[,SPECIAL_PAK] -> (id, [paks])."""
+    if "=" not in spec:
+        raise SystemExit(f"ERROR: --alt wants ID=PAK[,SPECIAL_PAK], got {spec!r}")
+    alt_id, pak_list = spec.split("=", 1)
+    paks = [p for p in pak_list.split(",") if p.strip()]
+    if not alt_id.replace("-", "").replace("_", "").isalnum() or not alt_id:
+        raise SystemExit(f"ERROR: --alt id must be alphanumeric: {alt_id!r}")
+    if not paks or not all(p.endswith(".pak") for p in paks):
+        raise SystemExit(f"ERROR: --alt {alt_id}: paks must end in .pak: {pak_list!r}")
+    return alt_id, paks
+
+
+def alt_flow_from_base(base_flow_path: str, alt_ir_dir: str, out_path: str) -> int:
+    """Per-translation flow: base (hand-annotated) routing with the alt
+    translation's option text and engine goto association.
+
+    The node set, dates, effects and notes are translation facts; the
+    option wording and the option->goto assignment come from the alt IR
+    (its association is the cfg-verified one; see the 2019/3016 notes).
+    Choice nodes whose alt event is not a choice (bonus-content parse
+    drift) keep the base values and are counted.
+    """
+    with open(base_flow_path, encoding="utf-8") as f:
+        flow = json.load(f)
+    ir_cache: dict[str, list[dict]] = {}
+    swaps = kept = 0
+    for node in flow.get("nodes", []):
+        sid = node.get("engine", {}).get("script")
+        if not sid:
+            continue
+        if sid not in ir_cache:
+            p = os.path.join(alt_ir_dir, sid + ".json")
+            ir_cache[sid] = json.load(open(p, encoding="utf-8")).get(
+                "events", []) if os.path.exists(p) else []
+        events = ir_cache[sid]
+        idx = node["engine"].get("event", -1)
+        e = events[idx] if 0 <= idx < len(events) else None
+        if not e or e.get("t") != "choice" or not isinstance(e.get("options"), list):
+            kept += 1
+            continue
+        alt_opts = {o.get("n"): o for o in e["options"] if isinstance(o, dict)}
+        for o in node.get("options", []):
+            ao = alt_opts.get(o.get("n"))
+            if not ao:
+                continue
+            if ao.get("text") is not None:
+                o["text"] = ao["text"]
+            o["goto"] = ao.get("goto")
+            swaps += 1
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(flow, f, ensure_ascii=False, indent=1)
+    return swaps
+
+
+def write_translations_index(data_dir: str, alt_ids: list[str]) -> None:
+    """Published catalog: the default (always present) + alts with data."""
+    cat_path = os.path.join(HERE, "..", "data", "translations.json")
+    catalog = []
+    if os.path.exists(cat_path):
+        with open(cat_path, encoding="utf-8") as f:
+            catalog = json.load(f).get("translations", [])
+    entries: list[dict] = []
+    default = next((e for e in catalog if e.get("default")), None)
+    if default:
+        entries.append({k: v for k, v in default.items() if k != "default"})
+    for alt_id in alt_ids:
+        if any(e.get("id") == alt_id for e in entries):
+            continue
+        meta = next((e for e in catalog if e.get("id") == alt_id), None)
+        entries.append(meta if meta else {"id": alt_id, "name": alt_id})
+    with open(os.path.join(data_dir, "translations", "index.json"), "w",
+              encoding="utf-8") as f:
+        json.dump({"version": 1, "translations": entries}, f,
+                  ensure_ascii=False, indent=1)
+
+
+def filter_voicemap(vm: dict, alt_ir_dir: str, base_ir_dir: str,
+                    scripts: list[str]) -> tuple[dict, list[str]]:
+    """Shared voice map minus scripts whose alt event stream misaligns.
+
+    Keys are (script, event) anchors; an alt script with a different event
+    count parses to its own stream, so its voice keys would play the wrong
+    clip. Drop them (a wrong sound is worse than a missing one).
+    """
+    def n_events(path: str) -> int | None:
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return len(json.load(f).get("events", []))
+
+    dropped: list[str] = []
+    for sid in scripts:
+        na = n_events(os.path.join(alt_ir_dir, sid + ".json"))
+        nb = n_events(os.path.join(base_ir_dir, sid + ".json"))
+        if na is not None and nb is not None and na != nb:
+            dropped.append(sid)
+    out = {"version": vm.get("version", 2),
+           "map": {k: v for k, v in vm.get("map", {}).items()
+                   if k not in dropped},
+           "chars": {k: v for k, v in vm.get("chars", {}).items()
+                     if k not in dropped}}
+    return out, dropped
+
+
+def build_translation(alt_id: str, alt_paks: list[str], jp_pak: str,
+                      out: str, data_dir: str) -> None:
+    """Alt translation: IR (no manuscript; tail fragments rejoined) +
+    scripts + per-translation flow, gated against the shared terminals."""
+    print(f"[alt:{alt_id}] scenario IR (no manuscript; fragments rejoined)")
+    alt_ir = os.path.join(out, f"ir_{alt_id}")
+    os.makedirs(alt_ir, exist_ok=True)
+    subprocess.run([sys.executable, os.path.join(HERE, "build_ir.py"),
+                    jp_pak, *alt_paks, "", alt_ir], check=True)
+    scripts_out = os.path.join(data_dir, "translations", alt_id, "scripts")
+    os.makedirs(scripts_out, exist_ok=True)
+    with open(os.path.join(alt_ir, "index.json"), encoding="utf-8") as f:
+        index = json.load(f)
+    for s in index:
+        shutil.copy(os.path.join(alt_ir, s + ".json"),
+                    os.path.join(scripts_out, s + ".json"))
+    with open(os.path.join(scripts_out, "index.json"), "w") as f:
+        json.dump(index, f)
+    print(f"[alt:{alt_id}] flow (base routing, alt option text)")
+    swaps = alt_flow_from_base(os.path.join(data_dir, "flow.json"), alt_ir,
+                               os.path.join(data_dir, "translations", alt_id,
+                                            "flow.json"))
+    print(f"[alt:{alt_id}] {swaps} option texts swapped")
+    # Voice map is keyed by (script, event) anchors — shared, EXCEPT scripts
+    # whose alt event stream does not align with the base build (bonus
+    # content parses to its own stream). Drop those keys so a scene plays
+    # silent instead of the wrong clip (docs/QA.md rule: a wrong sound is
+    # worse than a missing one).
+    base_vm_path = os.path.join(data_dir, "voicemap.json")
+    base_ir = os.path.join(out, "ir")
+    if os.path.exists(base_vm_path):
+        with open(base_vm_path, encoding="utf-8") as f:
+            vm = json.load(f)
+        vm, dropped = filter_voicemap(vm, alt_ir, base_ir, index)
+        if dropped:
+            print(f"[alt:{alt_id}] voicemap: {len(dropped)} misaligned "
+                  f"scripts silenced: {', '.join(dropped[:6])}"
+                  f"{'…' if len(dropped) > 6 else ''}")
+        with open(os.path.join(data_dir, "translations", alt_id,
+                               "voicemap.json"), "w", encoding="utf-8") as f:
+            json.dump(vm, f, ensure_ascii=False, separators=(",", ":"))
+    print(f"[alt:{alt_id}] flow parity gate")
+    r = subprocess.run([sys.executable, os.path.join(HERE, "check_flow.py"),
+                        alt_ir,
+                        os.path.join(data_dir, "translations", alt_id,
+                                     "flow.json"),
+                        data_dir])
+    if r.returncode != 0:
+        print(f"BUILD FAILED: alt:{alt_id} flow parity gate")
+        sys.exit(1)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -82,6 +246,7 @@ def main() -> None:
     paks = []
     game = None
     mao = None
+    alts: list[tuple[str, list[str]]] = []
     out = os.path.join(HERE, "..", "build")
     args = sys.argv[1:]
     i = 0
@@ -91,6 +256,9 @@ def main() -> None:
             i += 2
         elif args[i] == "--mao":
             mao = args[i + 1]
+            i += 2
+        elif args[i] == "--alt":
+            alts.append(parse_alt(args[i + 1]))
             i += 2
         elif args[i].endswith(".pak"):
             paks.append(args[i])
@@ -221,6 +389,13 @@ def main() -> None:
     if r.returncode != 0:
         print("BUILD FAILED: flow parity gate")
         sys.exit(1)
+    if alts:
+        if not (spak and os.path.isfile(spak)):
+            print("WARNING: --alt needs --game (JP spine); skipping alt translations")
+        else:
+            for alt_id, alt_paks in alts:
+                build_translation(alt_id, alt_paks, spak, out, data_dir)
+            write_translations_index(data_dir, [a for a, _ in alts])
     print("build ok")
 
 

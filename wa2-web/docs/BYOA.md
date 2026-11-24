@@ -26,6 +26,46 @@ Pin check (recommended): clone `https://github.com/MAO-TLs/white-album-2`
 and run `tools/fetch_mao.py IR_MAIN IR_SPECIAL --clone <dir>` — asserts
 script-data is exactly v2.1.0 and audits wording (expect ~0.98).
 
+### A second translation (optional): TodokanaiTL as an in-game choice
+
+The build can carry an extra translation next to the default and offer
+it at New game (and in Settings). The TodokanaiTL human patch uses the
+same en.pak overlay mechanism (two-stream exe; all 206 `.bnr` streams
+byte-identical to MAO's — verified in docs/QA.md, 2026-11-24), so it is
+drop-in:
+
+```sh
+# TodokanaiTL patch v1.0.3.0: the installer embeds en.pak.
+# Its "Special Contents full patch (v1.0)" zip has the SC en.pak.
+python3 tools/build.py /tmp/wa2/main/en.pak /tmp/wa2/special/en.pak \
+  --game /path/to/game \
+  --mao /path/to/mao-white-album-2/public/script-data \
+  --alt todokanai=/tmp/wa2/td/en.pak,/tmp/wa2/td-sc/en.pak
+cp -r build/data/* web/public/data/
+```
+
+What `--alt` does: builds the alt scenario IR on the JP spine with the
+alt en.pak's own tokens (no manuscript exists for that patch, so display
+text comes from the tokens with `.bnr`-anchored tail fragments rejoined —
+2,761 folds corpus-wide), derives a per-translation `flow.json` (base
+routing and walkthrough annotations, alt option wording, cfg-verified
+goto association), gates it with `check_flow.py`, and publishes
+`data/translations/index.json` (metadata from `data/translations.json`).
+Scripts whose alt event stream does not align with the default build
+(bonus content) keep their own stream but are dropped from the shared
+voice map, so a scene plays silent instead of playing the wrong clip.
+
+Layout: `data/translations/<id>/{scripts/, flow.json}` (+ optional
+`speakers.json`); everything else stays shared because anchors are
+translation-independent (voice map, native-save positions, cfg, bgm).
+Requires `--game` (the JP `script.pak` spine). Two known limits for a
+no-manuscript alt: bonus-content scripts whose layout differs from the
+default build parse to their own (still playable) event streams — the
+shared voice map is kept off those scripts rather than playing the wrong
+clip — and the printed-flow `annotate` notes stay worded for the default
+translation. Delete `data/translations/` from the pack to ship a
+single-translation build again (the chooser hides itself).
+
 ## 2. Images / audio / movies (optional, text-first without)
 
 **Disc images (ISO):** the tools never run or install the game — they

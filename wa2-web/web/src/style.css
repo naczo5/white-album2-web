@@ -3113,3 +3113,111 @@ ruby rt {
     display: none;
   }
 }
+
+/* ---- Translation chooser (new game) + settings entry ---- */
+
+.tx-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 1.2rem;
+  background: rgb(4 8 14 / 0.78);
+  backdrop-filter: blur(3px);
+}
+
+.tx-panel {
+  width: min(780px, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 1.6rem 1.8rem 1.4rem;
+  background: linear-gradient(180deg, rgb(12 20 30 / 0.98), rgb(8 13 21 / 0.98));
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 0.55);
+}
+
+.tx-panel h2 {
+  margin: 0 0 0.3rem;
+}
+
+.tx-hint {
+  margin: 0 0 1.1rem;
+  color: var(--ink-dim);
+  font-size: 0.82rem;
+}
+
+.tx-cards {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.tx-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--cyan);
+  background: rgb(255 255 255 / 0.02);
+}
+
+.tx-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.tx-card-head b {
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+}
+
+.tx-label {
+  color: var(--gold);
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.tx-desc {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+
+.tx-repo {
+  color: var(--cyan);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.tx-pick {
+  align-self: flex-start;
+  margin-top: 0.35rem;
+}
+
+.tx-cancel {
+  margin-top: 1rem;
+}
+
+.setting-note {
+  margin: 0.2rem 0 0.6rem;
+  color: var(--ink-dim);
+  font-size: 0.74rem;
+  line-height: 1.6;
+}
+
+.setting-note a {
+  color: var(--cyan);
+}
+
+.setting select {
+  width: 100%;
+  padding: 0.42rem 0.6rem;
+  background: rgb(10 17 26 / 0.9);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}

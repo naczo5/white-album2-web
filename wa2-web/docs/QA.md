@@ -1176,6 +1176,141 @@ stills; 0 console errors. Post-review spot check: dev mode shows art on
 all 155 locked cards, the autosave row reads `Closing · 12/1`, and
 enlarging the viewport in frost mode loads 17 → 28 frames with no scroll.
 
+### 2026-11-24 — TodokanaiTL en.pak v1.0.3.0 compatibility verification (read-only)
+
+Question: can the TodokanaiTL human English patch
+(github.com/TodokanaiTL/WA2EnglishPatch) serve as a second translation?
+Method: static only. Extracted the public release installer
+(`WA2_patch.exe`, Inno Setup) with `innoextract` into /tmp (embedded
+`en.pak` 76,332,756 B + patched `WA2.exe`; `mv000.pak` not needed), then
+ran the repo pipeline against it — `extract_kcap.py`, manual token
+diffs vs the JP spine and MAO `en_main.pak`, `build_ir.py` trial IR
+(no `--mao`), `check_flow.py` against the MAO-built flow.json.
+
+Compatible (same toolchain lineage, every gate that matters for parse):
+
+  - KCAP container identical; 411 files extract natively (205 txt +
+    206 bnr). Script id set identical to MAO main pak: 205 = 205,
+    including the same `NNNN_N` toolchain splits.
+  - cp932 clean; `~`-comma in 172 scripts (MAO 171); same `\n`/quote
+    delivery conventions; 0 scripts where EN shrinks below the JP spine.
+  - Token overlay: 168 scripts carry tail fragments in BOTH paks;
+    fragment totals identical (2,667 = 2,667; biggest 2411: 58).
+  - **All 206 `.bnr` byte-identical to MAO's** — every voice anchor,
+    BGM pairing, presentation record and `(3,X)` line anchor is exactly
+    the MAO set already proven in PARSING.md.
+  - Trial IR: 189 scripts, event-for-event identical to the MAO IR
+    (0 kind mismatches), 71,372 EN display lines, 32 choice events in
+    both. Sampled text reads as clean human prose (1002: "W-Wait a
+    second! You're leaving too!?").
+
+Deltas (expected, tooling-level — none are format blockers):
+
+  - No special-contents scripts (the 40 4xxx–6xxx ids MAO ships in
+    `en_special.pak`); 6 `terminals.json` ids would be unknown for a
+    Todokanai-only build (4009, 5209, 5303, 5401, 6005, 6104).
+  - 2,667 lines display truncated (engine token budget) without a
+    manuscript source — the MAO manuscript pass masks this today.
+    Fix = rejoin tail fragments via the existing `(3,X)`/`(4,131)`-style
+    bnr anchors (bnr_anchor.py), which are byte-preserved here.
+  - 2 of 32 choice events (2019-1484, 3016-822) show the option/goto
+    association shifted by one option vs the MAO IR (td attaches the
+    goto to the earlier option). Walkthrough-authored flow.json
+    disagrees with the td attachment at both; needs a look if this
+    becomes a real route-parity question.
+  - 3904 options 386/387 stay JP — the MAO raw en.pak is byte-wise JP
+    there too (698 = 698 tokens); MAO's web build covers them only
+    through its manuscript. Same limitation for Todokanai.
+  - `check_flow.py` vs the MAO flow.json: 71 parity errors, all
+    wording-level (64 option-text drifts where hand labels pin MAO
+    paraphrases vs Todokanai wording, + the 6 unknown scripts + the 2
+    goto shifts above). The annotation join keys on option-text
+    prefixes, so a Todokanai build needs per-translation keys (the two
+    IRs are event-identical, so (script, event, option-n) keys work).
+
+Verdict: the patch is drop-in for the parser/pipeline; a Todokanai web
+build is possible today with truncated long lines, and player-quality
+after the tail-fragment rejoin + per-translation flow annotations.
+Support tooling (rejoin, per-translation build/labels) deliberately NOT
+implemented in this pass (user decision pending). Working files in
+/tmp/wa2-todokanai/ (game content, not committed).
+
+Follow-up (same day): movie subtitles + full data availability. The
+Storj bucket the installer downloads from is dead (401 share-wide,
+verified across ids and with browser UA), which is why the site moved
+to Google Drive mirrors. Both mirrors are live and were fetched for
+verification (patch team's own links; kept in /home/debian/.cache/
+wa2-todokanai/, game content, not committed):
+
+  - `White Album 2 Final Full Patch 1.0.3.0.rar` (1,958,778,803 B):
+    contains the same `en.pak` + `WA2.exe` as the release installer,
+    `d3d9.dll`, `todokanai/font.png`, **`todokanai/subtitles`**
+    (audio-only sub data: 41 blocks / 282 timed cues triggered across
+    23 script ids + global SE triggers; the documented `[file] [track]
+    [end file] [end line]` + `[start ms] [len ms] text^` format, ASCII
+    bar one UTF-8 `'` typo), every subbed movie pak (mv000-mv240 +
+    mv010-mv090 IC) as re-encodes (size ratios 0.7-1.3x vs originals =
+    burned-in subs), and the two novel PDFs.
+  - `White Album 2 Special Contents full patch (v1.0).zip` (498,281,298 B):
+    a separate SC `en.pak` + `WA2_Special_en.exe` with the SAME 49
+    script ids as MAO's en_special.pak (token counts identical
+    script-for-script). In-engine EN for the 4xxx cast/omake and 6xxx
+    scripts (20 of 49, corpus-verified ASCII/`~`/`\n` conventions,
+    e.g. 6001 "Miyoko","Yes~ they should be arriving at the gate
+    soon."); the 5xxx digital novels + 7xxx stay JP by design (they
+    ship as TXT/PDF side files + `credits0.pak`; novels also included
+    as PDFs). This closes most of the special-contents gap a Todokanai
+    web build would have had.
+
+Implications for the port: movie subs keep coming from MAO's `.ass`
+sidecars (Todokanai's subbed paks are pre-burned; no .vtt extractable).
+The audio-only 282-cue file is mechanically convertible to BYOA
+`captions.json`-style cues (ms offsets are absolute within the
+triggered clip; `[end file][end line]` maps to IR anchors), pending a
+mapping from their audio-file/track ids to the port's clip keys. The
+SC `en.pak` is drop-in for the same pipeline (49 = 49 ids, same token
+profile) if a Todokanai pack ever wants the in-engine extras.
+
+### 2026-11-24 — second translation shipped as an in-game choice
+
+Implemented after the compatibility pass above (user request): the
+TodokanaiTL patch is a selectable translation, asked at New game and
+changeable in Settings.
+
+Build (`tools/build.py --alt ID=PAK[,PAK]`, `tools/build_ir.py`):
+- `build_ir.py` rejoin: without a manuscript the EN tail fragments are
+  folded back into their lines via the `.bnr` `(3,src),(4,131),(3,frag),
+  (4,131)` statements (`rejoin_tail_fragments` / pure `fold_fragments`;
+  chain-safe reverse fold; shape-preserving "" at folded positions).
+  Corpus: 2,761 fragments folded across main + SC paks, 2 unlabeled.
+- `--alt` builds `ir_<id>` on the JP spine, stages
+  `data/translations/<id>/scripts/` (221 scripts), derives the
+  per-translation flow (base hand annotations + alt option text/goto;
+  goto association taken from the alt IR — the cfg-verified direction at
+  2019-1484/3016-822; 65 option texts swapped) and gates it with
+  `check_flow.py` (pass). The shared voice map ships minus the 19
+  scripts whose alt event stream does not align (bonus content) —
+  silent beats wrong. `data/translations/index.json` metadata from the
+  committed `data/translations.json`.
+
+Web (`ui/data.ts`, `main.ts`, `style.css`):
+- `loadTranslations` reads the catalog (absent = single-translation
+  pack, chooser hidden). `loadGameData(base, translation)` prefers
+  `data/translations/<id>/` (scripts+flow+speakers+voicemap) and falls
+  back to the default with `translationFallback` (title warning). Bundle
+  packs overlay the loose alt files on top of `bundle.json`; alt users
+  do not download the default script set.
+- New game → chooser cards (name, kind, description, repo link to both
+  projects). The pick persists in `wa2web.translation`; switching
+  reloads (alternate scripts load at boot) and a `sessionStorage`
+  handoff resumes New game. Settings gains the same selector. Runs
+  record `save.translation` (metadata; anchors are translation-independent).
+
+Gates: pytest 221 passed + 10 skipped (12 new synthetic tests + optional
+corpus rejoin test, env-gated); `tsc --noEmit` clean; vitest 331 passed +
+9 skipped (10 new loader/chooser tests), 335 + 5 with `WA2_DATA_DIR`;
+dual build (`--alt todokanai=…`) green including both flow gates.
+
 ### Parity status by subsystem (measured, not asserted)
 
 Do not read the gate table as "1:1 with the engine". Gates prove the

@@ -23,6 +23,9 @@ is not part of any pack.*
   timed captions (`data/captions.json`).
 - **Interactive flowchart & walkthrough guide:** full scenario branch graph
   with calendar dates, spoiler-safe hidden-unrevealed mode, and route guide.
+- **Two English translations, one setting:** the MAO-TLs machine
+  translation (default) or the TodokanaiTL human translation, chosen at New
+  game and switchable in Settings. Saves stay compatible across both.
 - **Native PC save & system import:** import `save_XX.sav` / `save_Q.sav`
   files (with exact `ScriptPos` anchoring when `data/native-pos.json` is
   present) and `Sys.sav` global progress (read lines, endings, CG/music/movie/ero

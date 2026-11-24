@@ -454,4 +454,7 @@ export interface SaveData {
   bgm?: { track: number } | null;
   /** Present on saves imported from the PC build. */
   native?: NativeSaveMeta;
+  /** Alternative translation this run was started with (pack id). Display
+   * metadata only: event anchors are translation-independent. */
+  translation?: string;
 }

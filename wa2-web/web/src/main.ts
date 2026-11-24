@@ -2,7 +2,15 @@ import { loadManifest, voiceUrl, voiceUrlByKey } from "./engine/assets";
 import { Router, chapterOfScript, isExtraScenario } from "./engine/router";
 import { newSave, readAutosave, readProfile, readQuicksave, setSaveNamespace, storageKey, writeAutosave, writeProfile, writeQuicksave } from "./engine/save";
 import type { SaveData, SysProfile } from "./engine/types";
-import { loadGameData, loadNativePos, resolvePackBase, type GameData } from "./ui/data";
+import {
+  activeTranslationId,
+  loadGameData,
+  loadNativePos,
+  loadTranslations,
+  resolvePackBase,
+  type GameData,
+  type TranslationInfo,
+} from "./ui/data";
 import { renderFlowchart, sceneLabel } from "./ui/flowchart";
 import { playPreviewAudio, previewPlayingUrl, renderExtras, stopPreviewAudio } from "./ui/gallery";
 import { renderGuide, type GuideData } from "./ui/guide";
@@ -29,6 +37,9 @@ interface Settings {
   /** Flowchart: unreached scene cards show a black plate instead of a
    * blurred still (default on = no visual spoilers at all). */
   hideUnrevealed: boolean;
+  /** Active alternative translation id ("" = pack default). Persisted;
+   * changing it reloads the page so the alternate script set loads. */
+  translation: string;
 }
 
 function safeStorageGet(key: string): string | null {
@@ -63,6 +74,8 @@ const settings: Settings = {
   // Default ON: unreached cards are black. Only an explicit "0" opts into
   // the frosted (blurred) still.
   hideUnrevealed: safeStorageGet("wa2web.hideUnrevealed") !== "0",
+  // Active alternative translation; resolved against the pack at boot.
+  translation: safeStorageGet("wa2web.translation") ?? "",
 };
 
 let skipState = { active: false };
@@ -82,6 +95,7 @@ function persistSettings(): void {
     localStorage.setItem("wa2web.dev", settings.dev ? "1" : "0");
     localStorage.setItem("wa2web.unlockAllChoices", settings.unlockAllChoices ? "1" : "0");
     localStorage.setItem("wa2web.hideUnrevealed", settings.hideUnrevealed ? "1" : "0");
+    localStorage.setItem("wa2web.translation", settings.translation);
   } catch {
     /* settings are a convenience; the app still runs with in-memory values */
   }
@@ -109,6 +123,11 @@ let packFromQuery = false;
  * diagnosable. */
 let assetsMissing = false;
 let backTo: Screen = "title";
+/** Translation catalog published by the pack ("" entries: only the default).
+ * Populated at boot; drives the new-game choice and the settings entry. */
+let translations: TranslationInfo[] = [];
+/** Active translation id ("" = pack default / demo). */
+let activeTranslation = "";
 
 /** Scene replay is a detached preview: the reader still autosaves BGM and
  * advances, but the player's real autosave must survive the detour. Keep the
@@ -263,7 +282,15 @@ async function boot(): Promise<void> {
   const resolved = resolvePackBase(import.meta.env.VITE_PACK_URL, location.search, location.href);
   packBase = resolved.packBase;
   packFromQuery = resolved.fromQuery;
-  data = await loadGameData(packBase);
+  translations = await loadTranslations(packBase);
+  activeTranslation = activeTranslationId(translations, settings.translation);
+  if (settings.translation !== activeTranslation) {
+    // Stored id not offered by this pack (or a single-translation pack):
+    // fall back to the pack default and keep the store honest.
+    settings.translation = activeTranslation;
+    persistSettings();
+  }
+  data = await loadGameData(packBase, activeTranslation);
   setBootStatus("Loading interface assets…");
   setSaveNamespace(dataNamespace());
   // Global progress (Sys.sav import) is stored under the same namespace and
@@ -349,6 +376,17 @@ async function boot(): Promise<void> {
   }
   save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
   pushLog(router, save);
+  // A translation picked on the new-game chooser persists the choice and
+  // reloads the page (the alternate script set loads at boot). Pick the
+  // intended New game back up here, once the chosen translation is live.
+  try {
+    if (sessionStorage.getItem("wa2web.pendingNew") === "1") {
+      sessionStorage.removeItem("wa2web.pendingNew");
+      if (!data.demo) beginNewGame();
+    }
+  } catch {
+    /* storage blocked: fall through to the title screen */
+  }
   render();
   // Enter/click = advance (first press completes typing instantly, next
   // advances); hold Ctrl = skip (released on keyup / focus loss). Key
@@ -410,9 +448,76 @@ async function boot(): Promise<void> {
   setReaderLive(screen === "read");
 }
 
+/** Start a fresh run. Shared by the title menu, the translation chooser and
+ * the post-reload handoff (a translation change reloads the page). */
+function beginNewGame(): void {
+  endReplayAutosaveGuard(false);
+  save = freshStart();
+  save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
+  writeAutosave(localStorage, save);
+  resetPaintState();
+  resetAudioCursors();
+  backTo = "title";
+  go("read");
+}
+
+/** First-choice overlay: which translation to read this playthrough with.
+ * Only shown when the pack publishes more than one. The pick persists; when
+ * it is not the active one the page reloads so the alternate scripts load,
+ * and boot re-enters `beginNewGame` via the pendingNew flag. */
+function showTranslationChoice(): void {
+  const esc = escapeAttr;
+  const cards = translations.map((t) => `
+      <div class="tx-card" data-tx="${esc(t.id)}">
+        <div class="tx-card-head">
+          <b>${escapeHtml(t.name ?? t.id)}</b>
+          ${t.label ? `<span class="tx-label">${escapeHtml(t.label)}</span>` : ""}
+        </div>
+        ${t.desc ? `<p class="tx-desc">${escapeHtml(t.desc)}</p>` : ""}
+        ${t.repo ? `<a class="tx-repo" href="${esc(t.repo)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.repo.replace(/^https?:\/\/(www\.)?/, ""))}</a>` : ""}
+        <button class="tx-pick" data-pick="${esc(t.id)}">${t.id === activeTranslation ? "Read with this translation" : "Switch to this translation"}</button>
+      </div>`).join("");
+  const box = document.createElement("div");
+  box.className = "tx-modal";
+  box.innerHTML = `
+    <div class="tx-panel" role="dialog" aria-modal="true" aria-labelledby="tx-title">
+      <h2 id="tx-title">Choose a translation</h2>
+      <p class="tx-hint">Pick the script text for this playthrough. Your saves stay compatible; you can change it later in Settings.</p>
+      <div class="tx-cards">${cards}</div>
+      <button class="back tx-cancel">← Cancel</button>
+    </div>`;
+  app.appendChild(box);
+  box.querySelector(".tx-cancel")?.addEventListener("click", () => box.remove());
+  box.addEventListener("click", (e) => {
+    if (e.target === box) box.remove();
+  });
+  box.querySelectorAll<HTMLButtonElement>("[data-pick]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.pick ?? "";
+      settings.translation = id;
+      persistSettings();
+      if (id === activeTranslation) {
+        box.remove();
+        beginNewGame();
+        return;
+      }
+      try {
+        sessionStorage.setItem("wa2web.pendingNew", "1");
+      } catch {
+        /* storage blocked: the reload still applies the pick */
+      }
+      location.reload();
+    });
+  });
+}
+
 function freshStart(): SaveData {
   const first = data.scenarios[0]?.script ?? "demo-1";
   const s = newSave("Haruki", { script: first, event: 0 });
+  // Record the translation this run was started with (display metadata;
+  // playback itself follows the active setting, and event anchors are
+  // translation-independent).
+  if (activeTranslation) s.translation = activeTranslation;
   s.visited.push(first);
   s.position = router.seek(s.position, s.flags, s.picks);
   // Global progress survives a new game: the flowchart still shows what the
@@ -624,6 +729,7 @@ function render(): void {
           ${data.demo && packBase ? `<div class="warn-box">The external pack at <code>${escapeHtml(packBase)}</code> did not load. Check the URL, CORS headers, and that it contains <code>data/</code> and <code>assets/manifest.json</code>. The asset-free demo is shown instead.</div>` : ""}
           ${data.demo && !packBase ? `<div class="warn-box">Engine demo. No game data or assets are loaded; the scene and prose are original placeholder content. To play the story, build with your own legally-owned copy (docs/BYOA.md).</div>` : ""}
           ${!data.demo && packBase && assetsMissing ? `<div class="warn-box">The external data pack loaded, but <code>assets/manifest.json</code> did not. Check that the pack root also contains <code>assets/</code> and that CORS allows the JSON request. Visuals and audio will stay unavailable until it loads.</div>` : ""}
+          ${!data.demo && data.translationFallback ? `<div class="warn-box">The selected translation's data did not load, so the pack default is shown. Rebuild the pack with <code>--alt</code> or pick another translation in Settings.</div>` : ""}
           ${!data.demo && data.incomplete.length > 0 ? `<div class="warn-box">Data incomplete: ${data.incomplete.length} scripts failed to load, usually a stale cache. Hard-refresh with Ctrl+Shift+R. Missing: <code>${escapeHtml(data.incomplete.slice(0, 5).join(", "))}</code></div>` : ""}
           <nav class="menu" aria-label="Main menu">
             <button data-m="read" class="primary">${primary}<span class="mi-sub">${primarySub}</span></button>
@@ -646,15 +752,13 @@ function render(): void {
       b.addEventListener("click", () => {
         const m = (b as HTMLElement).dataset.m!;
         if (m === "new") {
+          if (translations.length > 1 && !data.demo) {
+            // The playthrough's first choice: which translation to read.
+            showTranslationChoice();
+            return;
+          }
           if (confirm("Start a new game from the beginning? The autosave resets; existing slots, quick save, and imported saves are kept.")) {
-            endReplayAutosaveGuard(false);
-            save = freshStart();
-            save.position = skipLatches(router, save.position, save.flags, recordRunEnding);
-            writeAutosave(localStorage, save);
-            resetPaintState();
-            resetAudioCursors();
-            backTo = "title";
-            go("read");
+            beginNewGame();
           }
           return;
         }
@@ -889,8 +993,19 @@ function render(): void {
   }
   if (screen === "settings") {
     app.innerHTML = `<div class="screen">
-      ${screenHead("Settings", "Reading pace, audio levels, and what the flowchart may reveal.")}
+      ${screenHead("Settings", "Translation, reading pace, audio levels, and what the flowchart may reveal.")}
       <div class="settings">
+        ${translations.length > 1 ? `
+        <section class="settings-group">
+          <h3>Translation</h3>
+          <label class="setting">
+            <span class="setting-label">Script translation<small>The English text in the reader, flowchart and guide. Saves stay compatible; switching reloads the page.</small></span>
+            <select id="txsel">
+              ${translations.map((t) => `<option value="${escapeAttr(t.id)}" ${t.id === activeTranslation ? "selected" : ""}>${escapeHtml((t.name ?? t.id) + (t.label ? " — " + t.label : ""))}</option>`).join("")}
+            </select>
+          </label>
+          ${(() => { const cur = translations.find((t) => t.id === activeTranslation); return cur?.repo ? `<p class="setting-note">${escapeHtml(cur.desc ?? "")} <a href="${escapeAttr(cur.repo)}" target="_blank" rel="noopener noreferrer">Source repository</a></p>` : cur?.desc ? `<p class="setting-note">${escapeHtml(cur.desc)}</p>` : ""; })()}
+        </section>` : ""}
         <section class="settings-group">
           <h3>Reading</h3>
           <label class="setting">
@@ -953,6 +1068,15 @@ function render(): void {
       </div>
       <button class="back" id="back">← Back</button>
     </div>`;
+    const txsel = app.querySelector("#txsel") as HTMLSelectElement | null;
+    if (txsel) {
+      txsel.onchange = () => {
+        settings.translation = txsel.value;
+        persistSettings();
+        // The alternate script set is fetched at boot; a reload applies it.
+        location.reload();
+      };
+    }
     const sp = app.querySelector("#sp") as HTMLInputElement;
     sp.onchange = () => {
       settings.spoiler = sp.checked;
