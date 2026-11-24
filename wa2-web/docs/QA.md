@@ -1288,9 +1288,10 @@ Build (`tools/build.py --alt ID=PAK[,PAK]`, `tools/build_ir.py`):
   per-translation flow (base hand annotations + alt option text/goto;
   goto association taken from the alt IR — the cfg-verified direction at
   2019-1484/3016-822; 65 option texts swapped) and gates it with
-  `check_flow.py` (pass). The shared voice map ships minus the 19
-  scripts whose alt event stream does not align (bonus content) —
-  silent beats wrong. `data/translations/index.json` metadata from the
+  `check_flow.py` (pass). The shared voice map ships minus misaligned
+  scripts — after the fold both builds parse event-identically, so none
+  are dropped; the filtered copy is written only when a drop occurs
+  (silent beats wrong). `data/translations/index.json` metadata from the
   committed `data/translations.json`.
 
 Web (`ui/data.ts`, `main.ts`, `style.css`):

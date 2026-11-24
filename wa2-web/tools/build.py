@@ -225,9 +225,11 @@ def build_translation(alt_id: str, alt_paks: list[str], jp_pak: str,
             print(f"[alt:{alt_id}] voicemap: {len(dropped)} misaligned "
                   f"scripts silenced: {', '.join(dropped[:6])}"
                   f"{'…' if len(dropped) > 6 else ''}")
-        with open(os.path.join(data_dir, "translations", alt_id,
-                               "voicemap.json"), "w", encoding="utf-8") as f:
-            json.dump(vm, f, ensure_ascii=False, separators=(",", ":"))
+            # Only ship the filtered copy when something was dropped; the
+            # loader falls back to the shared map otherwise (no 1 MB dup).
+            with open(os.path.join(data_dir, "translations", alt_id,
+                                   "voicemap.json"), "w", encoding="utf-8") as f:
+                json.dump(vm, f, ensure_ascii=False, separators=(",", ":"))
     print(f"[alt:{alt_id}] flow parity gate")
     r = subprocess.run([sys.executable, os.path.join(HERE, "check_flow.py"),
                         alt_ir,

@@ -53,7 +53,10 @@ goto association), gates it with `check_flow.py`, and publishes
 `data/translations/index.json` (metadata from `data/translations.json`).
 Scripts whose alt event stream does not align with the default build
 (bonus content) keep their own stream but are dropped from the shared
-voice map, so a scene plays silent instead of playing the wrong clip.
+voice map, so a scene plays silent instead of playing the wrong clip;
+the filtered copy is only written when something drops (the loader
+falls back to the shared map otherwise). Size: `data/translations/`
+adds ~14 MB raw for a second translation (~4 MB gzipped).
 
 Layout: `data/translations/<id>/{scripts/, flow.json}` (+ optional
 `speakers.json`); everything else stays shared because anchors are

@@ -5,8 +5,8 @@
       "id": "mao",
       "default": true,
       "name": "MAO-TLs",
-      "label": "Machine translation",
-      "desc": "Full-game English by MAO-TLs (v2.1.0): a machine-translation (MTL/AI-assisted) pass. Covers every scenario including the special contents.",
+      "label": "AI translation",
+      "desc": "Full-game English by MAO-TLs (v2.1.0), an AI-assisted pass. Covers every scenario including the special contents.",
       "repo": "https://github.com/MAO-TLs/white-album-2"
     },
     {
