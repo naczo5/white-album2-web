@@ -15,7 +15,7 @@ Source: 205 + 49 Shift-JIS token streams from KCAP `en.pak` archives
 | `mvNN` | movie cue |
 | `<img>.tga` + `bak`/`grp` | image cue + layer (also `.ani` + layer) |
 | `<name>.AMP` | fullscreen color-grade filter (exact LUT in data/luts.json) |
-| `N. text` runs | choice UI (option 1 = fall through) |
+| `N. text` runs | choice UI (trailing bare ids map to options 1..K; options past the last id fall through) |
 | bare `NNNN[_NNN]` | preload HINT (flow-neutral; proof: `2016` at 2015:1, else the documented 2015:212 choice would be unreachable) |
 | `CATCH`/`CATCH2`/`CATCH3` | voice/sync marker (flow-neutral; 174/176 mid-file) |
 | `<F16"...">`, `[F16...]` | whisper-size line/span (italic, MAO v2.1.0 reader parity) |

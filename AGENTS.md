@@ -57,8 +57,8 @@ at build time.
 ## Commands
 
 ```sh
-cd wa2-web && python3 -m pytest tests/ -q   # 144 passed + 9 skipped
-cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 225 passed + 4 skipped
+cd wa2-web && python3 -m pytest tests/ -q   # 209 passed + 9 skipped
+cd wa2-web/web && npx tsc --noEmit && npx vitest run   # 321 passed + 9 skipped
 python3 tools/build.py MAIN_EN_PAK [SPECIAL_EN_PAK] OUT [--game GAMEDIR] [--mao MAO_SCRIPT_DATA]
 ```
 

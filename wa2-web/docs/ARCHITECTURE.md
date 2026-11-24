@@ -76,8 +76,12 @@ MAO-TLs repo (clone or Pages, pinned EXPECTED = 2.1.0)
   continuation (proven by 2004's decline-then-accept reversal scene);
   only the 12/24 router (bare gotos) and work/stay (CATCH-adjacent,
   `play: 2301`) move files.
-- 43 suffixed variant files (`2031_2`, `2312_2`, …) are flag/replay
-  gated alternates; v1 plays base files, variants listed for QA.
+- 43 suffixed files are NOT alternates. The IC `1008_020..1012_030` group
+  are split scene chunks the bytecode chains unconditionally with `SLoad`
+  (`router.CHUNK_CHAINS`), with replay/first-run extras gated *inside* them
+  by `if GFlag[0]/[1]`; `3014_2`, `3014_3` and `1012_030_2` are `SCall`
+  subroutines. `cfg.json` drives the order whenever it is present; the
+  cfg-less fallback chains the chunks in the same order.
 - Voice wiring: VOICE.PAK filenames are XOR-0xFF `{script}_{NNN}_{take}.OGG`
   where NNN is the .bnr voice index from `(4,138)` records (per
   scene-family namespace, split across main/ic paks); tools/build_voice.py

@@ -106,7 +106,10 @@ def test_sys_slots_ending_map_is_complete_and_known():
         open(os.path.join(DATA, "endings.json"), encoding="utf-8"))["endings"]}
     mapped = set(t["endingSlots"].values())
     assert mapped <= ids, f"unknown ending ids: {sorted(mapped - ids)}"
-    assert len(t["endingSlots"]) == 11
+    assert len(t["endingSlots"]) == 12  # 11 story endings + extra-fugutaiten
+    # Extra Episode clear: 4009.bnr ends SetGameFlag(15, 1); slot 15 has no
+    # GFLAG.dat record, so it is the one mapped slot proven by the bnr alone.
+    assert t["endingSlots"]["15"] == "extra-fugutaiten"
     assert set(t["endingSlots"]) == set(t["endingSlotsConfidence"])
     assert set(t["endingSlotsConfidence"].values()) == {"high"}
     assert t["endingSlots"]["0"] == "ic-end"
@@ -290,6 +293,9 @@ def test_parse_gflag_slots_matches_committed_ending_map():
     slots = {r["slot"] for r in rows}
     t = load_slots()
     for slot in t["endingSlots"]:
+        if slot == "15":  # extra-fugutaiten: bnr SetGameFlag only, no record
+            assert 15 not in slots
+            continue
         assert int(slot) in slots
     assert rows[0]["slot"] == 0
     assert rows[-1]["slot"] == 900

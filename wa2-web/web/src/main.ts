@@ -1,5 +1,5 @@
 import { loadManifest, voiceUrl, voiceUrlByKey } from "./engine/assets";
-import { Router, chapterOfScript } from "./engine/router";
+import { Router, chapterOfScript, isExtraScenario } from "./engine/router";
 import { newSave, readAutosave, readProfile, readQuicksave, setSaveNamespace, storageKey, writeAutosave, writeProfile, writeQuicksave } from "./engine/save";
 import type { SaveData, SysProfile } from "./engine/types";
 import { loadGameData, loadNativePos, resolvePackBase, type GameData } from "./ui/data";
@@ -795,8 +795,7 @@ function render(): void {
       <button class="back" data-back>← Back</button>
     </div>`;
     const list = app.querySelector("#spec-list") as HTMLElement;
-    const specs = data.scenarios.map((s) => s.script).filter((id) =>
-      /^(4|5[24]|6|7)/.test(id) && !/^(500[0-4]|510[0-4])$/.test(id)).sort();
+    const specs = data.scenarios.map((s) => s.script).filter(isExtraScenario).sort();
     for (const id of specs) {
       const li = document.createElement("li");
       const b = document.createElement("button");

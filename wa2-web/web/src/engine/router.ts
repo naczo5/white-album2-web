@@ -12,15 +12,19 @@
 //      * otherwise play continues at the next event (shared continuation).
 //  - `jump` events (bare preload hints, CATCH* voice/sync markers) NEVER
 //    move flow. The single choice-adjacent case (2019 work/stay opt2 ->
-//    2301) resolves in pick() via flow.json `play`; cross-line transitions
-//    (1013 -> 2001, 2033 -> 3001) resolve at end-of-script via terminals.
+//    2301) resolves in pick() via flow.json `goto`/`play`; cross-line
+//    transitions (1013 -> 2001, 2033 -> 3001, 3023 -> 3201/3101) resolve at
+//    end-of-script via terminals (conditional `branches` when the bytecode
+//    gates the hop).
 //  - End of script -> terminals (end/chain) or spine next (numeric order,
-//    variant-aware) or END.
+//    split chunks chained by CHUNK_CHAINS) or END. cfg.json is authoritative
+//    whenever the pack ships it; the spine is the BYOA fallback.
 
 import {
   type CfgChoiceOptionState,
   type CfgExecOptions,
   choiceOptionsAt,
+  getGameFlag,
   pickCfg,
   seekCfg,
   stepCfg,
@@ -34,6 +38,7 @@ import type {
   Position,
   Scenario,
   ScenarioEvent,
+  TerminalRecord,
   TerminalsData,
 } from "./types";
 
@@ -41,52 +46,96 @@ export interface Spine {
   order: string[];
   next: Record<string, string | null>;
   chapterOf: Record<string, string>;
-  variants: Record<string, string[]>;
 }
+
+/** Sequential continuation chunks: split scene files, NOT alternates.
+ *
+ * `cfg.json` proves the engine ends each of these with an unconditional
+ * `SLoad` to the next id (`1008`: `... -> SLoad 1008_020`, `1008_020`:
+ * `... -> SLoad 1008_030`, `1012_030` -> `1013`), so the cfg-less fallback
+ * must step through them in order. Files that are `SCall` targets instead of
+ * spine steps (`3014_2`, `3014_3`, `1012_030_2`) are deliberately absent.
+ *
+ * Replay/first-run extras are gated INSIDE those files by `if GFlag[1]/[0]`
+ * branches (e.g. `1008_020` plays `0..33` only on a replay); the fallback
+ * plays every event of a chunk because it has no cfg to skip with. */
+export const CHUNK_CHAINS: readonly (readonly string[])[] = [
+  ["1008", "1008_020", "1008_030", "1008_040", "1008_050"],
+  ["1009", "1009_020", "1009_030"],
+  ["1010", "1010_020", "1010_030", "1010_040", "1010_050", "1010_060", "1010_070"],
+  ["1011", "1011_020", "1011_030"],
+  ["1012", "1012_020", "1012_030"],
+];
 
 export function buildSpine(scripts: string[]): Spine {
   const order = [...scripts].sort();
   const next: Record<string, string | null> = {};
   const chapterOf: Record<string, string> = {};
-  const variants: Record<string, string[]> = {};
   for (const s of order) chapterOf[s] = chapterOfScript(s);
-  // Base files link to the next BASE file in the same chapter; suffixed
-  // variants (1008_020, 2031_2) are alternates resolved by selectVariant().
+  // Base files link to the next BASE file in the same chapter.
   const bases = order.filter((s) => !s.includes("_"));
   for (let i = 0; i < bases.length; i++) {
     const cur = bases[i];
     const nxt = bases[i + 1] ?? null;
     next[cur] = nxt && chapterOfScript(nxt) === chapterOfScript(cur) ? nxt : null;
   }
-  for (const s of order) {
-    if (s.includes("_")) {
-      const base = s.split("_")[0];
-      (variants[base] ??= []).push(s);
-      next[s] = next[base] ?? null;
-    }
+  // Chapter split files chain in numeric order; the last chunk inherits the
+  // base's "next chapter file" link (1008_050 -> 1009). Only files present in
+  // this pack participate, so a partial BYOA pack cannot self-link.
+  const known = new Set(order);
+  const chained = new Set(CHUNK_CHAINS.flat());
+  for (const chain of CHUNK_CHAINS) {
+    const present = chain.filter((id) => known.has(id));
+    if (present.length < 2) continue;
+    const baseNext = next[present[0]!] ?? null;
+    for (let i = 0; i < present.length - 1; i++) next[present[i]!] = present[i + 1]!;
+    next[present[present.length - 1]!] = baseNext;
   }
-  return { order, next, chapterOf, variants };
+  for (const s of chained) {
+    if (known.has(s) && !(s in next)) next[s] = null;
+  }
+  // Other suffixed files (SCall-only subroutine entries) follow their base.
+  for (const s of order) {
+    if (!s.includes("_") || s in next || chained.has(s)) continue;
+    next[s] = next[s.split("_")[0]!] ?? null;
+  }
+  return { order, next, chapterOf };
 }
 
 export function chapterOfScript(script: string): string {
   const base = Number(script.split("_")[0]);
   if (base >= 1001 && base <= 1013) return "intro";
   if (base >= 2001 && base <= 2517) return "closing";
-  if ((base >= 3001 && base <= 3999) || (base >= 5000 && base <= 5104)) return "coda";
-  return "special";
+  if (base >= 3001 && base <= 3999) return "coda";
+  return "special"; // 4000+ incl. the 5000-5104 digital novels (not the Coda)
 }
 
-/** Variant selection: which physical file plays for a base id + flags. */
-export function selectVariant(
-  base: string,
-  available: Set<string>,
-  _flags: Flags,
-): string {
-  // v1: variant rules (replay extras, H-scene alternates) await play-test
-  // mapping (docs/QA.md); until then the base file always plays so the
-  // spine never breaks. The seam is live: spineAdvance consults it.
-  void available;
-  return base;
+/** Special-contents scenarios offered as individual "Extra scenario" entries.
+ * 5000-5004 / 5100-5104 are the Kazusa / Setsuna novels (PDF links instead). */
+export function isExtraScenario(id: string): boolean {
+  return /^(4|5[234]|6|7)/.test(id) && !/^(500[0-4]|510[0-4])$/.test(id);
+}
+
+/** Resolve a chain terminal to its destination file.
+ *
+ * Conditional terminals mirror the bytecode's `if` on the way out of a file
+ * (`3023`: `G[27]==1 -> 3201`, else `3101`). Branches are evaluated in
+ * order; the first match wins; `to` is the unconditional fallback. */
+export function resolveTerminalChain(
+  term: TerminalRecord,
+  flags: Flags,
+  profileGameFlags?: Record<string, number>,
+): string | null {
+  if (term.action !== "chain") return null;
+  for (const br of term.branches ?? []) {
+    let value = 0;
+    if (typeof br.g === "number") value = flags.g?.[br.g] ?? 0;
+    else if (typeof br.gflag === "number") {
+      value = getGameFlag(br.gflag, flags.gflags, profileGameFlags);
+    }
+    if (value === br.eq) return br.to;
+  }
+  return term.to ?? null;
 }
 
 export interface StepResult {
@@ -232,22 +281,11 @@ export class Router {
       if (term.action === "end") {
         return { pos, ended: true, ending: term.ending ?? undefined };
       }
-      if (this.scripts.has(term.to)) {
-        return { pos: { script: term.to, event: 0 }, ended: false };
+      const to = resolveTerminalChain(term, flags, this.profileGameFlags);
+      if (to && this.scripts.has(to)) {
+        return { pos: { script: to, event: 0 }, ended: false };
       }
       return { pos, ended: true };
-    }
-    // Variant seam: base files with alternates consult selectVariant().
-    const base = pos.script.includes("_") ? pos.script.split("_")[0] : pos.script;
-    if (!pos.script.includes("_") && this.spine.variants[base]?.length) {
-      const picked = selectVariant(
-        base,
-        new Set([base, ...this.spine.variants[base]]),
-        flags,
-      );
-      if (picked !== base && this.scripts.has(picked)) {
-        return { pos: { script: picked, event: 0 }, ended: false };
-      }
     }
     const nxt = this.spine.next[pos.script];
     if (!nxt) return { pos, ended: true };
@@ -274,7 +312,9 @@ export class Router {
     }
     const flowOpt = node?.options.find((o) => o.n === n);
     applyEffects(flags, node, n);
-    const dest = flowOpt?.play ?? opt.goto;
+    // flow.json is curated against the bytecode (option n -> L[0]==n); a flow
+    // option's goto (null = fall through) wins over the parsed event's goto.
+    const dest = flowOpt ? (flowOpt.play ?? flowOpt.goto) : opt.goto;
     if (dest?.startsWith("END:")) {
       const ending = dest.slice(4);
       return {

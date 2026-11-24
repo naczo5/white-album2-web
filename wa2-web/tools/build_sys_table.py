@@ -118,8 +118,12 @@ SCENE_SLOTS = [
     {"cg": 210800, "chapter": 2, "script": "3908", "flag": 322},
 ]
 
-# GFLAG.dat slot -> endings.json id. All 11 endings are verified 1:1 from
-# GFLAG.dat records + .bnr SetGameFlag calls (`high` confidence).
+# GFLAG.dat slot -> endings.json id. The 11 story endings are verified 1:1
+# from GFLAG.dat records + .bnr SetGameFlag calls (`high` confidence).
+# Slot 15 (extra-fugutaiten) is the one exception: GFLAG.dat has no record
+# for slots 12..15, but 4009.bnr ends with SetGameFlag(15, 1) + GoTitle
+# (build/data/cfg.json 4009 tail; terminals.json 4009), and region C is the
+# raw Get/SetGameFlag array, so the slot is the Extra Episode clear marker.
 ENDING_SLOTS = {
     0: ("ic-end", "high"),
     20: ("cc-normal1", "high"),
@@ -132,7 +136,11 @@ ENDING_SLOTS = {
     31: ("coda-kazusa-true", "high"),
     32: ("coda-cheating", "high"),
     33: ("coda-setsuna-true", "high"),
+    15: ("extra-fugutaiten", "high"),
 }
+
+# Ending slots proven by a .bnr SetGameFlag call instead of a GFLAG.dat record.
+NON_GFLAG_ENDING_SLOTS = {15}
 
 OPEN_ITEMS = [
     "Region A slot 0 is untrustworthy: the script->slot resolver at "
@@ -321,6 +329,8 @@ def check_gflag(pak_path: str) -> tuple[list[str], list[int]]:
     used = [e["slot"] for e in entries if e["slot"]]
     aliases = sorted({s for s in used if used.count(s) > 1})
     for slot in sorted(ENDING_SLOTS):
+        if slot in NON_GFLAG_ENDING_SLOTS:
+            continue
         if slot not in by_slot:
             problems.append(f"ending slot {slot} missing from GFLAG.dat")
     return problems, aliases

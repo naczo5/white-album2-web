@@ -66,11 +66,29 @@ export interface LinksData {
   links: LinkSite[];
 }
 
-export type TerminalAction = { action: "end"; ending: string | null } | { action: "chain"; to: string };
+/** One conditional hop of a fallback chain terminal, evaluated in order.
+ * `g` is the engine global-var index (the cfg VM's `G[idx]`), `gflag` a
+ * `GetGameFlag` slot; the first branch whose value equals `eq` wins. */
+export interface TerminalBranch {
+  g?: number;
+  gflag?: number;
+  eq: number;
+  to: string;
+}
+
+export type TerminalAction =
+  | { action: "end"; ending: string | null }
+  | { action: "chain"; to?: string | null; branches?: TerminalBranch[] };
+
+export type TerminalRecord = TerminalAction & {
+  guess?: string;
+  note?: string;
+  status?: string;
+};
 
 export interface TerminalsData {
   version: number;
-  terminals: Record<string, TerminalAction & { guess?: string; note?: string; status?: string }>;
+  terminals: Record<string, TerminalRecord>;
 }
 
 export interface FlowData {

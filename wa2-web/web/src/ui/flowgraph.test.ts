@@ -50,6 +50,18 @@ describe("buildChartGraph", () => {
     expect(g.depth["2001"]).toBe(3);
   });
 
+  it("conditional terminal branches become chain edges too", () => {
+    const t: TerminalsData["terminals"] = {
+      "1004": { action: "chain", to: "2001", branches: [{ g: 27, eq: 1, to: "2002" }] },
+    };
+    const g = buildChartGraph(
+      ["1002", "1003", "1004", "2001", "2002"],
+      spine, [link("1002", ["1003"]), link("1003", ["1004"])], t,
+    );
+    const outs = g.edges.filter((e) => e.from === "1004").map((e) => `${e.to}:${e.kind}`);
+    expect(outs.sort()).toEqual(["2001:chain", "2002:chain"]);
+  });
+
   it("cycles do not loop forever and cross-edges are drawn once", () => {
     const g = buildChartGraph(["1002", "1003"], buildSpine(["1002", "1003"]), [link("1002", ["1003"]), link("1003", ["1002"])], {});
     expect(g.edges).toHaveLength(2);

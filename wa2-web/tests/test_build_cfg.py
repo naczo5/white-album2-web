@@ -799,7 +799,11 @@ def test_corpus_vm_reaches_all_11_endings(corpus_env):
         ),
     ]
 
-    assert len(routes) == len(ending_slots) == 11
+    # 11 story endings; slot 15 (extra-fugutaiten) is the Extra Episode clear
+    # and is exercised by test_corpus_vm_special_scripts_reach_gotitle (4009).
+    story_slots = {k: v for k, v in ending_slots.items() if k != "15"}
+    assert ending_slots["15"] == "extra-fugutaiten"
+    assert len(routes) == len(story_slots) == 11
     for eid, start_s, gflags, picks, slot in routes:
         assert ending_slots[str(slot)] == eid
         vm = CfgVM(cfg, gflags=gflags, picks=picks)

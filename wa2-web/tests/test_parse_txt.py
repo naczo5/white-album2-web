@@ -44,7 +44,17 @@ def test_router_choice_bare_ids():
     toks = P.split_tokens(enc('1. A,2. B,3. C,2401,2501'))
     events, _ = P.parse_tokens(toks)
     ch = [e for e in events if e["t"] == "choice"][0]
-    assert [o["goto"] for o in ch["options"]] == [None, "2401", "2501"]
+    # ids map to options 1..K (bytecode: 2019 `L[0]==1 -> SLoad 2401`).
+    assert [o["goto"] for o in ch["options"]] == ["2401", "2501", None]
+
+
+def test_router_choice_bare_ids_fewer_than_options():
+    # 3016 shape: 2 options, 1 id -> option 1 jumps, option 2 falls through.
+    toks = P.split_tokens(enc('1. A,2. B,3901'))
+    events, warnings = P.parse_tokens(toks)
+    ch = [e for e in events if e["t"] == "choice"][0]
+    assert [o["goto"] for o in ch["options"]] == ["3901", None]
+    assert warnings == []
 
 
 def test_catch_does_not_swallow_narration():

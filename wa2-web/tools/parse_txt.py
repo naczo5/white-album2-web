@@ -22,7 +22,8 @@ Source format (verified on all 205 en.pak v1.3.6 scenario files):
                             names are consumed as its argument list. A bare
                             script id with no CATCH (e.g. '2401','2501' right
                             after an option run) is an option destination:
-                            option[i] (i>=1) -> ids[i-1], option 1 falls through.
+                            option[i] (i>=1) -> ids[i-1], i.e. ids map to
+                            options 1..K; trailing options fall through.
         '<F..>'             inline font/size markup, kept with the text token
 
 Output per script: dict with `events` list. Event shapes:
@@ -35,7 +36,9 @@ Output per script: dict with `events` list. Event shapes:
 
 `goto` resolution rule (documents engine behavior inferred from 2019.txt):
 a choice run immediately followed by bare script-id tokens assigns those
-ids to options 2..K+1 (option 1 = fall through). A CATCH/CATCH2/CATCH3
+ids to options 1..K in order (options past the last id fall through);
+engine bytecode (`cfg.json` 2019: `L[0]==1 -> SLoad 2401`, `L[0]==2 ->
+2501`; 3016: `L[0]==1 -> SLoad 3901`) proves this. A CATCH/CATCH2/CATCH3
 marker after a choice is preserved as its own `jump` event (branch targets
 resolved per docs/FLOW_GRAPH.md; CATCH semantics need play-test
 confirmation; only 2 of 176 CATCH sites sit at a file tail, so CATCH is
@@ -292,14 +295,14 @@ def parse_tokens(toks: list[str]) -> tuple[list[dict], list[str]]:
                 opts.append({"n": int(m.group(1).translate(_FW_DIGITS)),
                              "text": m.group(2), "goto": None})
                 i += 1
-            # lookahead: bare script ids = option destinations (opt1 falls through)
+            # lookahead: bare script ids = option destinations (ids -> options 1..K)
             ids: list[str] = []
             while i < n and classify_bare(toks[i]) == "script_id":
                 ids.append(toks[i])
                 i += 1
             for k, sid in enumerate(ids):
-                if k + 1 < len(opts):
-                    opts[k + 1]["goto"] = sid
+                if k < len(opts):
+                    opts[k]["goto"] = sid
                 else:
                     warnings.append(f"token {i}: excess jump target {sid}")
                     events.append({"t": "jump", "kind": "fallthrough",

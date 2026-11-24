@@ -225,14 +225,18 @@ export function buildChartGraph(
       }
     }
     for (const [sc, t] of Object.entries(terminals)) {
-      if (t.action === "chain") add(sc, t.to, "chain");
+      if (t.action !== "chain") continue;
+      if (t.to) add(sc, t.to, "chain");
+      for (const br of t.branches ?? []) add(sc, br.to, "chain");
     }
   } else {
     for (const l of links) {
       for (const t of l.targets) add(l.engine.script, t, "link");
     }
     for (const [sc, t] of Object.entries(terminals)) {
-      if (t.action === "chain") add(sc, t.to, "chain");
+      if (t.action !== "chain") continue;
+      if (t.to) add(sc, t.to, "chain");
+      for (const br of t.branches ?? []) add(sc, br.to, "chain");
     }
     for (const [sc, nxt] of Object.entries(spine.next)) {
       if (nxt) add(sc, nxt, "spine");
@@ -630,11 +634,17 @@ function showDetail(
     parts.push(`<div class="opt">Ending: ${escapeHtml(term.ending ?? "?")}</div>`);
   }
   if (term?.action === "chain" && (h.dev || seenScript || h.spoiler)) {
-    const toLabel = sceneLabel(term.to, h.flow, {
-      spoiler: h.spoiler, dev: h.dev, visited: visited.has(term.to),
-      bnr: h.bnr?.recs?.[term.to],
-    });
-    parts.push(`<div class="opt">Chains to <code>${escapeHtml(toLabel)}</code></div>`);
+    const targets = [...new Set([
+      ...(term.to ? [term.to] : []),
+      ...(term.branches ?? []).map((b) => b.to),
+    ])];
+    for (const to of targets) {
+      const toLabel = sceneLabel(to, h.flow, {
+        spoiler: h.spoiler, dev: h.dev, visited: visited.has(to),
+        bnr: h.bnr?.recs?.[to],
+      });
+      parts.push(`<div class="opt">Chains to <code>${escapeHtml(toLabel)}</code></div>`);
+    }
   }
   for (const n of nodes) {
     parts.push(`<div class="opt"><span class="date">${escapeHtml(displayDate(n.date, !!h.dev) ?? "")}</span>${

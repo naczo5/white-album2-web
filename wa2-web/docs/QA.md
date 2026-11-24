@@ -7,12 +7,12 @@ is proven, what is assumed, and exactly how to close each gap.
 
 | gate | command | current |
 |---|---|---|
-| unit + data (tools) | `pytest tests/` | 208 passed + 9 skipped |
-| web unit | `cd web && vitest run` | 302 passed + 9 BYOA-skipped |
-| browser smoke | `cd web && npm run smoke` | title → extras tabs → demo → advance → save → reload → load; no page errors |
+| unit + data (tools) | `pytest tests/` | 209 passed + 9 skipped |
+| web unit | `cd web && vitest run` | 321 passed + 9 BYOA-skipped |
+| browser smoke | `cd web && npm run smoke` | title → extras tabs → demo → advance → save → reload → load; no page errors (uses playwright-core's cached Chromium; set `WA2_CHROME` if that build is absent) |
 | real-data playthrough | `WA2_DATA_DIR=build/data vitest run playthrough` | all 11 endings + special scenarios + branch ranges (BYOA) |
 | types+build | `tsc --noEmit && npm run build` | clean (`tsc --noEmit` 0 errors) |
-| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 215 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
+| corpus (BYOA) | `WA2_EN_PAK=… pytest tests/` | 216 passed + 2 skipped (517 en.pak entries, zero JP leaks) |
 | save corpus (BYOA) | `WA2_NATIVE_SAVES=… WA2_SYS_SAVES=… WA2_DATA_DIR=… vitest run` | 311 passed + 0 skipped (native slots 11/11 + 29 `Global.vrb` vars, exact `ScriptPos` ranking, `Sys.sav` profile, `voicemap.chars`) |
 | CFG VM & bytecode | `pytest tests/test_build_cfg.py`; `vitest run cfg-vm playthrough` | 221 `.bnr` scripts compiled into `cfg.json`, zero overlapping `play` spans, `SCall`/`SetSelectMess` parity |
 | movie subtitles | `pytest tests/test_subtitles.py`; `vitest run vtt` | ASS→VTT conversion + cue/region parsing pinned (`test_subtitles.py`, `vtt.test.ts`) |
@@ -23,7 +23,7 @@ is proven, what is assumed, and exactly how to close each gap.
 | flag reference | `build_flags.py script.pak` | 29 vars + 62 gflags, 15/15 pick flags mapped |
 | links | `build_links.py IR links.json` | 206 sites: 199 HINT + 7 SWITCH |
 | full sim | `simulate.py … routers/first/special` | 32 choices covered, clean walk, 0 stalls (routers/first/special) |
-| MAO pin | `fetch_mao.py IR --clone …` | v2.1.0 pinned; 171 scripts / 49,086 lines, mean 0.914 with 5 JP-only stubs (pre-existing, see log — the old 0.988 row measured a different IR) |
+| MAO pin | `fetch_mao.py IR` (pages URL) | **audit, exits 1**: v2.1.0 matches; 171 scripts / 49,086 lines, mean 0.914, 5 JP-only stubs, 4 adaptations < 0.5 (`3015` 0.28, `2401` 0.37, `2511` 0.38, `2031` 0.45) — re-measured 2026-11-23 |
 | assets | `extract_assets.py --selftest` | KCAP+TGA+WAV round-trip |
 
 > **MAO note (2026-11-15):** the pin row is an audit, not a pass/fail
@@ -58,11 +58,14 @@ is proven, what is assumed, and exactly how to close each gap.
    ending/chapter/replay slots. What remains is numeric: pick→delta
    amounts and gate thresholds. Procedure: save-state diff per choice;
    record pick→flag deltas; update `annotate_flow.py`.
-2. **Variant entry rules** (43 files): base tails are branch-free and
-   variant heads carry `(4,137)` entry keys N (145-845; bases open [0]),
-   so selection is engine-side over GFLAG/replay state — the
-   `selectVariant()` seam is correctly placed. What remains is the N
-   semantics + flag sweep at each base end.
+2. **Variant entry rules — CLOSED (2026-11-23)**: the 43 suffixed files
+   are not alternates. `cfg.json` shows the IC `1008_020..1012_030` group is
+   chained by unconditional `SLoad` (split scene chunks, replay/first-run
+   extras gated inside them by `if GFlag 1` / `if GFlag 0`), and
+   `3014_2/_3` + `1012_030_2` are `SCall` subroutines. The cfg-less spine
+   chains the chunks (`router.CHUNK_CHAINS`); `selectVariant` was removed.
+   What the `(4,137)` entry keys N select at mid-file splice points is still
+   open research, but it does not gate file order.
 3. **Click granularity**: advances per scene vs PC (PARSING.md assumption).
 4. **2019-764 frame**: confirm work/stay belongs to the opt1 path and
    2501-path Koharu/Setsuna/Normal split is flag-only (no missing choice).
@@ -1207,3 +1210,131 @@ undocumented id, index the dispatch table at
 or record why it is a no-op. That addressing is settled, so this is
 mechanical work over the remaining handlers, not an open research
 problem.
+
+- 2026-11-23 (routing audit: reachability + branch correctness):
+  - **Static reachability is complete in the CFG build.** Taken as a graph
+    (`cfg.json` `sload`/`scall` edges + `terminals.json` chain edges) from the
+    story start `1001` and the menu entries `4000/5000/5100/5200/5300/5400/
+    6001/6101/7000-7300`, all **221/221** scripts are reachable, with zero
+    dangling jump targets. Every variable read by an `if` (`G[7..28]`,
+    `gflag 0/1/4/5`) is written somewhere, so no branch is dead by
+    construction. An exhaustive branch DFS over the shipped Router found no
+    stall, no softlock (every reachable choice keeps >=1 unlocked option),
+    no VM step-limit, and no `pick()` error. All 11 endings are reachable
+    under a policy (see `playthrough.test.ts`); sampling 4,000 random
+    policies reaches 186/221 scripts, the shortfall being exactly the
+    flag-gated CC/Coda routes that need deliberate picks.
+  - **Fix status (second pass, independent verification; each finding
+    reproduced against the code/data before changing anything).**
+  - **C1 confirmed + fixed: `router.ts` `pick()` ignored flow.json `goto`.**
+    The cfg-less fallback used `flowOpt?.play ?? opt.goto`, i.e. the IR
+    event's `goto`, never the curated `flow.json` one. With the old IR
+    (reproduced by shifting the IR gotos one option down over the real
+    bundle, `cfg: null`): `2019:1484` opt1 fell through (Chiaki line
+    unreachable), opt2 -> `2401`, opt3 -> `2501`; `3016:822` opt2 -> `3901`.
+    Now `pick()` uses `flowOpt ? (flowOpt.play ?? flowOpt.goto) : opt.goto`
+    (flow `goto: null` means fall through and is not overridden by the event).
+    `router.test.ts` gained three tests whose flow and event arrays disagree on
+    purpose (they fail before the fix: opt1/opt2/opt3 all misroute). Effects
+    and option locks are untouched. The flow.json `goto`s are the bytecode
+    truth (`cfg.json` 2019: `L[0]==1 -> SLoad 2401`, `==2 -> 2501`; 3016:
+    `L[0]==1 -> SLoad 3901`; `L` stores the 1-based pick).
+  - **C2 confirmed + fixed: `parse_txt.py` attached bare-id option gotos off
+    by one** (`opts[k + 1]`). Only 2 of the corpus's 33 choices carry bare ids
+    (`2019:1484`, `3016:822`) and both flow nodes already hold the right
+    values, so no other routing changes. Now `opts[k]` (ids -> options
+    1..K), docstring + `PARSING.md` updated, `test_parse_txt.py` and the
+    `test_corpus.py` pins (`[None,"2401","2501"]`, `options[1].goto == "3901"`)
+    moved to the bytecode-proven mapping (+1 new unit test for the 3016 shape).
+    `build/ir/{2019,3016}.json` were regenerated with `build_ir.py` from the
+    installed paks: the only differences vs the old IR are those two files'
+    `goto` fields, and `annotate_flow.py` output is byte-identical to
+    `data/flow.json`. `check_flow.py` stays green (and the IR `goto` now
+    equals the flow `goto`, so the VERIFIED_IN_GAME override exemption is no
+    longer exercised).
+  - **C3 confirmed + fixed locally: stale served copy.** `web/public/data/`
+    had no `cfg.json` (bundle had no `cfg` key; `data.ts` uses
+    `bundle.cfg ?? fetch data/cfg.json`, and the bundle wins over per-file
+    data, so the app ran the fallback router), an old `terminals.json`,
+    old `flow.json` gotos, no `sceneSlots`, and 36/221 differing scripts.
+    `build/data/` was also stale: its `cfg.json` predates the committed
+    `build_cfg.py` (36 scripts lack the same-script `call` ops that the
+    current tool emits), and its `sys-slots.json` predated `data/`. Rebuilt:
+    `data/{flow,endings,terminals,sprites,sys-slots}.json` and a fresh
+    `build_cfg.py` run -> `build/data`, scripts 2019/3016 from the new IR,
+    then `build/data/*` -> `web/public/data/` and
+    `pack_bundle.py --data web/public/data` (bundle now has `cfg` with 221
+    scripts, `sysSlots.sceneSlots` = 24, all 13 gate slots). Loaded through
+    `loadGameData` with a file-backed fetch stub: `cfg` non-null, 24 scene
+    slots, `4009 -> extra-fugutaiten`, `3024 -> coda-normal`. All of this is
+    gitignored output; nothing was staged.
+  - **C4 confirmed + fixed: no entry point for 5300-5303.** Nothing in
+    `cfg.json` loads `5300` (it only chains `5300 -> 5301 -> 5302 -> 5303`),
+    and the Special-contents filter was `/^(4|5[24]|6|7)/`. The predicate is
+    now `isExtraScenario` in `router.ts` (`5[234]`), pinned by a unit test.
+    Not changed: mid-chain scripts (`5201..`, `6002..`) are still listed
+    individually; that is the entry-vs-continuation question in item 18 and
+    reachability does not require changing it.
+  - **C5 confirmed + fixed: `chapterOfScript` labelled 5000-5104 "coda".**
+    Now `special` (only `3001-3999` is `coda`). Asset lookups only branch on
+    `chapter === "intro"`, so no URL changes; `buildSpine` now ends the chain
+    at `3999 -> 5000` instead of running the Coda into the novels. Unit test
+    added.
+  - **C6 confirmed (both paths) + fixed: `endingSlots` had no `15`.** The
+    cfg VM only records endings for mapped GFlags and `main.ts`'s profile
+    merge only maps mapped slots, so `4009` (tail `setGFlag 15 = 1; gotitle`,
+    also asserted by `test_corpus_vm_special_scripts_reach_gotitle`) was
+    only recorded through the terminal. Added `15 -> extra-fugutaiten`
+    (`high`) to `build_sys_table.py` `ENDING_SLOTS`, regenerated
+    `data/sys-slots.json` from the installed `WA2.exe` (diff: exactly the two
+    new keys; `test_committed_sys_slots_matches_exe` green) and to
+    `DEFAULT_ENDING_SLOTS`. Caveat: `GFLAG.dat` has no record for slots 12-15,
+    so unlike the 11 story endings this slot is proven by the `.bnr`
+    `SetGameFlag` alone (`NON_GFLAG_ENDING_SLOTS`; the `GFLAG.dat` membership
+    pin skips slot 15 explicitly). The sample `Sys.sav` files predate any
+    extra-episode clear (flags 10-15 are 0), so the import direction is
+    unverified against a real save. Pins that asserted 11 slots were updated
+    (`test_sys_sav.py`, `test_build_sys_table.py`, `test_build_cfg.py`:
+    11 story routes + slot 15); `playthrough.test.ts` still counts 11 story
+    endings.
+  - **C7 confirmed + fixed: `npm run smoke` could not read a coloured Vite
+    banner.** Reproduced with `FORCE_COLOR=1` (banner
+    `127.0.0.1:\x1b[1m<port>\x1b[22m/`); with no colour env (this
+    harness) the URL regex already matched, so the failure is
+    environment-dependent. `smoke.mjs` now strips SGR escapes before
+    matching. With `WA2_CHROME` pointing at the installed Chromium 1243 the
+    smoke run passes both with and without `FORCE_COLOR=1`; without
+    `WA2_CHROME` playwright-core 1.49.1 looks for Chromium 1148, which is
+    not installed here (environment, not a code issue).
+  - **Not changed in the second pass (both items superseded by the third
+    pass below):** `selectVariant` was a no-op stub and `terminals.json` 3023
+    chained only to 3101. The flowchart still renders only the story closure.
+  - **Gates after the fixes:** `pytest tests/` 209 passed + 9 skipped;
+    `WA2_EN_PAK=... WA2_DATA_DIR=build/data pytest tests/` 216 passed + 2
+    skipped; `tsc --noEmit` clean; `vitest run` 315 passed + 9 skipped at the second pass (later passes: 321; 319 +
+    5 with `WA2_DATA_DIR`); `WA2_DATA_DIR=../build/data vitest run
+    playthrough` 2 passed; `check_flow.py` (IR vs `data/flow.json` and
+    `build/data/flow.json`) parity holds, 32 nodes; `check_bnr_choices.py`
+    32/32; `simulate.py ... routers` clean walk, 32 choices covered.
+
+  - **Third pass (2026-11-23): open items 3 and 4 closed, MAO pin re-run.**
+    The `_0NN` "variants" were a wrong model: `cfg.json` shows each one ends
+    with an unconditional `SLoad` to the next, so `1008_020..1012_030` are
+    split scene chunks (replay/first-run extras gated *inside* them by
+    `if GFlag 1` / `if GFlag 0`), and `3014_2/_3` + `1012_030_2` are `SCall`
+    subroutines. `selectVariant` is gone; `router.CHUNK_CHAINS` chains the
+    chunks in the cfg-less spine, and a full fallback walk of `1001..1013`
+    now visits every chunk in order and lands on `2001` (test-pinned).
+    `terminals.json` gained `branches` (`{g|gflag, eq, to}`), `3023` now
+    mirrors the bytecode (`G[27]==1 -> 3201`, else `3101`) via
+    `router.resolveTerminalChain`; the flowchart draws every branch target and
+    `check_flow.py` validates branch conditions/targets. Verified on the real
+    data with `cfg: null` by setting `flags.g[27]` by hand: `G[27]=1 -> 3201`,
+    `0`/absent -> `3101`. Caveat: only the cfg VM writes `flags.g`, so in a
+    real cfg-less session `G[27]` is never set and the 3201 branch is dormant
+    (3101 always); it fires only for a save that carries `g`. cfg.json stays
+    authoritative.
+    Running `npx playwright install chromium` (playwright-core 1.49.1 wants
+    build 1148) makes `npm run smoke` pass with no env var. MAO pin re-run
+    against v2.1.0: same numbers as 2026-11-15 (mean 0.914, 5 stubs) and still
+    exits 1 on the four < 0.5 adaptations — content-level, not a code defect.

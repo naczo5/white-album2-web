@@ -239,7 +239,7 @@ def test_exe_extraction_counts_and_cross_checks():
     assert len(rows) == 168
     ids = [v for row in rows for v in row if v]
     assert len(ids) == 272
-    assert len(table["endingSlots"]) == 11
+    assert len(table["endingSlots"]) == 12
     assert len(table["sceneSlots"]) == 24
 
 

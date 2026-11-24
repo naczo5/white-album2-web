@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_ENDING_SLOTS,
   applyAssign,
   choiceOptionsAt,
   evalExpr,
@@ -273,5 +274,26 @@ describe("CFG VM execution, choices, SCall/ret and Router integration", () => {
     // Stepping forward after seekCfg lands in 2001_sub cleanly!
     const next = stepCfg(cfg, pos, flags, {});
     expect(next.pos).toEqual({ script: "2001_sub", event: 0 });
+  });
+});
+
+describe("extra episode ending slot", () => {
+  it("maps GFlag 15 (4009 tail SetGameFlag) to extra-fugutaiten by default", () => {
+    expect(DEFAULT_ENDING_SLOTS["15"]).toBe("extra-fugutaiten");
+    // Same op shape as the real 4009 tail: setGFlag 15 = 1, then gotitle.
+    const cfg: CfgData = {
+      version: 1,
+      vars: [],
+      scripts: {
+        "4009": { "0": [{ t: "play", from: 0, to: 1 }, { t: "setGFlag", id: 15, val: 1 }, { t: "gotitle" }] },
+      },
+    } as unknown as CfgData;
+    const r = new Router([scen("4009", [{ t: "narrate", text: "x" }])],
+      { version: 1, nodes: [] } as FlowData, undefined, { version: 1, terminals: {} }, { cfg });
+    const flags: Flags = { aff: {}, set: {} };
+    const pos = r.seek({ script: "4009", event: 0 }, flags);
+    const res = r.advance(pos, flags);
+    const end = res.ended ? res : r.advance(res.pos, flags);
+    expect([...(res.unlockedEndings ?? []), ...(end.unlockedEndings ?? [])]).toContain("extra-fugutaiten");
   });
 });

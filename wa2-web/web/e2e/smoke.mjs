@@ -63,6 +63,12 @@ function killTree(child) {
   }
 }
 
+/** Remove ANSI SGR escape sequences (colour/bold) from terminal output. */
+function stripAnsi(text) {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 /** Spawn `vite` from web/ on a free port and resolve once it prints its URL. */
 async function startVite() {
   const viteBin = path.join(WEB_ROOT, "node_modules", ".bin",
@@ -93,7 +99,9 @@ async function startVite() {
       const onData = (chunk) => {
         output += chunk.toString();
         viteLog = output;
-        const m = output.match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+\/?/);
+        // Vite colours its banner when FORCE_COLOR/CI is set, splitting the
+        // port with SGR escapes (`127.0.0.1:\x1b[1m5173\x1b[22m/`); strip them.
+        const m = stripAnsi(output).match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+\/?/);
         if (m) {
           clearTimeout(timer);
           resolve(m[0].replace(/\/?$/, "/"));

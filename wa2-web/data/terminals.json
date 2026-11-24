@@ -47,7 +47,14 @@
   "3023": {
    "action": "chain",
    "to": "3101",
-   "note": "Coda true branch: 3023.bnr loads 3201 when s_flag (G[27]==1) else 3101; never falls through to 3024",
+   "branches": [
+    {
+     "g": 27,
+     "eq": 1,
+     "to": "3201"
+    }
+   ],
+   "note": "Coda true branch: 3023.bnr loads 3201 when s_flag (G[27]==1) else 3101; never falls through to 3024. `branches` mirrors that conditional for the cfg-less fallback (cfg.json stays authoritative).",
    "status": "ENGINE_EVIDENCED"
   },
   "3024": {

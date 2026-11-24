@@ -2426,6 +2426,7 @@
  ],
  "endingSlots": {
   "0": "ic-end",
+  "15": "extra-fugutaiten",
   "20": "cc-normal1",
   "21": "cc-setsuna",
   "22": "cc-koharu",
@@ -2439,6 +2440,7 @@
  },
  "endingSlotsConfidence": {
   "0": "high",
+  "15": "high",
   "20": "high",
   "21": "high",
   "22": "high",

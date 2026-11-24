@@ -9,9 +9,10 @@ This supersedes linear `terminals.json` guesses whenever `cfg.json` is loaded.
 
 ## Spine (`.bnr` SLoad + conditional branches)
 
-Intro `1001→1013` (linear, 0 choices; IC replay variants `1008_020..1012_030`
-entered via `scall`/`sload` when `GFlag 0` or `GFlag 1` is set) —`1013` sets
-`GFlag 0` (`ic-end`) and `SLoad 2001`→
+Intro `1001→1013` (linear, 0 choices; `1008..1012` are split scene chunks
+whose `_020.._070` parts are chained by unconditional `SLoad`, with
+replay/first-run extras gated inside them by `if GFlag 1` / `if GFlag 0`)
+—`1013` sets `GFlag 0` (`ic-end`) and `SLoad 2001`→
 
 Closing common `2001→2019` → four file-lines:
 
@@ -40,6 +41,18 @@ Coda common `3001→3016`:
 Special Contents (`4000..4009`, `5000..5004`, `5100..5104`, `5200..5209`,
 `5300..5303`, `5400..5401`, `6001..6005`, `6101..6104`, `7000..7300`) =
 menu-gated extras, each ending at `GoTitle` (`terminals.json`).
+
+### Fallback spine (no `cfg.json`)
+
+`router.buildSpine` is only consulted by packs that ship no compiled CFG.
+It links base files in numeric order within a chapter, chains the split
+chunks above (`CHUNK_CHAINS`), and `terminals.json` decides end/chain hops.
+`3023` is the one conditional hop: `branches: [{g: 27, eq: 1, to: "3201"}]`
+mirrors the bytecode (`G[27]==1 -> 3201`, else `3101`), evaluated by
+`router.resolveTerminalChain`. Without cfg the fallback plays every event of
+a chunk, so replay-only extras are not skipped there.
+Only the cfg VM writes `flags.g`, so without cfg `G[27]` is never set and the
+`3201` branch stays dormant unless a loaded save carries `g`.
 
 ## Choice semantics
 

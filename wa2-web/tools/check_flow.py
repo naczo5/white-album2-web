@@ -59,9 +59,20 @@ def check_endings_and_terminals(data_dir: str, node_ids: set[str],
         for script, t in terms.items():
             if script not in scripts:
                 errors.append(f"terminals.json: unknown script {script}")
-            if t.get("action") == "chain" and t.get("to") not in scripts:
-                errors.append(f"terminals.json {script}: unknown chain "
-                              f"target {t.get('to')}")
+            if t.get("action") == "chain":
+                if t.get("to") is not None and t["to"] not in scripts:
+                    errors.append(f"terminals.json {script}: unknown chain "
+                                  f"target {t['to']}")
+                for i, br in enumerate(t.get("branches") or []):
+                    if br.get("to") not in scripts:
+                        errors.append(f"terminals.json {script}: branch {i} "
+                                      f"unknown target {br.get('to')}")
+                    if "g" not in br and "gflag" not in br:
+                        errors.append(f"terminals.json {script}: branch {i} "
+                                      f"has no g/gflag condition")
+                    if "eq" not in br:
+                        errors.append(f"terminals.json {script}: branch {i} "
+                                      f"has no eq value")
             if t.get("action") == "end" and t.get("ending"):
                 if ending_ids and t["ending"] not in ending_ids:
                     errors.append(f"terminals.json {script}: unknown ending "

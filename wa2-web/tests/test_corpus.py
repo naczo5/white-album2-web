@@ -87,7 +87,8 @@ def test_router_2019(corpus):
     assert len(choices) == 2
     _, router = choices[0]
     assert [o["n"] for o in router["options"]] == [1, 2, 3]
-    assert [o["goto"] for o in router["options"]] == [None, "2401", "2501"]
+    # ids map to options 1..K (cfg.json 2019: L[0]==1 -> SLoad 2401, ==2 -> 2501)
+    assert [o["goto"] for o in router["options"]] == ["2401", "2501", None]
     assert router["options"][0]["text"] == "Call Chiaki"
 
 
@@ -113,7 +114,8 @@ def test_coda_final_router_3016(corpus):
     ir = load(corpus, "3016")
     choices = [e for e in ir["events"] if e["t"] == "choice"]
     assert len(choices) == 2
-    assert choices[0]["options"][1]["goto"] == "3901"
+    # cfg.json 3016: L[0]==1 -> SLoad 3901; option 2 falls through to 3016-859
+    assert [o["goto"] for o in choices[0]["options"]] == ["3901", None]
 
 
 def test_whisper_style_present(corpus):

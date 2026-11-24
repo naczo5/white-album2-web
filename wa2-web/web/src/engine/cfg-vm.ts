@@ -50,6 +50,7 @@ export const STANDARD_GLOBAL_VARS: CfgVarDef[] = [
 
 export const DEFAULT_ENDING_SLOTS: Record<string, string> = {
   "0": "ic-end",
+  "15": "extra-fugutaiten",
   "20": "cc-normal1",
   "21": "cc-setsuna",
   "22": "cc-koharu",
