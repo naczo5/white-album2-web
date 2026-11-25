@@ -445,10 +445,10 @@ def build_script_ir(jp_txt: bytes | None, en_txt: bytes | None,
         events, w = parse_txt.parse_tokens(toks)
         warnings.extend(w)
         if mao_lines:
-            stats = _manuscript_pass(
+            stats.update(_manuscript_pass(
                 events, [e.get("text") or "" for e in events
                          if e.get("t") in ("say", "narrate")],
-                mao_lines, use_en=True, warnings=warnings)
+                mao_lines, use_en=True, warnings=warnings))
             stats["options"] = _choice_pass(events, mao_lines)
         else:
             stats["fallback"] = sum(1 for e in events
@@ -526,10 +526,10 @@ def _build_hybrid(jp_txt: bytes, en_txt: bytes,
                             "skipped")
             stats["fallback"] = len(hyb_disp)
         else:
-            stats = _manuscript_pass(
+            stats.update(_manuscript_pass(
                 events, [e.get("text") or "" for e in disp],
                 mao_lines, use_en=False, warnings=warnings,
-                mao_parts=mao_parts)
+                mao_parts=mao_parts))
         stats["options"] = _choice_pass(events, mao_lines, jp_events=jp_events)
     else:
         stats["fallback"] = sum(1 for e in events

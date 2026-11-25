@@ -7,7 +7,9 @@ import {
   loadGameData,
   loadNativePos,
   loadTranslations,
+  overlayTranslationId,
   resolvePackBase,
+  shouldAskTranslation,
   type GameData,
   type TranslationInfo,
 } from "./ui/data";
@@ -128,6 +130,17 @@ let backTo: Screen = "title";
 let translations: TranslationInfo[] = [];
 /** Active translation id ("" = pack default / demo). */
 let activeTranslation = "";
+/** Whether the player has already chosen a translation (ask once). */
+let translationPicked = safeStorageGet("wa2web.translationPicked") === "1";
+
+function markTranslationPicked(): void {
+  translationPicked = true;
+  try {
+    localStorage.setItem("wa2web.translationPicked", "1");
+  } catch {
+    /* settings are a convenience */
+  }
+}
 
 /** Scene replay is a detached preview: the reader still autosaves BGM and
  * advances, but the player's real autosave must survive the detour. Keep the
@@ -284,13 +297,17 @@ async function boot(): Promise<void> {
   packFromQuery = resolved.fromQuery;
   translations = await loadTranslations(packBase);
   activeTranslation = activeTranslationId(translations, settings.translation);
+  if (overlayTranslationId(translations, activeTranslation) !== "") {
+    markTranslationPicked();
+  }
   if (settings.translation !== activeTranslation) {
     // Stored id not offered by this pack (or a single-translation pack):
     // fall back to the pack default and keep the store honest.
     settings.translation = activeTranslation;
     persistSettings();
   }
-  data = await loadGameData(packBase, activeTranslation);
+  // The pack default is the base file set; only alternatives overlay.
+  data = await loadGameData(packBase, overlayTranslationId(translations, activeTranslation));
   setBootStatus("Loading interface assets…");
   setSaveNamespace(dataNamespace());
   // Global progress (Sys.sav import) is stored under the same namespace and
@@ -382,7 +399,7 @@ async function boot(): Promise<void> {
   try {
     if (sessionStorage.getItem("wa2web.pendingNew") === "1") {
       sessionStorage.removeItem("wa2web.pendingNew");
-      if (!data.demo) beginNewGame();
+      if (!data.demo && !data.translationFallback) beginNewGame();
     }
   } catch {
     /* storage blocked: fall through to the title screen */
@@ -395,6 +412,12 @@ async function boot(): Promise<void> {
   // starts/stops the reader's 120 ms advance loop WITHOUT re-rendering
   // (a re-render restarted the typewriter mid-line = the flicker bug).
   window.addEventListener("keydown", (e) => {
+    const txModal = document.querySelector(".tx-modal");
+    if (e.key === "Escape" && txModal) {
+      e.preventDefault();
+      txModal.remove();
+      return;
+    }
     // Esc closes any overlay back to where it was opened.
     if (e.key === "Escape" && screen !== "title" && screen !== "read") {
       e.preventDefault();
@@ -465,7 +488,7 @@ function beginNewGame(): void {
  * Only shown when the pack publishes more than one. The pick persists; when
  * it is not the active one the page reloads so the alternate scripts load,
  * and boot re-enters `beginNewGame` via the pendingNew flag. */
-function showTranslationChoice(): void {
+function showTranslationChoice(confirmReset = true): void {
   const esc = escapeAttr;
   const cards = translations.map((t) => `
       <div class="tx-card" data-tx="${esc(t.id)}">
@@ -494,6 +517,8 @@ function showTranslationChoice(): void {
   box.querySelectorAll<HTMLButtonElement>("[data-pick]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.dataset.pick ?? "";
+      if (confirmReset && !confirm("Start a new game from the beginning? The autosave resets; existing slots, quick save, and imported saves are kept.")) return;
+      markTranslationPicked();
       settings.translation = id;
       persistSettings();
       if (id === activeTranslation) {
@@ -751,13 +776,17 @@ function render(): void {
     app.querySelectorAll("[data-m]").forEach((b) =>
       b.addEventListener("click", () => {
         const m = (b as HTMLElement).dataset.m!;
+        if (m === "read" && !hasContinue && shouldAskTranslation(translations, data.demo, translationPicked)) {
+          // Ask once before the first playthrough starts.
+          showTranslationChoice(false);
+          return;
+        }
         if (m === "new") {
-          if (translations.length > 1 && !data.demo) {
-            // The playthrough's first choice: which translation to read.
-            showTranslationChoice();
+          if (shouldAskTranslation(translations, data.demo, translationPicked)) {
+            showTranslationChoice(hasContinue);
             return;
           }
-          if (confirm("Start a new game from the beginning? The autosave resets; existing slots, quick save, and imported saves are kept.")) {
+          if (!hasContinue || confirm("Start a new game from the beginning? The autosave resets; existing slots, quick save, and imported saves are kept.")) {
             beginNewGame();
           }
           return;
@@ -1071,6 +1100,7 @@ function render(): void {
     const txsel = app.querySelector("#txsel") as HTMLSelectElement | null;
     if (txsel) {
       txsel.onchange = () => {
+        markTranslationPicked();
         settings.translation = txsel.value;
         persistSettings();
         // The alternate script set is fetched at boot; a reload applies it.

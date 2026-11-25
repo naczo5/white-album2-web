@@ -64,6 +64,20 @@ class TestRejoinGuards:
         out, folded, _ = IR.rejoin_tail_fragments(toks, b"", [])
         assert out is toks and folded == 0
 
+    def test_manuscript_pass_preserves_rejoined_stat(self):
+        import struct
+        bnr = b"\x00" * 28 + struct.pack("<10I", 3, 0, 4, 131, 3, 1, 4, 131, 6, 30)
+        mao = [{"japanese": "日本語", "english": "Manuscript line."}]
+        ir, stats = IR.build_script_ir("日本語".encode("cp932"), b"Manu,script line.", mao, en_bnr=bnr)
+        assert stats["rejoined"] == 1
+        assert stats["manuscript"] == 1
+        assert ir["events"][0]["text"] == "Manuscript line."
+
+        ir_en, stats_en = IR.build_script_ir(None, b"Manu,script line.", mao, en_bnr=bnr)
+        assert stats_en["rejoined"] == 1
+        assert stats_en["manuscript"] == 1
+        assert ir_en["events"][0]["text"] == "Manuscript line."
+
 
 class TestParseAlt:
     def test_parses_id_and_paks(self):

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { activeTranslationId, loadGameData, loadTranslations } from "./data";
+import { activeTranslationId, loadGameData, loadTranslations, overlayTranslationId, shouldAskTranslation } from "./data";
 
 const SCENARIO = (script: string, text: string) => ({
   script,
@@ -93,7 +93,52 @@ describe("loadTranslations", () => {
   });
 });
 
+describe("overlayTranslationId", () => {
+  const list = CATALOG.translations;
+  it("maps the pack default to no overlay and keeps alternatives", () => {
+    expect(overlayTranslationId(list, "mao")).toBe("");
+    expect(overlayTranslationId(list, "todokanai")).toBe("todokanai");
+    expect(overlayTranslationId([], "")).toBe("");
+  });
+  it("loading the default through it never raises the fallback warning", async () => {
+    const calls = mockDualPack();
+    const data = await loadGameData("https://pack.example/dualdef", overlayTranslationId(list, "mao"));
+    expect(data.translationFallback).toBe(false);
+    expect(data.scenarios[0]?.events[0]).toMatchObject({ text: "base text" });
+    expect(calls.some((u) => u.includes("/translations/mao/"))).toBe(false);
+  });
+});
+
+describe("shouldAskTranslation", () => {
+  const list = CATALOG.translations;
+  it("asks once for multi-translation packs and stops once picked", () => {
+    expect(shouldAskTranslation(list, false, false)).toBe(true);
+    expect(shouldAskTranslation(list, false, true)).toBe(false);
+    expect(shouldAskTranslation(list, true, false)).toBe(false);
+    expect(shouldAskTranslation([list[0]!], false, false)).toBe(false);
+    expect(shouldAskTranslation([], false, false)).toBe(false);
+  });
+});
+
 describe("loadGameData with a translation", () => {
+  it("falls back to the default when the alt script set is partial", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/data/scripts/index.json")) return new Response(JSON.stringify(["1001", "1002"]), { status: 200 });
+      if (url.endsWith("/data/scripts/1001.json")) return new Response(JSON.stringify(SCENARIO("1001", "base 1")), { status: 200 });
+      if (url.endsWith("/data/scripts/1002.json")) return new Response(JSON.stringify(SCENARIO("1002", "base 2")), { status: 200 });
+      if (url.endsWith("/data/flow.json")) return new Response(JSON.stringify(FLOW()), { status: 200 });
+      if (url.endsWith("/translations/todokanai/scripts/index.json")) return new Response(JSON.stringify(["1001", "1002"]), { status: 200 });
+      if (url.endsWith("/translations/todokanai/scripts/1001.json")) return new Response(JSON.stringify(SCENARIO("1001", "alt 1")), { status: 200 });
+      if (url.endsWith("/translations/todokanai/flow.json")) return new Response(JSON.stringify(ALT_FLOW), { status: 200 });
+      return new Response("not found", { status: 404 }); // alt 1002 missing
+    }));
+    const data = await loadGameData("https://pack.example/partial", "todokanai");
+    expect(data.translationFallback).toBe(true);
+    expect(data.translation).toBe("");
+    expect(data.scenarios.map((s) => (s.events[0] as { text: string }).text)).toEqual(["base 1", "base 2"]);
+    expect(data.flow.nodes).toHaveLength(0);
+  });
+
   it("loads the alt scripts and flow instead of the default set", async () => {
     const calls = mockDualPack();
     const data = await loadGameData("https://pack.example/dualtwo", "todokanai");
@@ -131,6 +176,8 @@ describe("loadGameData bundle packs", () => {
     links: { version: 1, links: [] },
     terminals: { version: 1, terminals: {} },
     endings: { endings: [] },
+    speakers: { version: 1, speakers: { "1001": { "0": "MAO Override" } } },
+    voicemap: { version: 2, map: { "1001": { "0": "1001_0000" } } },
   };
 
   function mockBundlePack(altPresent: boolean): void {
@@ -151,19 +198,23 @@ describe("loadGameData bundle packs", () => {
     }));
   }
 
-  it("overlays alt scripts and flow on top of the bundle", async () => {
+  it("overlays alt scripts and flow on top of the bundle without leaking base speakers", async () => {
     mockBundlePack(true);
     const data = await loadGameData("https://pack.example/bundle1", "todokanai");
     expect(data.translation).toBe("todokanai");
     expect(data.translationFallback).toBe(false);
     expect(data.scenarios[0]?.events[0]).toMatchObject({ text: "alt text" });
     expect(data.flow.nodes[0]?.options[0]?.text).toBe("alt choice");
+    expect(data.speakers).toBeNull();
+    expect(data.voicemap?.map["1001"]?.["0"]).toBe("1001_0000");
   });
 
   it("uses bundle data and flags a fallback when alt files are absent", async () => {
     mockBundlePack(false);
     const data = await loadGameData("https://pack.example/bundle2", "todokanai");
     expect(data.translationFallback).toBe(true);
+    expect(data.translation).toBe("");
     expect(data.scenarios[0]?.events[0]).toMatchObject({ text: "bundle text" });
+    expect(data.speakers?.speakers["1001"]?.["0"]).toBe("MAO Override");
   });
 });

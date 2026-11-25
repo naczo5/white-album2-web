@@ -6,14 +6,14 @@
       "default": true,
       "name": "MAO-TLs",
       "label": "AI translation",
-      "desc": "Full-game English by MAO-TLs (v2.1.0), an AI-assisted pass. Covers every scenario including the special contents.",
+      "desc": "Full-game English by MAO-TLs (v2.1.0), an AI-assisted pass.",
       "repo": "https://github.com/MAO-TLs/white-album-2"
     },
     {
       "id": "todokanai",
       "name": "TodokanaiTL",
       "label": "Human translation",
-      "desc": "Fully human-translated by the TodokanaiTL team. IC, CC and Coda complete; movie and audio-only subs included. Special contents are partially covered; a few omake lines stay Japanese.",
+      "desc": "Fully human-translated by the TodokanaiTL team.",
       "repo": "https://github.com/TodokanaiTL/WA2EnglishPatch"
     }
   ]

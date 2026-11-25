@@ -115,8 +115,11 @@ def alt_flow_from_base(base_flow_path: str, alt_ir_dir: str, out_path: str) -> i
             continue
         if sid not in ir_cache:
             p = os.path.join(alt_ir_dir, sid + ".json")
-            ir_cache[sid] = json.load(open(p, encoding="utf-8")).get(
-                "events", []) if os.path.exists(p) else []
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    ir_cache[sid] = json.load(f).get("events", [])
+            else:
+                ir_cache[sid] = []
         events = ir_cache[sid]
         idx = node["engine"].get("event", -1)
         e = events[idx] if 0 <= idx < len(events) else None
@@ -221,15 +224,18 @@ def build_translation(alt_id: str, alt_paks: list[str], jp_pak: str,
         with open(base_vm_path, encoding="utf-8") as f:
             vm = json.load(f)
         vm, dropped = filter_voicemap(vm, alt_ir, base_ir, index)
+        alt_vm_path = os.path.join(data_dir, "translations", alt_id,
+                                   "voicemap.json")
         if dropped:
             print(f"[alt:{alt_id}] voicemap: {len(dropped)} misaligned "
                   f"scripts silenced: {', '.join(dropped[:6])}"
                   f"{'…' if len(dropped) > 6 else ''}")
             # Only ship the filtered copy when something was dropped; the
             # loader falls back to the shared map otherwise (no 1 MB dup).
-            with open(os.path.join(data_dir, "translations", alt_id,
-                                   "voicemap.json"), "w", encoding="utf-8") as f:
+            with open(alt_vm_path, "w", encoding="utf-8") as f:
                 json.dump(vm, f, ensure_ascii=False, separators=(",", ":"))
+        elif os.path.isfile(alt_vm_path):
+            os.unlink(alt_vm_path)
     print(f"[alt:{alt_id}] flow parity gate")
     r = subprocess.run([sys.executable, os.path.join(HERE, "check_flow.py"),
                         alt_ir,
@@ -398,6 +404,10 @@ def main() -> None:
             for alt_id, alt_paks in alts:
                 build_translation(alt_id, alt_paks, spak, out, data_dir)
             write_translations_index(data_dir, [a for a, _ in alts])
+    else:
+        tx_idx = os.path.join(data_dir, "translations", "index.json")
+        if os.path.isfile(tx_idx):
+            os.unlink(tx_idx)
     print("build ok")
 
 

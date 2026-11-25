@@ -1474,3 +1474,38 @@ problem.
     build 1148) makes `npm run smoke` pass with no env var. MAO pin re-run
     against v2.1.0: same numbers as 2026-11-15 (mean 0.914, 5 stubs) and still
     exits 1 on the four < 0.5 adaptations — content-level, not a code defect.
+
+### 2026-11-24 — review fixes for the second-translation commits
+
+Review of 7a987a8/55cb373 (read-only diff pass, then fixes verified by test):
+- Pack default id was passed to `loadGameData` as an overlay, 404'd on
+  `translations/mao/` and raised the "translation did not load" title
+  warning for default users. Repro'd, fixed via `overlayTranslationId`
+  (default → no overlay) + 2 tests.
+- New game chooser dropped the autosave-reset confirm; restored in the pick
+  handler (also covers the reload handoff).
+- Alt overlay is all-or-nothing in both bundle and loose layouts (a partial
+  alt script set no longer mixes with default scripts under alt routing);
+  test added. Overlay lookup is a Map.
+- `alt_flow_from_base` file handle leak closed. A proposed "keep base goto
+  when alt goto is null" guard was REJECTED: the existing test pins that the
+  alt association legitimately yields a null last-option goto.
+- Bundle alt overlay no longer inherits `bundle.speakers` (MAO speaker
+  overrides) when `translations/<id>/speakers.json` is absent (matches loose
+  mode), and `GameData.translation` reports `""` on fallback (pinned in
+  `data.translation.test.ts`).
+- `build_ir.py`: preserve `stats["rejoined"]` across `_manuscript_pass` via
+  `stats.update(...)` (pinned in `test_alt_translation.py`).
+- `main.ts` / `data.ts`: `pendingNew` stays on the title screen when
+  `translationFallback` is true so the warning banner is shown; `Escape`
+  closes `.tx-modal`; `shouldAskTranslation` + `wa2web.translationPicked`
+  ask once on fresh `Start` (`!hasContinue`) or `New game` (without an
+  autosave-reset prompt when `!hasContinue`) and remember the pick across
+  later playthroughs and Settings changes.
+- `build.py` / `build_flow.py`: unlink stale `translations/<id>/voicemap.json`
+  when `dropped` is empty and stale `translations/index.json` when rebuilt
+  without `--alt`; update stale `build_flow.py` docstring.
+- Not verified here (needs game data, none present): default MAO IR is
+  unchanged by the now-universal tail-fragment rejoin. Run the MAO pin +
+  `simulate` with `--game` before pushing.
+Gates: pytest 224 passed + 10 skipped; tsc clean; vitest 335 passed + 9 skipped.

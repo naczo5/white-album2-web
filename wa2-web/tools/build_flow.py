@@ -2,7 +2,8 @@
 
 For every engine `choice` event, records the authoritative facts:
 script id, token index, option numbers + texts, and bare-id `goto`
-destinations (option 1 = fall through). Everything else (in-story date,
+destinations (ids map to options 1..K; trailing options fall through).
+Everything else (in-story date,
 flag effects, visibility gating, walkthrough cross-refs) is left null with
 status NEEDS_REVIEW for annotation in data/flow.json.
 

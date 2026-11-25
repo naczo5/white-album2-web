@@ -109,6 +109,26 @@ export function activeTranslationId(
   return list.length > 0 ? list[0].id : "";
 }
 
+/** The id to hand to `loadGameData`: "" for the pack default (its files are
+ * the base set, there is no `translations/<id>/` overlay for it), the id
+ * itself for an alternative. */
+export function overlayTranslationId(
+  list: TranslationInfo[],
+  active: string,
+): string {
+  return list.length > 0 && active === list[0].id ? "" : active;
+}
+
+/** True only until the player has picked a translation once (Start / New game
+ * or Settings), and only for multi-translation non-demo packs. */
+export function shouldAskTranslation(
+  list: TranslationInfo[],
+  demo: boolean,
+  picked: boolean,
+): boolean {
+  return !demo && list.length > 1 && !picked;
+}
+
 /** Per-translation overlay: scripts (+index), flow and optional speakers
  * from `data/translations/<id>/`. Everything else is shared. */
 interface TranslationOverlay {
@@ -139,7 +159,14 @@ async function loadTranslationOverlay(
     if (sc) scenarios.push(sc);
     else failed.push(sid);
   }
-  if (scenarios.length === 0) return null;
+  // All or nothing: the alt flow's option->goto mapping only holds against
+  // the alt scripts, so a partial set must not be mixed with default ones.
+  if (scenarios.length === 0 || failed.length > 0) {
+    if (failed.length > 0) {
+      console.warn(`[wa2] translation ${id}: ${failed.length} script(s) failed to load, using the pack default:`, failed.slice(0, 5));
+    }
+    return null;
+  }
   return {
     scenarios,
     failed,
@@ -292,22 +319,17 @@ export async function loadGameData(base = "", translation = ""): Promise<GameDat
     let flow = sanitizeFlow(bundle.flow);
     let speakers = bundle.speakers ?? null;
     let voicemap = bundle.voicemap ?? null;
-    let incomplete: string[] = [];
     let translationFallback = false;
     if (translation && baseScenarios.length > 0) {
       // Loose per-file alt layer next to the bundle (the bundler prunes
-      // only the pack default's files). All or nothing per file.
+      // only the pack default's files). All or nothing across the alt index.
       const alt = await loadTranslationOverlay(prefix, translation);
       if (alt) {
-        if (alt.failed.length > 0) {
-          console.warn(`[wa2] translation ${translation}: ${alt.failed.length} script(s) failed to load:`, alt.failed.slice(0, 5));
-        }
-        scenarios = baseScenarios.map((sc) =>
-          alt.scenarios.find((a) => a.script === sc.script) ?? sc);
+        const altById = new Map(alt.scenarios.map((a) => [a.script, a] as const));
+        scenarios = baseScenarios.map((sc) => altById.get(sc.script) ?? sc);
         flow = alt.flow;
-        speakers = alt.speakers ?? speakers;
+        speakers = alt.speakers;
         voicemap = alt.voicemap ?? voicemap;
-        incomplete = alt.failed;
       } else {
         translationFallback = true;
       }
@@ -342,9 +364,9 @@ export async function loadGameData(base = "", translation = ""): Promise<GameDat
         luts: unwrapLuts(bundle.luts),
         sysSlots,
         demo: false,
-        translation,
+        translation: translationFallback ? "" : translation,
         translationFallback,
-        incomplete,
+        incomplete: [],
       };
     }
   }
@@ -404,6 +426,12 @@ export async function loadGameData(base = "", translation = ""): Promise<GameDat
       `${prefix}data/translations/${translation}/flow.json`,
       `${prefix}data/translations/${translation}/speakers.json`,
     );
+    if (picked && picked.failed.length > 0) {
+      // All or nothing (see loadTranslationOverlay): never mix alt routing
+      // with a partial alt script set.
+      console.warn(`[wa2] translation ${translation}: ${picked.failed.length} script(s) failed to load, using the pack default:`, picked.failed.slice(0, 5));
+      picked = null;
+    }
     if (picked) {
       vmOverride = await tryFetch<VoiceMapData>(
         `${prefix}data/translations/${translation}/voicemap.json`);
@@ -433,7 +461,7 @@ export async function loadGameData(base = "", translation = ""): Promise<GameDat
       captions: captions ?? null,
       sysSlots,
       demo: false,
-      translation,
+      translation: translationFallback ? "" : translation,
       translationFallback,
       incomplete: picked.failed,
     };
