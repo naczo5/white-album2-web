@@ -22,8 +22,11 @@
   **MAO-TLs / White Album 2 v2.1.0** (Project Lead MAO; Astra revision;
   Special Thanks gambs), built on **Todokanai TL** (BSD-3-Clause) with
   subtitles lineage from **Avuxo/Ben** (MIT) — see the release's
-  `THIRD_PARTY_NOTICES`, reproduced by reference, not vendored. The
-  upstream repo carries no license file; treat its site code as
+  `THIRD_PARTY_NOTICES`, reproduced by reference, not vendored — and
+  optionally from **Todokanai TL**
+  (<https://github.com/TodokanaiTL/WA2EnglishPatch>, used with permission)
+  as a selectable second translation. The
+  MAO-TLs repo carries no license file; treat its site code as
   all-rights-reserved and use only the published release archives +
   public script-data for interoperability (version pin + drift audit).
   Full third-party notices:

@@ -8,7 +8,9 @@ priority; everything structural comes from the game's own scenario data.
 asset files: no scenario text files, playable images, audio, movies, or
 translation. (The README preview is a single promotional screenshot, not a
 runtime asset.) You supply a legally-owned Japanese copy plus the MAO-TLs
-v2.1.0 English release; `tools/build.py` turns them into playable web data
+v2.1.0 English release (and optionally the
+[TodokanaiTL](https://github.com/TodokanaiTL/WA2EnglishPatch) human patch via
+`--alt`); `tools/build.py` turns them into playable web data
 on your machine. See `docs/BYOA.md`.
 
 ![Early Introductory Chapter gameplay in the web port](docs/preview.webp)

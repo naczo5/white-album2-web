@@ -15,8 +15,11 @@ and license text shipped by the translation project.
 
 ## Todokanai TL — BSD-3-Clause
 
-The translation lineage includes Todokanai TL. The upstream project is
-distributed under the BSD 3-Clause License.
+The translation lineage includes Todokanai TL
+(<https://github.com/TodokanaiTL/WA2EnglishPatch>), which can also be built
+and selected directly as an optional second translation (used with permission
+from the Todokanai TL team). The upstream project is distributed under the
+BSD 3-Clause License.
 
 Copyright (c) the Todokanai TL contributors (see the upstream repository
 for the exact copyright notice).
