@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newWheelState, normalizeWheelDelta, wheelGesture, DELTA_LINE, DELTA_PAGE, DELTA_PIXEL, LINE_PX, PAGE_PX, WHEEL_NOTCH, WHEEL_AFTER_MS } from "./wheel";
+import { newWheelState, normalizeWheelDelta, wheelDirectionGesture, wheelGesture, DELTA_LINE, DELTA_PAGE, DELTA_PIXEL, LINE_PX, PAGE_PX, WHEEL_NOTCH, WHEEL_AFTER_MS } from "./wheel";
 
 describe("trackpad-safe wheel accumulator", () => {
   it("needs a full notch of upward travel, not a single small delta", () => {
@@ -90,5 +90,29 @@ describe("wheel deltaMode normalisation (P2-4)", () => {
 
   it("the notch constant is unchanged by normalisation support", () => {
     expect(WHEEL_NOTCH).toBe(50);
+  });
+});
+
+describe("bidirectional wheel gesture (up = backlog, down = advance)", () => {
+  it("detects downward notch after threshold and ignores inertia tail", () => {
+    const s = newWheelState();
+    expect(wheelDirectionGesture(s, 20, 1000)).toBeNull();
+    expect(wheelDirectionGesture(s, 30, 1100)).toBe("down");
+    expect(wheelDirectionGesture(s, 100, 1150)).toBeNull();
+    expect(wheelDirectionGesture(s, WHEEL_NOTCH, 1150 + WHEEL_AFTER_MS + 1)).toBe("down");
+  });
+
+  it("cancels leftover build-up when scroll direction flips", () => {
+    const s = newWheelState();
+    expect(wheelDirectionGesture(s, 40, 1000)).toBeNull();
+    expect(wheelDirectionGesture(s, -40, 1050)).toBeNull();
+    expect(wheelDirectionGesture(s, 40, 1100)).toBeNull();
+    expect(wheelDirectionGesture(s, 10, 1150)).toBe("down");
+  });
+
+  it("shares cooldown across directions so trackpad bounce cannot trigger", () => {
+    const s = newWheelState();
+    expect(wheelDirectionGesture(s, -WHEEL_NOTCH, 1000)).toBe("up");
+    expect(wheelDirectionGesture(s, WHEEL_NOTCH, 1050)).toBeNull();
   });
 });

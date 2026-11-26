@@ -44,25 +44,46 @@ export function newWheelState(): WheelState {
   return { acc: 0, lastAt: 0, firedAt: 0 };
 }
 
+export type WheelDirection = "up" | "down";
+
 /**
- * Feed one wheel delta; returns true when the caller should act (open the
- * backlog). Mutates `state` in place (the reader keeps one instance).
+ * Feed one wheel delta; returns `"up"` or `"down"` when the accumulated travel
+ * reaches a deliberate notch, or `null` otherwise. Mutates `state` in place.
+ * Reversing direction discards leftover opposite travel; firing starts the
+ * cooldown in both directions so trackpad bounce cannot trigger immediately.
  */
-export function wheelGesture(state: WheelState, deltaY: number, now: number): boolean {
-  if (!Number.isFinite(deltaY) || deltaY === 0) return false;
+export function wheelDirectionGesture(state: WheelState, deltaY: number, now: number): WheelDirection | null {
+  if (!Number.isFinite(deltaY) || deltaY === 0) return null;
   // A pause longer than a burst resets the accumulator: the trackpad's
   // momentum tail must not carry over into the next deliberate flick.
   if (now - state.lastAt > WHEEL_AFTER_MS) state.acc = 0;
   state.lastAt = now;
-  if (deltaY > 0) {
-    // Downward travel cancels an upward build-up.
+  // Flipping direction cancels any partial build-up from the opposite direction.
+  if ((deltaY > 0 && state.acc < 0) || (deltaY < 0 && state.acc > 0)) {
     state.acc = 0;
-    return false;
   }
-  if (now - state.firedAt < WHEEL_AFTER_MS) return false;
+  if (now - state.firedAt < WHEEL_AFTER_MS) {
+    state.acc = 0;
+    return null;
+  }
   state.acc += deltaY;
-  if (state.acc > -WHEEL_NOTCH) return false;
-  state.acc = 0;
-  state.firedAt = now;
-  return true;
+  if (state.acc <= -WHEEL_NOTCH) {
+    state.acc = 0;
+    state.firedAt = now;
+    return "up";
+  }
+  if (state.acc >= WHEEL_NOTCH) {
+    state.acc = 0;
+    state.firedAt = now;
+    return "down";
+  }
+  return null;
+}
+
+/**
+ * Feed one wheel delta; returns true when the caller should act on an upward
+ * notch (open the backlog). Mutates `state` in place.
+ */
+export function wheelGesture(state: WheelState, deltaY: number, now: number): boolean {
+  return wheelDirectionGesture(state, deltaY, now) === "up";
 }

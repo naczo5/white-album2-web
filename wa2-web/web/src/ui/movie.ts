@@ -483,7 +483,8 @@ function wireState(s: MovieState): void {
     if (e.repeat) return;
     // Missing-movie card: Space/Enter must advance even when focus drifted
     // off the Continue button (the card is the only exit).
-    if (!s.missing.hidden && (e.key === "Enter" || e.key === " " || e.code === "Space")) {
+    if (!s.missing.hidden && !e.altKey && !e.ctrlKey && !e.metaKey &&
+      (e.key === "Enter" || e.key === " " || e.code === "Space")) {
       const target = e.target as HTMLElement | null;
       if (target?.closest("input, select, textarea")) return;
       e.preventDefault();

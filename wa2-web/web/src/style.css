@@ -1437,22 +1437,23 @@ h3::after {
   transition: opacity 400ms ease;
 }
 
-/* The plate has a hard ceiling relative to the frame: a 1000-character
- * line scrolls inside it instead of growing over the HUD or pushing its
- * own first line above the top edge. The inner scroller (not the plate)
- * scrolls, so the cut-corner frame and the bottom rule stay put. */
+/* Fixed plate size relative to the 16:9 frame (mirroring the real game's
+ * fixed message window so short/long lines never resize the plate mid-scene).
+ * Long lines scroll inside `.textbox-scroll`, so the cut-corner frame and
+ * the bottom rule stay put. */
 .textbox {
   position: relative;
   display: flex;
   flex-direction: column;
   width: min(100%, 1120px);
-  min-height: clamp(6.4rem, 17vh, 10.5rem);
+  height: clamp(9.5rem, calc(var(--reader-h, 60vh) * 0.27), 12.75rem);
+  min-height: 0;
   /* Hard ceiling relative to the frame itself (not the viewport, and not
    * a percentage of an auto-height parent). --reader-h is set on .reader;
    * the fallback keeps a sane cap in portrait, where the plate is in flow. */
   max-height: calc(var(--reader-h, 60vh) * 0.46);
-  padding: clamp(0.85rem, 1.8vw, 1.35rem) clamp(1rem, 2.4vw, 2.2rem)
-    clamp(1rem, 2vw, 1.5rem);
+  padding: clamp(0.85rem, 1.8vw, 1.25rem) clamp(1rem, 2.4vw, 2.2rem)
+    clamp(1rem, 2vw, 1.4rem);
   pointer-events: auto;
   overflow: hidden;
   color: var(--ink);
@@ -1460,9 +1461,9 @@ h3::after {
   line-height: 1.95;
   text-align: left;
   text-shadow:
-    0 1px 2px rgb(0 18 24 / 0.85),
-    0 0 16px rgb(0 40 52 / 0.55);
-  border: 1px solid rgb(160 250 245 / 0.58);
+    0 1px 3px rgb(0 12 16 / 0.95),
+    0 0 14px rgb(0 24 32 / 0.72);
+  border: 1px solid rgb(160 250 245 / 0.56);
   border-radius: 3px;
   clip-path: polygon(
     20px 0,
@@ -1475,17 +1476,19 @@ h3::after {
     0 20px
   );
   background:
-    radial-gradient(120% 140% at 84% 0%, rgb(82 227 221 / 0.26), transparent 54%),
+    radial-gradient(120% 140% at 84% 0%, rgb(82 227 221 / 0.22), transparent 54%),
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg fill='none' stroke='%23ffffff' stroke-opacity='.11' stroke-width='2' stroke-linecap='round'%3E%3Cg id='a'%3E%3Cpath d='M100 100V14'/%3E%3Cpath d='M100 48l-14-12M100 48l14-12'/%3E%3Cpath d='M100 76l-9-8M100 76l9-8'/%3E%3Cpath d='M100 14l-6-6M100 14l6-6'/%3E%3C/g%3E%3Cuse href='%23a' transform='rotate(60 100 100)'/%3E%3Cuse href='%23a' transform='rotate(120 100 100)'/%3E%3Cuse href='%23a' transform='rotate(180 100 100)'/%3E%3Cuse href='%23a' transform='rotate(240 100 100)'/%3E%3Cuse href='%23a' transform='rotate(300 100 100)'/%3E%3C/g%3E%3C/svg%3E")
       right 8% center / 34% auto no-repeat,
     linear-gradient(
       180deg,
-      rgb(13 76 88 / 0.94) 0%,
-      rgb(7 48 59 / 0.95) 26%,
-      rgb(5 34 43 / 0.97) 68%,
-      rgb(3 24 31 / 0.98) 100%
+      rgb(13 76 88 / 0.66) 0%,
+      rgb(7 48 59 / 0.7) 26%,
+      rgb(5 34 43 / 0.74) 68%,
+      rgb(3 24 31 / 0.78) 100%
     );
-  box-shadow: inset 0 1px rgb(255 255 255 / 0.14);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  box-shadow: inset 0 1px rgb(255 255 255 / 0.16);
 }
 
 /* Bottom rule of the plate, like the thin inner line on sys_00100. */
@@ -1541,12 +1544,13 @@ h3::after {
  * dialogue box. */
 .textbox.prompt-only {
   width: min(100%, 780px);
+  height: auto;
   min-height: 0;
   padding: 0.7rem 1.4rem 0.8rem;
   background: linear-gradient(
     180deg,
-    rgb(12 66 78 / 0.95) 0%,
-    rgb(5 34 43 / 0.97) 100%
+    rgb(12 66 78 / 0.72) 0%,
+    rgb(5 34 43 / 0.78) 100%
   );
 }
 
@@ -2221,6 +2225,49 @@ ruby rt {
   transform: rotate(45deg);
 }
 
+.controls-list {
+  margin: 0;
+}
+
+.control-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.9fr) minmax(0, 1.3fr);
+  align-items: baseline;
+  gap: 0.8rem 1rem;
+  padding: 0.52rem 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 0.86rem;
+}
+
+.control-row:last-child {
+  border-bottom: 0;
+}
+
+.control-row dt {
+  color: var(--ink-soft);
+}
+
+.control-row dd {
+  margin: 0;
+  color: var(--ink-dim);
+  line-height: 1.75;
+}
+
+.controls-list kbd {
+  display: inline-block;
+  padding: 0.08rem 0.44rem;
+  margin: 0.08rem 0.08rem;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: rgb(8 42 52 / 0.72);
+  color: var(--cyan-soft);
+  font-family: var(--font-display);
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
 /* ------------------------------------------------------------------ */
 /* Backlog                                                             */
 /* ------------------------------------------------------------------ */
@@ -2791,6 +2838,11 @@ ruby rt {
     gap: 0.35rem;
   }
 
+  .control-row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+
   .setting input[type="checkbox"] {
     order: -1;
   }
@@ -2806,7 +2858,6 @@ ruby rt {
       0 calc(100% - 12px),
       0 12px
     );
-    min-height: 5.6rem;
   }
 }
 
@@ -2900,6 +2951,7 @@ ruby rt {
   }
 
   .textbox {
+    height: calc(var(--reader-h, 50vh) * 0.36);
     max-height: calc(var(--reader-h, 50vh) * 0.62);
     min-height: 0;
     padding: 0.5rem 0.9rem 0.6rem;
@@ -3025,15 +3077,14 @@ ruby rt {
 
   .textbox {
     /* Portrait has no 16:9 frame to measure against, but the plate still
-     * needs a ceiling: without one a 1000-character line grows past the
-     * viewport and its first line is unreachable (the old rule set
-     * `max-height: none` and made the inner scroller `overflow: visible`,
-     * so nothing could scroll the text back). Cap against the viewport
-     * minus the sticky stage, then let `.textbox-scroll` do the scrolling. */
+     * needs a fixed size and a ceiling: without one a 1000-character line
+     * grows past the viewport and its first line is unreachable. Cap against
+     * the viewport minus the sticky stage, then let `.textbox-scroll` scroll. */
+    height: clamp(9.5rem, 26dvh, 12.5rem);
     max-height: calc(100dvh - 46dvh - 7rem);
     font-size: clamp(0.95rem, var(--fontsize), 1.7rem);
     line-height: 1.85;
-    min-height: 5.5rem;
+    min-height: 0;
   }
 
   /* Keep the inner scroller (never `visible`): the plate is the mask
@@ -3080,7 +3131,8 @@ ruby rt {
   }
 
   .textbox {
-    min-height: 5.5rem;
+    height: clamp(7.5rem, 24dvh, 10.5rem);
+    min-height: 0;
   }
 }
 

@@ -7,7 +7,7 @@ import { Router, chapterOfScript } from "../engine/router";
 import { displayDate, plainText, renderText, spanize } from "../engine/text";
 import type { BgmData, BnrData, CaptionData, Flags, Position, SaveData, ScenarioEvent } from "../engine/types";
 import { storageKey, writeAutosave } from "../engine/save";
-import { newWheelState, normalizeWheelDelta, wheelGesture, type WheelState } from "../engine/wheel";
+import { newWheelState, normalizeWheelDelta, wheelDirectionGesture, type WheelState } from "../engine/wheel";
 import { moviePlaying, openMovie, preloadMovieAhead } from "./movie";
 import { applyShake, clearShake, disposeWeather, hideCalendar, mountWeather, pauseWeather, resolveCalendar, resolveShakeCue, resolveWeather, setWeatherLive, showCalendar } from "./weather";
 import { clearBmp, paintBmp, pauseBmp } from "./bmp";
@@ -180,6 +180,93 @@ export interface ReaderHooks {
   quickLoad?(): void;
   /** Called when read-mode skip halts on an unread line (main clears Ctrl). */
   onSkipStop(): void;
+  /** Called on manual reader input (click, wheel-down, right-click) so
+   * toggle-skip can be cancelled like the original engine. */
+  onManualInput?(): void;
+}
+
+export interface ReaderKeyInput {
+  key: string;
+  code: string;
+  repeat: boolean;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  movieMode: boolean;
+  textHidden: boolean;
+  hasChoices: boolean;
+  /** Focus is inside a text input / select / textarea. */
+  focusedInput: boolean;
+  /** Focus is on any button, link, input, select, textarea, or [role='button']. */
+  focusedControl: boolean;
+  /** Focus is specifically on a `.choices .choice-btn` element. */
+  focusedChoice: boolean;
+}
+
+export type ReaderKeyAction =
+  | { type: "fullscreen" }
+  | { type: "toggle-text" }
+  | { type: "restore-text" }
+  | { type: "skip-hold-on" }
+  | { type: "skip-toggle" }
+  | { type: "advance" }
+  | { type: "backlog" }
+  | { type: "choice-pick"; index: number }
+  | { type: "choice-move"; delta: -1 | 1 };
+
+/** Map `1`–`9` (top row or numpad) to a 0-based choice index, or `null`. */
+export function choiceIndexForKey(key: string, code: string): number | null {
+  const m = /^(?:Digit|Numpad)([1-9])$/.exec(code);
+  if (m) return Number(m[1]) - 1;
+  if (/^[1-9]$/.test(key)) return Number(key) - 1;
+  return null;
+}
+
+/** Pure reader keyboard action resolver (test-pinned, DOM-free). Mirrors
+ * WA2_jp.exe keybindings (Enter/Space/PageDown advance, Ctrl hold / Shift
+ * toggle skip, H/Esc/Backspace hide text, PageUp backlog, 1–9 and Up/Down
+ * for choices, Alt+Enter fullscreen). */
+export function resolveReaderKey(input: ReaderKeyInput): ReaderKeyAction | null {
+  const { key, code, repeat, altKey, ctrlKey, metaKey, movieMode, textHidden, hasChoices, focusedInput, focusedControl, focusedChoice } = input;
+  const isEnter = code === "Enter" || key === "Enter";
+  if (altKey && isEnter && !repeat && !ctrlKey && !metaKey) {
+    return { type: "fullscreen" };
+  }
+  if (movieMode || repeat) return null;
+
+  const noMod = !altKey && !ctrlKey && !metaKey;
+  const isSpace = code === "Space" || key === " ";
+  const isHideKey = (key === "h" || key === "H" || key === "Escape" || key === "Backspace") && noMod;
+
+  if (textHidden) {
+    if (!focusedInput && noMod && (isHideKey || isEnter || isSpace)) {
+      return { type: "restore-text" };
+    }
+    return null;
+  }
+
+  if (key === "Control" && !focusedInput) return { type: "skip-hold-on" };
+  if (key === "Shift" && noMod && !focusedInput) return { type: "skip-toggle" };
+  if (isHideKey && !focusedInput) return { type: "toggle-text" };
+  if ((code === "PageUp" || key === "PageUp") && noMod && !focusedInput) {
+    return { type: "backlog" };
+  }
+
+  if (hasChoices && noMod && !focusedInput) {
+    const idx = choiceIndexForKey(key, code);
+    if (idx !== null) return { type: "choice-pick", index: idx };
+    if ((key === "ArrowDown" || key === "ArrowUp") && (!focusedControl || focusedChoice)) {
+      return { type: "choice-move", delta: key === "ArrowDown" ? 1 : -1 };
+    }
+  }
+
+  if ((code === "PageDown" || key === "PageDown") && noMod && !focusedInput) {
+    return { type: "advance" };
+  }
+  if ((isEnter || isSpace) && noMod && !focusedControl) {
+    return { type: "advance" };
+  }
+  return null;
 }
 
 // ---- Read-text tracking (for "skip read text only") -----------------------
@@ -298,7 +385,22 @@ export function toggleText(reader: HTMLElement | null, force?: boolean): boolean
   if (!reader) return false;
   textHidden = force === undefined ? !textHidden : force;
   reader.classList.toggle("text-hidden", textHidden);
+  if (textHidden) {
+    clearAuto();
+    const active = typeof document !== "undefined" ? document.activeElement as HTMLElement | null : null;
+    if (active && reader.contains(active) && typeof active.blur === "function") active.blur();
+  } else if (curHooks) {
+    scheduleAuto(curHooks);
+  }
   return textHidden;
+}
+
+/** Arm the reader's wheel-gesture cooldown (e.g. when returning from Backlog
+ * via trackpad downward flick so trailing inertia events do not advance). */
+export function armWheelCooldown(now = performance.now()): void {
+  wheelState.acc = 0;
+  wheelState.lastAt = now;
+  wheelState.firedAt = now;
 }
 
 export function setTextHidden(v: boolean): void {
@@ -748,7 +850,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
           <div class="reader-caption" id="caption" aria-live="polite" aria-atomic="true" hidden></div>
           <div class="textbox" id="textplate"><div class="textbox-scroll" id="textbox"></div></div>
           <div class="choices" id="choices"></div>
-          <div class="advance-hint" id="hint">Click, Enter or Space to continue · hold Ctrl to skip · H hides the text · scroll up for the backlog</div>
+          <div class="advance-hint" id="hint">Click, Enter or Space to continue · Ctrl / Shift to skip · H / Right-click hides text · Scroll up / PgUp for backlog</div>
         </div>
       </div>`;
     el.querySelectorAll("[data-act]").forEach((b) =>
@@ -767,6 +869,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
         const dock = b.closest(".hud-btns") as HTMLElement | null;
         closeMoreMenu(dock);
         if (act === "hide") {
+          curHooks?.onManualInput?.();
           toggleText(el.querySelector(".reader") as HTMLElement, true);
           return;
         }
@@ -797,6 +900,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       const verdict = textGestureVerdict(t);
       if (verdict === "none") return;
       const reader = el.querySelector(".reader") as HTMLElement;
+      curHooks?.onManualInput?.();
       if (textHidden) {
         toggleText(reader, false);
         return;
@@ -813,24 +917,43 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       if (retryBlockedVoice()) return;
       advanceHandler?.();
     });
+    // Right-click hides/shows the dialogue plate (original default Right-Click
+    // Action = Hide Text), cancelling any active skip toggle.
+    el.addEventListener("contextmenu", (e) => {
+      if (moviePlaying()) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("input, select, textarea")) return;
+      e.preventDefault();
+      curHooks?.onManualInput?.();
+      toggleText(el.querySelector(".reader") as HTMLElement);
+    });
     // Middle-click hides the text (mouse-only convenience) without
     // advancing, so the art can be looked at whole.
     el.addEventListener("auxclick", (e) => {
-      if (e.button !== 1) return;
+      if (e.button !== 1 || moviePlaying()) return;
       e.preventDefault();
+      curHooks?.onManualInput?.();
       toggleText(el.querySelector(".reader") as HTMLElement, !textHidden);
     });
-    // Standard VN convention: wheel-up opens the backlog — once per
-    // gesture, never from trackpad inertia, never over a scrolling pane.
-    // `deltaMode` matters: Firefox reports DOM_DELTA_LINE for a plain mouse
-    // notch, so a raw -3 would never reach the 50 px notch threshold.
+    // Standard VN convention: wheel-up opens the backlog, wheel-down advances
+    // — once per deliberate notch, never from trackpad inertia, never over
+    // a scrolling pane. `deltaMode` matters: Firefox reports DOM_DELTA_LINE.
     el.addEventListener("wheel", (e) => {
+      if (moviePlaying() || textHidden) return;
       const t = e.target as HTMLElement | null;
-      if (t?.closest(".choices, .textbox-scroll, .log, .fc-wrap, .slots, .settings, .movie-layer")) return;
+      const scrollBox = t?.closest(".textbox-scroll") as HTMLElement | null;
+      if (scrollBox?.dataset.overflow) return;
+      if (t?.closest(".choices, .log, .fc-wrap, .slots, .settings, .movie-layer")) return;
       const dy = normalizeWheelDelta(e.deltaY, e.deltaMode);
-      if (wheelGesture(wheelState, dy, performance.now())) {
+      const dir = wheelDirectionGesture(wheelState, dy, performance.now());
+      if (dir === "up") {
         e.preventDefault();
         curHooks?.open("log");
+      } else if (dir === "down") {
+        e.preventDefault();
+        curHooks?.onManualInput?.();
+        if (retryBlockedVoice()) return;
+        advanceHandler?.();
       }
     }, { passive: false });
     trackIdle(el);
@@ -897,7 +1020,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
   ch.innerHTML = "";
   hint.style.display = "";
   hint.classList.remove("loading");
-  hint.textContent = "Click, Enter or Space to continue · hold Ctrl to skip · H hides the text · scroll up for the backlog";
+  hint.textContent = "Click, Enter or Space to continue · Ctrl / Shift to skip · H / Right-click hides text · Scroll up / PgUp for backlog";
   advanceHandler = null;
 
   const recordEndings = (unlocked?: readonly string[], ending?: string, verb = "Ending recorded"): boolean => {
@@ -975,6 +1098,7 @@ export function renderReader(el: HTMLElement, h: ReaderHooks): void {
       b.onclick = (e) => {
         e.stopPropagation();
         if (locked) return;
+        h.onManualInput?.();
         cutVoice();
         const r = router.pick(pos, o.n, save.flags);
         save.picks[node?.id ?? `${pos.script}:${pos.event}`] = o.n;
@@ -1323,7 +1447,7 @@ export function skipBlocked(active: boolean, skipRead: boolean, wasRead: boolean
  * Read-mode skip halts on the first unread line (never advances past it). */
 function scheduleAuto(h: ReaderHooks): void {
   clearAuto();
-  if (!readerLive) return;
+  if (!readerLive || textHidden) return;
   const delay = h.skip.active ? 120 : h.settings.autoDelay;
   if (delay <= 0) return;
   const ev = h.router.at(h.save.position);

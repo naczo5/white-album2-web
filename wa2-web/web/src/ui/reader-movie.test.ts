@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
-import { advanceBlockedByGesture, clickBlockedByTextGesture, currentPositionMatches, currentSaveMatches, nextMovieUrl, nextTextPage, textGestureVerdict } from "./reader";
+import { advanceBlockedByGesture, choiceIndexForKey, clickBlockedByTextGesture, currentPositionMatches, currentSaveMatches, nextMovieUrl, nextTextPage, resolveReaderKey, textGestureVerdict, type ReaderKeyInput } from "./reader";
 import { Router } from "../engine/router";
 import { activeCuesAt, parseVtt, regionBlocksHtml } from "../engine/vtt";
 import type { Scenario, SaveData } from "../engine/types";
@@ -294,5 +294,83 @@ Only the right voice
     const centre = parseVtt("WEBVTT\n\n00:00:01.000 --> 00:00:09.000 line:10%\nSpoken\n");
     expect(regionBlocksHtml(activeCuesAt(centre, 5), "top"))
       .toBe('<div class="movie-cue movie-cue-center">Spoken</div>');
+  });
+});
+
+function keyIn(over: Partial<ReaderKeyInput> = {}): ReaderKeyInput {
+  return {
+    key: "",
+    code: "",
+    repeat: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    movieMode: false,
+    textHidden: false,
+    hasChoices: false,
+    focusedInput: false,
+    focusedControl: false,
+    focusedChoice: false,
+    ...over,
+  };
+}
+
+describe("reader keyboard action resolver", () => {
+  it("maps Enter, Space, and PageDown to advance", () => {
+    expect(resolveReaderKey(keyIn({ key: "Enter", code: "Enter" }))).toEqual({ type: "advance" });
+    expect(resolveReaderKey(keyIn({ key: " ", code: "Space" }))).toEqual({ type: "advance" });
+    expect(resolveReaderKey(keyIn({ key: "PageDown", code: "PageDown" }))).toEqual({ type: "advance" });
+  });
+
+  it("maps Alt+Enter to fullscreen without triggering advance", () => {
+    expect(resolveReaderKey(keyIn({ key: "Enter", code: "Enter", altKey: true }))).toEqual({ type: "fullscreen" });
+    expect(resolveReaderKey(keyIn({ key: "Enter", code: "Enter", altKey: true, movieMode: true }))).toEqual({ type: "fullscreen" });
+  });
+
+  it("maps Control to skip-hold-on and bare Shift to skip-toggle", () => {
+    expect(resolveReaderKey(keyIn({ key: "Control", code: "ControlLeft", ctrlKey: true }))).toEqual({ type: "skip-hold-on" });
+    expect(resolveReaderKey(keyIn({ key: "Shift", code: "ShiftLeft" }))).toEqual({ type: "skip-toggle" });
+    expect(resolveReaderKey(keyIn({ key: "Shift", code: "ShiftLeft", repeat: true }))).toBeNull();
+    expect(resolveReaderKey(keyIn({ key: "Shift", code: "ShiftLeft", ctrlKey: true }))).toBeNull();
+    expect(resolveReaderKey(keyIn({ key: "Shift", code: "ShiftLeft", altKey: true }))).toBeNull();
+  });
+
+  it("maps H, Escape, and Backspace to hide/restore text, and PageUp to backlog", () => {
+    for (const k of [{ key: "h", code: "KeyH" }, { key: "H", code: "KeyH" }, { key: "Escape", code: "Escape" }, { key: "Backspace", code: "Backspace" }]) {
+      expect(resolveReaderKey(keyIn(k))).toEqual({ type: "toggle-text" });
+      expect(resolveReaderKey(keyIn({ ...k, textHidden: true }))).toEqual({ type: "restore-text" });
+    }
+    expect(resolveReaderKey(keyIn({ key: "PageUp", code: "PageUp" }))).toEqual({ type: "backlog" });
+    expect(resolveReaderKey(keyIn({ key: "PageUp", code: "PageUp", textHidden: true }))).toBeNull();
+  });
+
+  it("restores hidden text on Enter/Space without advancing, even over hidden focused buttons, and blocks PageDown while hidden", () => {
+    expect(resolveReaderKey(keyIn({ key: "Enter", code: "Enter", textHidden: true }))).toEqual({ type: "restore-text" });
+    expect(resolveReaderKey(keyIn({ key: " ", code: "Space", textHidden: true }))).toEqual({ type: "restore-text" });
+    expect(resolveReaderKey(keyIn({ key: "Enter", code: "Enter", textHidden: true, focusedControl: true }))).toEqual({ type: "restore-text" });
+    expect(resolveReaderKey(keyIn({ key: " ", code: "Space", textHidden: true, focusedControl: true }))).toEqual({ type: "restore-text" });
+    expect(resolveReaderKey(keyIn({ key: "PageDown", code: "PageDown", textHidden: true }))).toBeNull();
+  });
+
+  it("maps 1-9 (top row + numpad) and Up/Down arrows during choices", () => {
+    expect(choiceIndexForKey("1", "Digit1")).toBe(0);
+    expect(choiceIndexForKey("9", "Numpad9")).toBe(8);
+    expect(choiceIndexForKey("0", "Digit0")).toBeNull();
+    expect(resolveReaderKey(keyIn({ key: "2", code: "Digit2", hasChoices: true }))).toEqual({ type: "choice-pick", index: 1 });
+    expect(resolveReaderKey(keyIn({ key: "3", code: "Numpad3", hasChoices: true, focusedControl: true, focusedChoice: true }))).toEqual({ type: "choice-pick", index: 2 });
+    expect(resolveReaderKey(keyIn({ key: "2", code: "Digit2", hasChoices: false }))).toBeNull();
+    expect(resolveReaderKey(keyIn({ key: "ArrowDown", code: "ArrowDown", hasChoices: true }))).toEqual({ type: "choice-move", delta: 1 });
+    expect(resolveReaderKey(keyIn({ key: "ArrowUp", code: "ArrowUp", hasChoices: true, focusedControl: true, focusedChoice: true }))).toEqual({ type: "choice-move", delta: -1 });
+    // Focused HUD button must keep ArrowUp/Down from hijacking choice focus.
+    expect(resolveReaderKey(keyIn({ key: "ArrowDown", code: "ArrowDown", hasChoices: true, focusedControl: true, focusedChoice: false }))).toBeNull();
+  });
+
+  it("defers to focused buttons for Enter/Space and to inputs for all keys, and yields to movieMode", () => {
+    expect(resolveReaderKey(keyIn({ key: "Enter", code: "Enter", focusedControl: true }))).toBeNull();
+    expect(resolveReaderKey(keyIn({ key: " ", code: "Space", focusedControl: true }))).toBeNull();
+    // Shortcut keys still work even if a HUD button kept focus.
+    expect(resolveReaderKey(keyIn({ key: "h", code: "KeyH", focusedControl: true }))).toEqual({ type: "toggle-text" });
+    expect(resolveReaderKey(keyIn({ key: "h", code: "KeyH", focusedInput: true }))).toBeNull();
+    expect(resolveReaderKey(keyIn({ key: "Escape", code: "Escape", movieMode: true }))).toBeNull();
   });
 });

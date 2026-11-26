@@ -16,7 +16,8 @@ import {
 import { renderFlowchart, sceneLabel } from "./ui/flowchart";
 import { playPreviewAudio, previewPlayingUrl, renderExtras, stopPreviewAudio } from "./ui/gallery";
 import { renderGuide, type GuideData } from "./ui/guide";
-import { applySeVolume, ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetAudioCursors, resetPaintState, resetSkip, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceChrLookup, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
+import { newWheelState, normalizeWheelDelta, wheelDirectionGesture } from "./engine/wheel";
+import { applySeVolume, armWheelCooldown, ingestReadKeys, installLutFilters, pauseReader, pushLog, renderReader, resetAudioCursors, resetPaintState, resetSkip, resolveReaderKey, resumeAudio, setBgmLookup, setBnrLookup, setReaderLive, setScenarioLookup, setSpeakerLookup, setSkipping, setTextHidden, setVoiceChrLookup, setVoiceLookup, skipLatches, suspendAudio, toggleText } from "./ui/reader";
 import { stopMovie } from "./ui/movie";
 import { applyProfileToRun, renderSaves } from "./ui/saves";
 import "./style.css";
@@ -81,7 +82,30 @@ const settings: Settings = {
 };
 
 let skipState = { active: false };
+let skipHold = false;
+let skipToggle = false;
+const logWheelState = newWheelState();
 let toastTimer: number | null = null;
+
+function clearSkipFlags(): void {
+  skipHold = false;
+  skipToggle = false;
+  skipState.active = false;
+}
+
+function syncSkip(): void {
+  const next = skipHold || skipToggle;
+  if (next !== skipState.active) setSkipping(next);
+}
+
+function toggleFullscreen(): void {
+  if (typeof document === "undefined") return;
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.().catch(() => {});
+  } else {
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  }
+}
 
 function persistSettings(): void {
   try {
@@ -405,12 +429,12 @@ async function boot(): Promise<void> {
     /* storage blocked: fall through to the title screen */
   }
   render();
-  // Enter/click = advance (first press completes typing instantly, next
-  // advances); hold Ctrl = skip (released on keyup / focus loss). Key
-  // repeat is ignored so holding Enter never fast-forwards. Skip state is
-  // a shared mutable object read live by the reader hooks — setSkipping
-  // starts/stops the reader's 120 ms advance loop WITHOUT re-rendering
-  // (a re-render restarted the typewriter mid-line = the flicker bug).
+  // Enter/Space/PageDown/click = advance (first press completes typing
+  // instantly, next advances); hold Ctrl or toggle Shift = skip (Shift
+  // cancels on manual advance, hide-text, choice, movie, or unread stop).
+  // Key repeat is ignored so holding Enter never fast-forwards. Skip state
+  // is a shared mutable object read live by the reader hooks — setSkipping
+  // starts/stops the reader's 120 ms advance loop WITHOUT re-rendering.
   window.addEventListener("keydown", (e) => {
     const txModal = document.querySelector(".tx-modal");
     if (e.key === "Escape" && txModal) {
@@ -418,53 +442,122 @@ async function boot(): Promise<void> {
       txModal.remove();
       return;
     }
-    // Esc closes any overlay back to where it was opened.
-    if (e.key === "Escape" && screen !== "title" && screen !== "read") {
+    const active = document.activeElement as HTMLElement | null;
+    const focusedInput = !!(active && active.closest("input, select, textarea"));
+    const focusedControl = !!(active && active !== document.body &&
+      active.closest("button, a, input, select, textarea, [role='button']"));
+    const focusedChoice = !!(active && active.closest(".choices .choice-btn"));
+
+    if (e.altKey && (e.code === "Enter" || e.key === "Enter") && !e.repeat && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
-      go(backTo);
+      toggleFullscreen();
+      return;
+    }
+
+    // Esc or Backspace closes any overlay back to where it was opened.
+    if (screen !== "title" && screen !== "read") {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        go(backTo);
+        return;
+      }
+      if (e.key === "Backspace" && !e.repeat && !focusedInput &&
+        !e.altKey && !e.ctrlKey && !e.metaKey &&
+        !document.querySelector(".cg-overlay, .tx-modal")) {
+        e.preventDefault();
+        go(backTo);
+        return;
+      }
       return;
     }
     if (screen !== "read") return;
-    // `H` (and Esc while reading) toggles the text-free stage; a second
-    // press restores it without advancing.
-    if ((e.key === "h" || e.key === "H" || e.key === "Escape") && !e.repeat) {
-      if (document.querySelector(".movie-mode")) return; // movie HUD owns Esc
-      const active = document.activeElement as HTMLElement | null;
-      if (active && active !== document.body &&
-        active.closest("button, a, input, select, textarea, [role='button']")) return;
-      e.preventDefault();
-      toggleText(document.querySelector(".reader") as HTMLElement | null);
-      return;
-    }
-    if (e.key === "Control" && !skipState.active && !e.repeat) {
-      // Ctrl-skip pauses while the film owns the stage. A key still held
-      // from before the film opened must not resurrect skip when the
-      // browser auto-repeats it: the reader released it at `onOpen`.
-      if (!document.querySelector(".movie-mode")) setSkipping(true);
-      return;
-    }
-    if ((e.code === "Enter" || e.code === "Space") && !e.repeat) {
-      // A focused choice/HUD control owns Enter/Space; only body focus
-      // advances (Space on a button must press the button).
-      const active = document.activeElement as HTMLElement | null;
-      if (active && active !== document.body &&
-        active.closest("button, a, input, select, textarea, [role='button']")) return;
-      e.preventDefault();
-      const reader = document.querySelector(".reader") as HTMLElement | null;
-      if (!reader) return;
-      if (reader.classList.contains("text-hidden")) {
+
+    const reader = document.querySelector(".reader") as HTMLElement | null;
+    if (!reader) return;
+    const choiceButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".choices .choice-btn"));
+    const action = resolveReaderKey({
+      key: e.key,
+      code: e.code,
+      repeat: e.repeat,
+      altKey: e.altKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      movieMode: !!document.querySelector(".movie-mode"),
+      textHidden: reader.classList.contains("text-hidden"),
+      hasChoices: choiceButtons.length > 0,
+      focusedInput,
+      focusedControl,
+      focusedChoice,
+    });
+    if (!action) return;
+    e.preventDefault();
+
+    switch (action.type) {
+      case "fullscreen":
+        toggleFullscreen();
+        break;
+      case "restore-text":
         setTextHidden(false);
         toggleText(reader, false);
-        return;
+        break;
+      case "toggle-text":
+        if (skipToggle) {
+          skipToggle = false;
+          syncSkip();
+        }
+        toggleText(reader);
+        break;
+      case "skip-hold-on":
+        skipHold = true;
+        syncSkip();
+        break;
+      case "skip-toggle":
+        skipToggle = !skipToggle;
+        syncSkip();
+        break;
+      case "backlog":
+        hooks.open("log");
+        break;
+      case "advance":
+        if (skipToggle) {
+          skipToggle = false;
+          syncSkip();
+        }
+        reader.click();
+        break;
+      case "choice-pick": {
+        const btn = choiceButtons[action.index];
+        if (btn && !btn.disabled) {
+          skipToggle = false;
+          syncSkip();
+          btn.click();
+        }
+        break;
       }
-      (reader as HTMLElement).click();
+      case "choice-move": {
+        const enabled = choiceButtons.filter((b) => !b.disabled);
+        if (enabled.length === 0) break;
+        const cur = active ? enabled.indexOf(active as HTMLButtonElement) : -1;
+        const nextIdx = cur === -1
+          ? (action.delta > 0 ? 0 : enabled.length - 1)
+          : (cur + action.delta + enabled.length) % enabled.length;
+        enabled[nextIdx]?.focus();
+        break;
+      }
     }
   });
   window.addEventListener("keyup", (e) => {
-    if (e.key === "Control" && skipState.active) setSkipping(false);
+    if (e.key === "Control" && skipHold) {
+      skipHold = false;
+      syncSkip();
+    }
   });
   window.addEventListener("blur", () => {
-    if (skipState.active) setSkipping(false);
+    if (skipHold || skipToggle || skipState.active) {
+      skipHold = false;
+      skipToggle = false;
+      syncSkip();
+    }
   });
   // A reload mid-replay must not leave the preview in the Continue slot.
   window.addEventListener("pagehide", () => endReplayAutosaveGuard());
@@ -596,7 +689,7 @@ function loadSaveIntoGame(next: SaveData): void {
   resetSkip();
   resetPaintState();
   resetAudioCursors();
-  skipState.active = false;
+  clearSkipFlags();
   backTo = "title";
   go("read");
 }
@@ -632,7 +725,13 @@ const hooks = {
   quickLoad,
   onCg: recordCg,
   onSkipStop: () => {
-    skipState.active = false;
+    clearSkipFlags();
+  },
+  onManualInput: () => {
+    if (skipToggle) {
+      skipToggle = false;
+      syncSkip();
+    }
   },
 };
 
@@ -696,7 +795,7 @@ function go(next: Screen): void {
     if (next === "title" || next === "extras") endReplayAutosaveGuard();
     pauseReader();
     resetSkip();
-    skipState.active = false;
+    clearSkipFlags();
     // Suspend before closing the layer: stopMovie() would otherwise restore
     // the BGM we are just about to silence (audible blip on the title).
     if (next === "title") suspendAudio();
@@ -999,7 +1098,24 @@ function render(): void {
     const logEl = app.querySelector("#log") as HTMLElement | null;
     if (logEl) logEl.scrollTop = logEl.scrollHeight;
     app.querySelector("#back")?.addEventListener("click", () => go(backTo));
-    // Esc / wheel-down / a tap outside the list returns to the story too.
+    // Esc / Backspace / Right-click / wheel-down at bottom / a tap outside
+    // the list returns to the story too.
+    app.querySelector(".screen")?.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      go(backTo);
+    });
+    logEl?.addEventListener("wheel", (e) => {
+      if (!logEl) return;
+      const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 2;
+      if (!atBottom) return;
+      const dy = normalizeWheelDelta(e.deltaY, e.deltaMode);
+      const now = performance.now();
+      if (dy > 0 && wheelDirectionGesture(logWheelState, dy, now) === "down") {
+        e.preventDefault();
+        armWheelCooldown(now);
+        go(backTo);
+      }
+    }, { passive: false });
     logEl?.addEventListener("click", (e) => {
       const btn = (e.target as HTMLElement).closest("[data-log-voice]") as HTMLButtonElement | null;
       if (btn) {
@@ -1050,7 +1166,7 @@ function render(): void {
             <span class="range-row"><input type="range" id="ad" min="0" max="8000" step="500" value="${settings.autoDelay}"> <span class="range-out" id="ad-val">${settings.autoDelay === 0 ? "off" : (settings.autoDelay / 1000) + "s"}</span></span>
           </label>
           <label class="setting">
-            <span class="setting-label">Skip only read text<small>When on, holding Ctrl stops at the first unread line.</small></span>
+            <span class="setting-label">Skip only read text<small>When on, Ctrl / Shift skip stops at the first unread line.</small></span>
             <input type="checkbox" id="sr" ${settings.skipRead ? "checked" : ""}>
           </label>
         </section>
@@ -1093,6 +1209,44 @@ function render(): void {
             <span class="setting-label">Developer mode<small>Adds a scene-jump button to the flowchart node details.</small></span>
             <input type="checkbox" id="dv" ${settings.dev ? "checked" : ""}>
           </label>
+        </section>
+
+        <section class="settings-group">
+          <h3>Controls</h3>
+          <dl class="controls-list">
+            <div class="control-row">
+              <dt>Advance / Complete line</dt>
+              <dd><kbd>Click</kbd> <kbd>Enter</kbd> <kbd>Space</kbd> <kbd>PgDn</kbd> <kbd>Scroll ↓</kbd></dd>
+            </div>
+            <div class="control-row">
+              <dt>Hide / Show text</dt>
+              <dd><kbd>H</kbd> <kbd>Esc</kbd> <kbd>Backspace</kbd> <kbd>Right-click</kbd> <kbd>Middle-click</kbd></dd>
+            </div>
+            <div class="control-row">
+              <dt>Skip (hold / toggle)</dt>
+              <dd><kbd>Ctrl</kbd> hold · <kbd>Shift</kbd> toggle</dd>
+            </div>
+            <div class="control-row">
+              <dt>Backlog</dt>
+              <dd><kbd>Scroll ↑</kbd> <kbd>PgUp</kbd> · close with <kbd>Esc</kbd> <kbd>Backspace</kbd> <kbd>Right-click</kbd> or <kbd>Scroll ↓</kbd> at end</dd>
+            </div>
+            <div class="control-row">
+              <dt>Choices</dt>
+              <dd><kbd>1</kbd>–<kbd>9</kbd> pick directly · <kbd>↑</kbd> <kbd>↓</kbd> + <kbd>Enter</kbd></dd>
+            </div>
+            <div class="control-row">
+              <dt>Movie</dt>
+              <dd><kbd>Esc</kbd> reveal HUD / skip · <kbd>M</kbd> mute · <kbd>C</kbd> subtitles</dd>
+            </div>
+            <div class="control-row">
+              <dt>Fullscreen</dt>
+              <dd><kbd>Alt</kbd> + <kbd>Enter</kbd> (or <kbd>F11</kbd>)</dd>
+            </div>
+            <div class="control-row">
+              <dt>Menus / Overlays</dt>
+              <dd><kbd>Esc</kbd> <kbd>Backspace</kbd> back (also <kbd>Right-click</kbd> in backlog)</dd>
+            </div>
+          </dl>
         </section>
       </div>
       <button class="back" id="back">← Back</button>
