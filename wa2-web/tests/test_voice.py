@@ -174,3 +174,24 @@ def test_chars_from_payload_maps_character_slot_by_exact_anchor():
     assert chars_from_payload(payload, [0]) == {"0": 0}
     # An out-of-range label is skipped instead of guessed.
     assert chars_from_payload(payload, []) == {}
+
+
+def test_match_jp_to_mao_short_beat_prefers_exact_next_row():
+    # A short reply that is a substring of the previous speaker's row must
+    # map to its own (exact) row, not to the neighbour's row.
+    jp = ["あのこれはどうだろうか", "どうだ", "つぎのしゃべり"]
+    mao = ["あのこれはどうだろうか", "どうだ", "つぎのしゃべり"]
+    assert match_jp_to_mao(jp, mao) == {0: 0, 1: 1, 2: 2}
+    # same shape, short beat strictly inside the previous row
+    jp = ["あのこれはどうだろうか", "これ", "つぎのしゃべり"]
+    mao = ["あのこれはどうだろうか", "これ", "つぎのしゃべり"]
+    assert match_jp_to_mao(jp, mao) == {0: 0, 1: 1, 2: 2}
+
+
+def test_match_jp_to_mao_short_beat_merged_row_still_contains():
+    # No exact row exists: the beat is folded into the neighbour's row, so
+    # the local containment fallback still applies.
+    jp = ["あのこれはどうだろうか", "これ", "つぎのしゃべりです"]
+    mao = ["あのこれはどうだろうか", "つぎのしゃべりです"]
+    got = match_jp_to_mao(jp, mao)
+    assert got[1] == 0 and got[2] == 1

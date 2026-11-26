@@ -126,3 +126,35 @@ def test_manuscript_lines_joins_split_files():
         build_ir._man_index_cache.pop(tmp, None)
         rows = build_ir.manuscript_lines(tmp, "3906")
         assert [r["japanese"] for r in rows] == ["a", "b", "c"]
+
+def _ms(events, texts, rows):
+    stats = build_ir._manuscript_pass(
+        events, texts, [{"japanese": j, "english": e} for j, e in rows],
+        use_en=False, warnings=[])
+    return stats
+
+
+def test_manuscript_pass_interruption_keeps_fallback_text():
+    """An interrupter whose line is a fragment of the previous speaker's
+    manuscript row must not receive that whole row."""
+    events = [{"t": "say", "speaker": "A", "text": "x1"},
+              {"t": "say", "speaker": "B", "text": "x2"},
+              {"t": "say", "speaker": "A", "text": "x3"}]
+    texts = ["これはながいぶんしょうですね", "ぶんしょう", "つぎです"]
+    rows = [("これはながいぶんしょうですね", "“A long sentence.”"),
+            ("つぎです", "“Next.”")]
+    stats = _ms(events, texts, rows)
+    assert events[0]["text"] == "A long sentence."
+    assert events[1]["text"] == "x2"  # fallback kept, not A's sentence
+    assert events[2]["text"] == "Next."
+    assert stats["interjection"] == 1
+
+
+def test_manuscript_pass_shared_identical_row_keeps_manuscript_text():
+    """Two speakers voicing the same short row (a shared 'huh?') is real."""
+    events = [{"t": "say", "speaker": "A", "text": "x1"},
+              {"t": "say", "speaker": "B", "text": "x2"}]
+    texts = ["えっ", "えっ"]
+    rows = [("えっ", "“Huh?”")]
+    _ms(events, texts, rows)
+    assert events[0]["text"] == "Huh?" and events[1]["text"] == "Huh?"

@@ -278,13 +278,24 @@ def match_jp_to_mao(jp_texts: list[str], mao_jp: list[str],
         hit = None
         short = len(nj) <= 3
         w = min(8, window) if short else window
-        for j in range(cur, min(cur + w, len(mao_jp))):
-            mj = mao_jp[j]
-            if short:
-                if nj == mj or (j - cur <= 1 and nj in mj):
+        if short:
+            # Exact row first. A short beat ('ん', '保護者') is routinely a
+            # substring of the previous speaker's row (cur), so testing
+            # containment and equality in one pass let the neighbour's row
+            # win and put it on the wrong speaker. Containment is only the
+            # fallback for rows that really merged the beat in.
+            for j in range(cur, min(cur + w, len(mao_jp))):
+                if nj == mao_jp[j]:
                     hit = j
                     break
-            else:
+            if hit is None:
+                for j in range(cur, min(cur + 2, len(mao_jp))):
+                    if nj in mao_jp[j]:
+                        hit = j
+                        break
+        else:
+            for j in range(cur, min(cur + w, len(mao_jp))):
+                mj = mao_jp[j]
                 if nj in mj:
                     hit = j
                     break

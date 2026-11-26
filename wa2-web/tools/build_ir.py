@@ -226,6 +226,21 @@ def match_en_to_mao(en_texts: list[str], mao_en: list[str],
     return o2m
 
 
+def _is_interjection(prev: tuple | None, key, speaker, nj: str,
+                     row_jp: str, prev_speaker) -> bool:
+    """True when a display line is a fragment of the row the previous line
+    (another speaker) already claimed.
+
+    The manuscript keeps one row where the engine splits an interruption
+    across speakers; copying the whole row onto the interrupter would show
+    the previous speaker's sentence under their name. Identical rows
+    (a shared 'え？' / 'やっぱり…') are legitimate and keep the text; a
+    strict fragment falls back to the en-token text instead.
+    """
+    return (prev is not None and prev == key and speaker != prev_speaker
+            and bool(nj) and nj != row_jp)
+
+
 def _manuscript_pass(events: list[dict], disp_texts: list[str],
                      mao_lines: list[dict], use_en: bool,
                      warnings: list[str],
@@ -260,10 +275,17 @@ def _manuscript_pass(events: list[dict], disp_texts: list[str],
         parts_jp = [[jp_norm(l.get("japanese") or "") for l in pl]
                     for pl in mao_parts]
         o2pm = match_jp_to_mao_parts(disp_texts, parts_jp)
+        prev, prev_spk = None, None
         for o, e in enumerate(disp):
             pm = o2pm.get(o)
             en = ""
+            if pm is not None and _is_interjection(
+                    prev, pm, e.get("speaker"), jp_norm(disp_texts[o]),
+                    parts_jp[pm[0]][pm[1]], prev_spk):
+                pm = None
+                stats["interjection"] = stats.get("interjection", 0) + 1
             if pm is not None:
+                prev, prev_spk = pm, e.get("speaker")
                 row = mao_parts[pm[0]][pm[1]]
                 en = (row.get("english") or "").translate(_QMAP)
                 en = en.replace("\n", "\\n").strip()
@@ -277,10 +299,17 @@ def _manuscript_pass(events: list[dict], disp_texts: list[str],
     o2m = match_jp_to_mao(disp_texts,
                           [jp_norm(l.get("japanese") or "")
                            for l in mao_lines])
+    prev, prev_spk = None, None
     for o, e in enumerate(disp):
         m = o2m.get(o)
         en = ""
+        if m is not None and _is_interjection(
+                prev, m, e.get("speaker"), jp_norm(disp_texts[o]),
+                jp_norm(mao_lines[m].get("japanese") or ""), prev_spk):
+            m = None
+            stats["interjection"] = stats.get("interjection", 0) + 1
         if m is not None:
+            prev, prev_spk = m, e.get("speaker")
             en = (mao_lines[m].get("english") or "").translate(_QMAP)
             en = en.replace("\n", "\\n").strip()
         if not en:

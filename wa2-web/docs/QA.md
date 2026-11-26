@@ -1509,3 +1509,54 @@ Review of 7a987a8/55cb373 (read-only diff pass, then fixes verified by test):
   unchanged by the now-universal tail-fragment rejoin. Run the MAO pin +
   `simulate` with `--game` before pushing.
 Gates: pytest 224 passed + 10 skipped; tsc clean; vitest 335 passed + 9 skipped.
+
+### 2026-11-25 — Translucent fixed-size textbox, `WA2_jp.exe` control parity, `preview.webp` refresh + review pass
+
+- **Dialogue plate (`web/src/style.css`, `web/src/ui/effects.css`, `docs/preview.webp`)**:
+  - Updated `.textbox` to fixed height and translucent aqua-glass styling so dialogue boxes no longer resize between short and long lines; refreshed `docs/preview.webp` (`1600x900` RGB WebP from `1003` classroom scene).
+- **Static `WA2_jp.exe` control audit (`.cache/analysis/WA2_jp.exe`)**:
+  - Disassembled input polling (`0x449e00..0x44ac96`) and reader/choice dispatch (`0x418350..0x418dfc`, `0x40a1d9`, `0x41046b..0x41381e`): verified original player bindings (`LMB`/`Enter`/`Wheel Down`/`PageDown` advance, `Ctrl`/`MMB` hold skip, `Shift` toggle skip cleared on manual input, `Space`/`RMB`/`Esc`/`Backspace` hide text with `RMB` default action `0`, `Wheel Up`/`PageUp` open backlog and `Wheel Down`/`RMB`/`Esc`/`Backspace` close, `Up`/`Down` and `1–9` choices, `Alt+Enter` fullscreen); confirmed `B/T/W/G/N` (`0x418c73..0x418d3a`) are debug-only (`0xa3a128 != 0`).
+  - Implemented `wheelDirectionGesture` (`engine/wheel.ts`), pure `resolveReaderKey` + `choiceIndexForKey` (`ui/reader.ts`), full reader/overlay bindings + non-configurable `Controls` reference in Settings (`main.ts`, `style.css`), pinned in `wheel.test.ts` (3 tests) and `reader-movie.test.ts` (7 tests).
+- **Review agent pass + fixes**:
+  - Invoked `self` review agent over the full UI/controls diff; fixed 7 reported issues: `.cg-overlay` guard for `Backspace` in Extras lightbox (`main.ts`), `auxclick` guard during `moviePlaying()` (`ui/reader.ts`), restoring hidden text via `Enter`/`Space` regardless of focused HUD button + blurring hidden controls + pausing/resuming `scheduleAuto` while `textHidden` (`ui/reader.ts`), clearing skip toggle on HUD `Hide text` (`ui/reader.ts`), sharing wheel cooldown from Backlog close into reader (`armWheelCooldown`) + passing through wheel over non-overflowing `.textbox-scroll` + ignoring wheel while `textHidden`/`moviePlaying()` (`ui/reader.ts`, `main.ts`), requiring bare `Shift` for `skip-toggle` (`ui/reader.ts`), and ignoring modified `Enter` on missing-movie cards (`ui/movie.ts`).
+- Gates: pytest 224 passed + 10 skipped; tsc clean; vitest 345 passed + 9 skipped; smoke passed (`TMPDIR=/tmp WA2_CHROME=...chromium-1255/chrome-linux64/chrome`).
+
+### 2026-11-26 — Manuscript alignment: short beats no longer take the previous speaker's row
+
+- **Bug**: `match_jp_to_mao` tested equality and containment in one pass, so a
+  short reply (<= 3 normalized chars) that is a substring of the previous
+  speaker's row matched that row at `j == cur` before reaching its own exact
+  row. `_manuscript_pass` then wrote the neighbour's English onto the wrong
+  speaker (e.g. `1005` Kazusa repeating Haruki's line). MAO build only; the
+  Todokanai build has no manuscript pass (tokens map 1:1) and its scripts are
+  byte-identical before/after.
+- **Fix** (`tools/build_voice.py`): short lines try an exact row first
+  (window 8), then local containment (`j - cur <= 1`) as the fallback for
+  genuinely merged rows. (`tools/build_ir.py`): a line that maps to the row
+  the previous line of a different speaker already claimed, and is a strict
+  fragment of it, keeps its en-token text instead of receiving the whole row
+  (`_is_interjection`); identical shared rows ("huh?" voiced by two
+  characters) keep the manuscript text. Pinned in `test_voice.py` (2 tests,
+  one fails on the old matcher) and `test_build_ir.py` (2 tests).
+- **Evidence** (full rebuild with `--game`, `--mao`, `--alt todokanai`):
+  adjacent same-text, different-speaker lines of >= 12 chars in the MAO
+  scripts 978 -> 23 (remaining are shared manuscript rows and repeated
+  stock lines); mapping collisions at row level 1069 -> 107 before the
+  interjection guard. Todokanai: 0 changed files. Only the 152 MAO scripts
+  and `voicemap.json` change: voice keys 82,196 -> 82,333 (143 dropped, 280
+  added; `1005` Kazusa event 20 gains its clip `_0009`, previously a gap).
+  Display text 75,907 -> 75,981 manuscript lines, en-token fallback 755 -> 681.
+- **MAO pin** (`fetch_mao.py`): mean containment 0.914 -> 0.913; audited
+  lines 49,086 -> 48,136 because short beats now carry their own short text
+  (below `MIN_LEN`, not audited) instead of the neighbour's long row;
+  `1010_040` moves into the "JP-only stub" bucket for the same reason (its
+  lines are all short). Lowest scripts unchanged (`3015` 0.27, `2401` 0.36,
+  `2511` 0.38, `2031` 0.45). Still an audit, exits 1 on the 4 known
+  adaptations.
+- Gates: `WA2_EN_PAK=… pytest tests/` 235 passed + 3 skipped;
+  tsc clean; vitest (`WA2_DATA_DIR=build/data`) 349 passed + 5 skipped;
+  `simulate.py` routers 32 choices clean, first 14 clean, special clean;
+  `check_flow` / `check_bnr_choices` green inside `build.py`; smoke passed.
+- Not fixed: interrupted lines where the manuscript merges two speakers
+  keep the en-token text (can be truncated mid-word, as for any
+  unaligned line); a splitter that cuts the manuscript row is open work.
